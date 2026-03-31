@@ -1,12 +1,12 @@
 # StudioSync
 
-StudioSync is a lightweight shared dashboard and sync tool built for architecture and design studio workflows.
+StudioSync is a lightweight shared scheduling dashboard built for architecture and design studio workflows.
 
 It helps teams keep shared scheduling information in sync using a simple desktop app and a shared folder location, making it easier to manage studio coordination without relying on overly complex software.
 
 ## Why StudioSync exists
 
-Many studios still rely on shared folders, network drives, and simple scheduling files to coordinate work. That approach is practical, but it can also be fragile, inconsistent, and difficult for non-technical users.
+Many studios still rely on simple scheduling files like Word and Excel to coordinate work between team members. That approach is practical, but it can also be fragile, inconsistent, and difficult to assign tasks outside of a dedicated meeting.
 
 StudioSync was built to make that workflow easier by providing a simple interface for locating, syncing, and working with shared studio scheduling data.
 
