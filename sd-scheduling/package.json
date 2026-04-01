@@ -1,0 +1,50 @@
+{
+  "name": "sd-scheduling",
+  "version": "1.0.2",
+  "description": "StudioSync - Collaborative task management",
+  "main": "main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "build:portable": "electron-builder --win portable"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "http-server": "^14.1.1"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "exceljs": "^4.4.0",
+    "uuid": "^11.1.0"
+  },
+  "build": {
+    "appId": "com.studiosync.dashboard",
+    "productName": "StudioSync",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/studiosync-clean.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "shortcutName": "StudioSync"
+    },
+    "portable": {
+      "artifactName": "${productName} Portable ${version}.${ext}",
+      "requestExecutionLevel": "user"
+    },
+    "files": [
+      "main/**/*",
+      "renderer/**/*",
+      "assets/**/*"
+    ]
+  }
+}

@@ -1,0 +1,714 @@
+/* ── Task Cards ─────────────────────────────────────────── */
+
+.task-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--duration);
+  cursor: default;
+  position: relative;
+}
+
+.task-card:hover {
+  box-shadow: var(--shadow-card-lg);
+}
+
+.task-card.dragging {
+  opacity: 0.5;
+}
+
+.task-card-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Priority Pill Badge (V4 style) ── */
+
+.task-priority-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 22px;
+  text-align: center;
+}
+
+.task-priority-pill.priority-1 { color: var(--priority-1); background: var(--priority-bg-1); }
+.task-priority-pill.priority-2 { color: var(--priority-2); background: var(--priority-bg-2); }
+.task-priority-pill.priority-3 { color: var(--priority-3); background: var(--priority-bg-3); }
+.task-priority-pill.priority-4 { color: var(--priority-4); background: var(--priority-bg-4); }
+.task-priority-pill.priority-w { color: var(--priority-w); background: var(--priority-bg-w); }
+.task-priority-pill.priority-unset { color: var(--text-tertiary); background: var(--bg-secondary); }
+
+.task-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-card.completed .task-title {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+
+/* ── Due Date Label (click opens calendar, V4 style) ── */
+
+.task-due-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 2px 0;
+  font-family: var(--font-body);
+  white-space: nowrap;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.task-due-label.due-empty {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.task-due-label.due-overdue {
+  color: #C07070;
+}
+
+.task-due-label.due-soon {
+  color: #B8944E;
+}
+
+.task-due-label.due-normal {
+  color: var(--text-secondary);
+}
+
+/* ── Calendar icon ── */
+
+.task-cal-icon {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0 2px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.task-cal-icon:hover {
+  opacity: 0.7;
+}
+
+/* ── Delete button (× on hover) ── */
+
+.task-delete-btn {
+  font-size: 18px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0 4px;
+  opacity: 0;
+  transition: opacity var(--duration), color var(--duration);
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1;
+}
+
+.task-card:hover .task-delete-btn {
+  opacity: 1;
+}
+
+.task-delete-btn:hover {
+  color: var(--danger);
+}
+
+/* ── Last Week (unconfirmed) badge + Keep button (V4 rollover) ── */
+
+.task-last-week {
+  opacity: 0.7;
+}
+
+.badge-last-week {
+  background: var(--priority-bg-2);
+  color: var(--priority-2);
+  font-size: 8px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+.task-keep-btn {
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 9px;
+  font-weight: 600;
+  background: var(--accent-light);
+  color: var(--accent);
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration);
+}
+
+.task-keep-btn:hover {
+  background: #DDDCF8;
+}
+
+/* ── Partner Initials Badge on Task Card (V4 style) ── */
+
+.task-partner-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 9px;
+  font-weight: 700;
+  background: var(--accent-light);
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 24px;
+  text-align: center;
+}
+
+.task-partner-badge.task-partner-empty {
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity var(--duration);
+}
+
+.task-card:hover .task-partner-empty {
+  opacity: 1;
+}
+
+/* ── Inline Title Edit ── */
+
+.task-title-edit {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg-card);
+  outline: none;
+  font-family: var(--font-body);
+}
+
+/* Bottom row — notes left, partner badge right */
+.task-card-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 30px;
+}
+
+/* Inline-editable notes input (V4 style) */
+.task-notes-input {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  padding: 1px 0;
+  outline: none;
+  font-family: var(--font-body);
+  cursor: default;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-app-region: no-drag;
+}
+
+.task-notes-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.task-notes-input-editable {
+  cursor: text;
+}
+
+.task-notes-input:focus {
+  color: var(--text-primary);
+  font-style: normal;
+  cursor: text;
+}
+
+/* ── Priority Menu Popup ── */
+
+.priority-menu {
+  position: fixed;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+  padding: 6px;
+  z-index: 2000;
+  min-width: 140px;
+  animation: menuPop 0.12s var(--ease-out);
+}
+
+/* ── Date Picker Popup (V4 style) ── */
+
+.date-picker-popup {
+  position: fixed;
+  width: 240px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+  padding: 10px 10px 8px;
+  z-index: 2000;
+  animation: menuPop 0.12s var(--ease-out);
+}
+
+.dp-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.dp-nav-btn {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dp-nav-btn:hover {
+  color: var(--text-primary);
+}
+
+.dp-nav-label {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.dp-dow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  margin-bottom: 2px;
+}
+
+.dp-dow-cell {
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  padding: 2px 0;
+}
+
+.dp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+
+.dp-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  font-size: 10px;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 12px;
+  margin: 0 auto;
+  user-select: none;
+}
+
+.dp-cell:hover {
+  background: var(--bg-secondary);
+}
+
+.dp-cell.dp-today {
+  background: var(--accent);
+  color: #FFFFFF;
+  font-weight: 700;
+}
+
+.dp-cell.dp-today:hover {
+  background: var(--accent-hover);
+}
+
+.dp-cell.dp-empty {
+  cursor: default;
+}
+
+.dp-quick {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  align-items: center;
+}
+
+.dp-quick-btn {
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 9px;
+  font-weight: 500;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--duration);
+}
+
+.dp-quick-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.dp-clear-btn {
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+
+/* Legacy action buttons (kept for compatibility) */
+.task-action-btn {
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  transition: background var(--duration), color var(--duration);
+}
+
+.task-action-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.task-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+
+/* ── Comments Section ──────────────────────────────────── */
+
+.comments-section {
+  margin-top: 4px;
+}
+
+.comments-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.comment {
+  display: flex;
+  gap: 10px;
+}
+
+.comment-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.comment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.comment-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.comment-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.comment-time {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.comment-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.comment-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--duration);
+}
+
+.comment:hover .comment-actions {
+  opacity: 1;
+}
+
+.comment-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.comment-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  resize: none;
+  min-height: 36px;
+  max-height: 100px;
+  line-height: 1.4;
+}
+
+.comment-submit {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background var(--duration);
+  flex-shrink: 0;
+}
+
+.comment-submit:hover {
+  background: var(--accent-hover);
+}
+
+.comment-submit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Project Cards ─────────────────────────────────────── */
+
+.project-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  box-shadow: var(--shadow-card);
+  cursor: grab;
+  transition: background var(--duration), box-shadow var(--duration), transform 0.1s;
+}
+
+.project-card:hover {
+  background: var(--bg-card-hover);
+  box-shadow: var(--shadow-card-lg);
+}
+
+.project-card:active {
+  cursor: grabbing;
+  transform: scale(0.98);
+}
+
+.project-card.dragging {
+  opacity: 0.5;
+}
+
+.project-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.project-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Inactive project cards — muted like V4 */
+.project-card.project-inactive .project-card-title {
+  color: var(--text-secondary);
+}
+
+.project-card.project-inactive {
+  opacity: 0.7;
+}
+
+.project-partner-badge {
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--accent-light);
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.project-card-notes {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  border: none;
+  background: transparent;
+  width: 100%;
+  padding: 2px 0;
+  outline: none;
+}
+
+.project-card-notes::placeholder {
+  color: var(--text-tertiary);
+}
+
+.project-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.project-status {
+  cursor: pointer;
+  transition: opacity var(--duration), transform 0.1s, background 0.2s, color 0.2s;
+}
+
+.project-status:hover {
+  opacity: 0.8;
+  transform: scale(1.05);
+}
+
+.project-status:active {
+  transform: scale(0.95);
+}
+
+.project-task-count {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+/* ── Ghost Drop Indicator (drag & drop) ────────────────── */
+
+.ghost-drop {
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-light);
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  animation: ghostFadeIn 0.15s ease-out;
+  margin: 2px 0;
+}
+
+@keyframes ghostFadeIn {
+  from { opacity: 0; transform: scaleY(0.6); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+
+/* ── Drag chip (follows cursor during drag) ────────────── */
+
+.drag-chip {
+  position: fixed;
+  width: 180px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(77, 74, 213, 0.85);
+  color: #FFFFFF;
+  font-size: 9pt;
+  font-weight: 600;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 9999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 4px 12px rgba(77, 74, 213, 0.3);
+  animation: chipFadeIn 0.1s ease-out;
+}
+
+@keyframes chipFadeIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Empty States ──────────────────────────────────────── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.empty-state svg {
+  width: 48px;
+  height: 48px;
+  stroke: var(--text-tertiary);
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.empty-state-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.empty-state-text {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}

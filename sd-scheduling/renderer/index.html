@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self';">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/layout.css">
+  <link rel="stylesheet" href="styles/sidebar.css">
+  <link rel="stylesheet" href="styles/cards.css">
+  <link rel="stylesheet" href="styles/dialogs.css">
+  <link rel="stylesheet" href="styles/scrollbars.css">
+  <title>StudioSync</title>
+</head>
+<body>
+  <!-- Setup Screen (first-time only) -->
+  <div id="setup-screen" class="setup-screen hidden">
+    <div class="window-controls window-controls-floating" aria-label="Window Controls">
+      <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
+        <span class="window-control-icon minimize"></span>
+      </button>
+      <button class="window-control-btn" data-window-action="maximize" title="Maximize" aria-label="Maximize">
+        <span class="window-control-icon maximize"></span>
+        <span class="window-control-icon restore hidden"></span>
+      </button>
+      <button class="window-control-btn window-control-close" data-window-action="close" title="Close" aria-label="Close">
+        <span class="window-control-icon close"></span>
+      </button>
+    </div>
+    <div class="setup-card">
+      <div class="setup-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+          <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+          <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+          <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+        </svg>
+      </div>
+      <h1 class="setup-title">StudioSync</h1>
+      <p class="setup-subtitle">Connect to your team's shared drive to get started.</p>
+      <button id="setup-select-folder" class="btn btn-primary">Select Shared Folder</button>
+      <p id="setup-path" class="setup-path"></p>
+      <p id="setup-error" class="setup-error"></p>
+    </div>
+  </div>
+
+  <!-- User Registration Screen (when user not found in DB) -->
+  <div id="register-screen" class="setup-screen hidden">
+    <div class="window-controls window-controls-floating" aria-label="Window Controls">
+      <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
+        <span class="window-control-icon minimize"></span>
+      </button>
+      <button class="window-control-btn" data-window-action="maximize" title="Maximize" aria-label="Maximize">
+        <span class="window-control-icon maximize"></span>
+        <span class="window-control-icon restore hidden"></span>
+      </button>
+      <button class="window-control-btn window-control-close" data-window-action="close" title="Close" aria-label="Close">
+        <span class="window-control-icon close"></span>
+      </button>
+    </div>
+    <div class="setup-card">
+      <div class="setup-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+          <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+      </div>
+      <h1 class="setup-title">Welcome</h1>
+      <p class="setup-subtitle">You're not registered yet. Ask a partner to add your account, or set up as the first user.</p>
+      <div id="first-user-setup" class="hidden">
+        <div class="form-group">
+          <label>Enter Name</label>
+          <input type="text" id="register-name" class="input" placeholder="e.g. John Smith">
+        </div>
+        <button id="register-submit" class="btn btn-primary">Create Account</button>
+      </div>
+      <p id="register-status" class="setup-subtitle"></p>
+    </div>
+  </div>
+
+  <!-- Login Screen -->
+  <div id="login-screen" class="setup-screen hidden">
+    <div class="window-controls window-controls-floating" aria-label="Window Controls">
+      <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
+        <span class="window-control-icon minimize"></span>
+      </button>
+      <button class="window-control-btn" data-window-action="maximize" title="Maximize" aria-label="Maximize">
+        <span class="window-control-icon maximize"></span>
+        <span class="window-control-icon restore hidden"></span>
+      </button>
+      <button class="window-control-btn window-control-close" data-window-action="close" title="Close" aria-label="Close">
+        <span class="window-control-icon close"></span>
+      </button>
+    </div>
+    <div class="setup-card">
+      <div class="setup-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+          <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+      </div>
+      <h1 class="setup-title">Sign In</h1>
+      <p class="setup-subtitle">Enter your username to continue.</p>
+      <div class="form-group">
+        <input type="text" id="login-username" class="input" placeholder="e.g. nchiappetta" autocomplete="off" spellcheck="false">
+      </div>
+      <button id="login-submit" class="btn btn-primary" style="width:100%">Sign In</button>
+      <p id="login-error" class="setup-error"></p>
+    </div>
+  </div>
+
+  <!-- Main Application -->
+  <div id="app" class="app-shell hidden">
+    <!-- Toolbar -->
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <span class="toolbar-brand">StudioSync</span>
+      </div>
+      <div class="toolbar-center">
+        <div class="search-wrapper">
+          <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="search-input" class="search-input" placeholder="Search tasks and people...">
+        </div>
+        <button id="btn-filter" class="toolbar-btn toolbar-btn-filter">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+          </svg>
+          Filter
+          <span id="filter-badge" class="filter-badge hidden"></span>
+        </button>
+      </div>
+      <div class="toolbar-right">
+        <button id="btn-print" class="toolbar-btn partner-only">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 6 2 18 2 18 9"></polyline>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+            <rect x="6" y="14" width="12" height="8"></rect>
+          </svg>
+          Print
+        </button>
+        <button id="btn-manage-users" class="toolbar-btn partner-only">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          Manage Staff
+        </button>
+        <button id="btn-settings" class="toolbar-btn partner-only" title="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+        <div class="toolbar-divider"></div>
+        <div id="current-user-badge" class="user-badge">
+          <div class="user-avatar-small"></div>
+          <span class="user-badge-name"></span>
+        </div>
+        <div id="sync-indicator" class="sync-indicator" title="Synced">
+          <div class="sync-dot"></div>
+        </div>
+      </div>
+      <div class="window-controls" aria-label="Window Controls">
+        <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
+          <span class="window-control-icon minimize"></span>
+        </button>
+        <button class="window-control-btn" data-window-action="maximize" title="Maximize" aria-label="Maximize">
+          <span class="window-control-icon maximize"></span>
+          <span class="window-control-icon restore hidden"></span>
+        </button>
+        <button class="window-control-btn window-control-close" data-window-action="close" title="Close" aria-label="Close">
+          <span class="window-control-icon close"></span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <!-- Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div id="mini-calendar" class="mini-calendar">
+          <!-- Calendar rendered by JS -->
+        </div>
+        <div class="sidebar-header">
+          <span class="sidebar-title">Staff</span>
+          <button id="sidebar-sort-btn" class="sidebar-sort-btn" title="Sort staff list">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="4" y1="6" x2="20" y2="6"></line>
+              <line x1="4" y1="12" x2="16" y2="12"></line>
+              <line x1="4" y1="18" x2="12" y2="18"></line>
+            </svg>
+          </button>
+          <button id="sidebar-all-staff" class="sidebar-view-toggle active">All</button>
+        </div>
+        <div class="sidebar-list" id="sidebar-list">
+          <!-- Staff items rendered by JS -->
+        </div>
+      </aside>
+
+      <!-- Content Area (Tasks + Projects in a resizable split) -->
+      <div class="content-area">
+        <!-- Tasks Panel -->
+        <div class="tasks-panel" id="tasks-panel">
+          <div class="panel-header">
+            <div class="panel-header-left">
+              <h1 class="panel-title" id="tasks-title">All Tasks</h1>
+              <p class="panel-subtitle" id="tasks-subtitle"></p>
+            </div>
+            <div class="panel-header-right">
+              <button id="btn-add-task" class="btn btn-primary btn-sm partner-only">+ Add Task</button>
+            </div>
+          </div>
+          <div class="tasks-scroll" id="tasks-scroll">
+            <div class="tasks-container" id="tasks-container">
+              <!-- Task cards rendered by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Resizer Handle -->
+        <div class="panel-resizer" id="panel-resizer"></div>
+
+        <!-- Projects Panel -->
+        <div class="projects-panel" id="projects-panel">
+          <div class="panel-header projects-header">
+            <div class="panel-header-left">
+              <h1 class="panel-title projects-title">Projects</h1>
+            </div>
+            <div class="panel-header-right">
+              <button id="btn-add-project" class="btn btn-primary btn-sm partner-only">+ New Project</button>
+              <button id="btn-import-projects" class="btn btn-ghost btn-sm partner-only">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <polyline points="1 20 1 14 7 14"></polyline>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                Import
+              </button>
+            </div>
+          </div>
+          <div class="projects-toolbar">
+            <div class="projects-tabs" id="projects-tabs">
+              <button class="tab active" data-tab="active">Current</button>
+              <button class="tab" data-tab="future">Future</button>
+            </div>
+            <div class="projects-toolbar-right">
+              <button id="btn-project-search" class="project-search-toggle" title="Search projects">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+              </button>
+              <label class="active-only-toggle">
+                <input type="checkbox" id="projects-active-only" checked>
+                <span class="toggle-label">Active Only</span>
+              </label>
+            </div>
+          </div>
+          <div class="project-search-bar hidden" id="project-search-bar">
+            <input type="text" id="project-search-input" class="project-search-input" placeholder="Search projects...">
+            <button id="btn-close-project-search" class="project-search-close">&times;</button>
+          </div>
+          <div class="projects-scroll-row">
+            <div class="projects-scroll" id="projects-scroll">
+              <div class="projects-container" id="projects-container">
+                <!-- Project cards rendered by JS -->
+              </div>
+            </div>
+            <div class="alpha-strip" id="alpha-strip">
+              <!-- Rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="update-overlay" class="dialog-overlay hidden">
+    <div class="dialog update-dialog">
+      <div class="update-dialog-hero">
+        <div class="update-dialog-badge">Update Ready</div>
+        <h2 id="update-title" class="update-dialog-title">A newer version is available</h2>
+        <p id="update-subtitle" class="update-dialog-subtitle">Install the latest build when you're ready.</p>
+      </div>
+      <div class="dialog-body">
+        <div class="update-dialog-grid">
+          <div class="update-dialog-row">
+            <span class="update-dialog-label">Current Version</span>
+            <span id="update-current-version" class="update-dialog-value">-</span>
+          </div>
+          <div class="update-dialog-row">
+            <span class="update-dialog-label">Available Version</span>
+            <span id="update-latest-version" class="update-dialog-value">-</span>
+          </div>
+          <div class="update-dialog-row">
+            <span class="update-dialog-label">Installer</span>
+            <span id="update-installer-name" class="update-dialog-value update-dialog-file">-</span>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button id="update-later" class="btn btn-ghost">Later</button>
+        <button id="update-install" class="btn btn-primary">Install Update</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="lib/mock.js"></script> <!-- Mock API for browser preview; not used in Electron -->
+  <script src="lib/state.js"></script>
+  <script src="lib/dragDrop.js"></script>
+  <script src="components/miniCalendar.js"></script>
+  <script src="components/sidebar.js"></script>
+  <script src="components/toolbar.js"></script>
+  <script src="components/taskPanel.js"></script>
+  <script src="components/taskCard.js"></script>
+  <script src="components/comments.js"></script>
+  <script src="components/alphaStrip.js"></script>
+  <script src="components/projectPanel.js"></script>
+  <script src="components/projectCard.js"></script>
+  <script src="components/dialogs/taskDialog.js"></script>
+  <script src="components/dialogs/userDialog.js"></script>
+  <script src="components/dialogs/settingsDialog.js"></script>
+  <script src="components/dialogs/ptoDialog.js"></script>
+  <script src="components/dialogs/printDialog.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

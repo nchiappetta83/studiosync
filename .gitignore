@@ -1,0 +1,27 @@
+# Dependencies and build output
+**/node_modules/
+**/dist/
+**/data/
+
+# Logs and OS files
+*.log
+npm-debug.log*
+Thumbs.db
+.DS_Store
+
+# Local tooling and scratch space
+**/.claude/
+tmp/
+
+# Office packaging/output folders kept outside the source repo
+office-guides/
+office-installers/
+office-portables/
+office-server-launcher/
+office-unpacked-zips/
+
+# Local reference artifacts in this workspace
+*.pdf
+Office Deployment Checklist.html
+SD_Schedule.xlsx
+scheduling_icon.ico

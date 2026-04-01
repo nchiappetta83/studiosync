@@ -1,0 +1,193 @@
+/**
+ * Project panel — project cards with Current/Future tabs, Active Only toggle,
+ * pop-out project search, and Excel import.
+ */
+
+const ProjectPanel = {
+  _projectSearchQuery: '',
+
+  init() {
+    this._container = document.getElementById('projects-container');
+    this._tabs = document.getElementById('projects-tabs');
+    this._addBtn = document.getElementById('btn-add-project');
+    this._importBtn = document.getElementById('btn-import-projects');
+    this._activeOnlyCheckbox = document.getElementById('projects-active-only');
+    this._searchToggle = document.getElementById('btn-project-search');
+    this._searchBar = document.getElementById('project-search-bar');
+    this._searchInput = document.getElementById('project-search-input');
+    this._searchClose = document.getElementById('btn-close-project-search');
+
+    // Tab switching
+    this._tabs.addEventListener('click', (e) => {
+      const tab = e.target.closest('.tab');
+      if (!tab) return;
+      AppState.set('projectTab', tab.dataset.tab);
+    });
+
+    // Add project
+    this._addBtn.addEventListener('click', () => {
+      TaskDialog.showProjectDialog();
+    });
+
+    // Excel import
+    if (this._importBtn) {
+      this._importBtn.addEventListener('click', async () => {
+        this._importBtn.disabled = true;
+        try {
+          const result = await window.api.importExcel();
+          if (result && !result.error) {
+            await AppState.refresh();
+            Toast.show(`Imported ${result.imported} new, updated ${result.updated} projects`, 'success');
+          } else if (result && result.error) {
+            Toast.show(result.error, 'error');
+          }
+        } catch (err) {
+          Toast.show('Import failed: ' + err.message, 'error');
+        }
+        this._importBtn.disabled = false;
+      });
+    }
+
+    // Active Only toggle
+    if (this._activeOnlyCheckbox) {
+      this._activeOnlyCheckbox.addEventListener('change', () => {
+        this.render();
+      });
+    }
+
+    // Pop-out project search
+    if (this._searchToggle) {
+      this._searchToggle.addEventListener('click', () => {
+        const isOpen = !this._searchBar.classList.contains('hidden');
+        if (isOpen) {
+          this._closeSearch();
+        } else {
+          this._openSearch();
+        }
+      });
+    }
+
+    if (this._searchClose) {
+      this._searchClose.addEventListener('click', () => this._closeSearch());
+    }
+
+    if (this._searchInput) {
+      let debounce;
+      this._searchInput.addEventListener('input', () => {
+        clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          this._projectSearchQuery = this._searchInput.value;
+          this.render();
+        }, 150);
+      });
+
+      this._searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') this._closeSearch();
+      });
+    }
+
+    AppState.on('projects', () => this.render());
+    AppState.on('projectTab', () => this._updateTabs());
+    AppState.on('projectTab', () => this.render());
+    this._updateTabs();
+    this.render();
+
+    // Initialize alpha strip
+    AlphaStrip.init();
+  },
+
+  _openSearch() {
+    this._searchBar.classList.remove('hidden');
+    this._searchToggle.classList.add('active');
+    this._searchInput.focus();
+  },
+
+  _closeSearch() {
+    this._searchBar.classList.add('hidden');
+    this._searchToggle.classList.remove('active');
+    this._searchInput.value = '';
+    this._projectSearchQuery = '';
+    this.render();
+  },
+
+  _updateTabs() {
+    const activeTab = AppState.get('projectTab');
+    this._tabs.querySelectorAll('.tab').forEach(tab => {
+      tab.classList.toggle('active', tab.dataset.tab === activeTab);
+    });
+  },
+
+  _getFilteredProjects() {
+    const tab = AppState.get('projectTab');
+    const activeOnly = this._activeOnlyCheckbox?.checked ?? true;
+    const query = this._projectSearchQuery.toLowerCase();
+    let projects = AppState.get('projects') || [];
+
+    // Tab filter — "Current" shows current category, "Future" shows future category
+    if (tab === 'active') {
+      // Current tab
+      if (activeOnly) {
+        projects = projects.filter(p => (p.category || 'current') === 'current' && p.status === 'active');
+      } else {
+        projects = projects.filter(p => (p.category || 'current') === 'current');
+      }
+    } else if (tab === 'future') {
+      projects = projects.filter(p => (p.category || 'current') === 'future');
+    }
+
+    // Search filter
+    if (query) {
+      projects = projects.filter(p =>
+        (p.name && p.name.toLowerCase().includes(query)) ||
+        (p.client && p.client.toLowerCase().includes(query)) ||
+        (p.notes && p.notes.toLowerCase().includes(query))
+      );
+    }
+
+    return [...projects].sort((a, b) => {
+      const clientCompare = String(a.client || '').localeCompare(String(b.client || ''), undefined, { sensitivity: 'base' });
+      if (clientCompare !== 0) return clientCompare;
+      return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+    });
+  },
+
+  render() {
+    const projects = this._getFilteredProjects();
+
+    if (projects.length === 0) {
+      const tab = AppState.get('projectTab');
+      const query = this._projectSearchQuery;
+      let emptyMsg;
+
+      if (query) {
+        emptyMsg = `No projects matching "${query}"`;
+      } else if (tab === 'active') {
+        emptyMsg = 'No active projects. Import from Excel or add manually.';
+      } else {
+        emptyMsg = 'No projects in this category.';
+      }
+
+      this._container.innerHTML = `
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <div class="empty-state-title">No projects</div>
+          <div class="empty-state-text">${emptyMsg}</div>
+        </div>
+      `;
+      return;
+    }
+
+    let html = '';
+    for (const project of projects) {
+      html += ProjectCard.render(project);
+    }
+
+    this._container.innerHTML = html;
+    ProjectCard.bindEvents(this._container);
+
+    // Update alpha strip with current projects
+    AlphaStrip.update(projects);
+  }
+};

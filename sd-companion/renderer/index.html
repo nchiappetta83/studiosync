@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StudioSync MyTasks</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/companion.css">
+</head>
+<body>
+  <!-- ── Login / Auto-detect ────────────────────────── -->
+  <div id="login-screen" class="login-screen">
+    <div class="window-controls window-controls-floating" aria-label="Window Controls">
+      <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
+        <span class="window-control-icon minimize"></span>
+      </button>
+      <button class="window-control-btn" data-window-action="maximize" title="Maximize" aria-label="Maximize">
+        <span class="window-control-icon maximize"></span>
+        <span class="window-control-icon restore hidden"></span>
+      </button>
+      <button class="window-control-btn window-control-close" data-window-action="close" title="Close" aria-label="Close">
+        <span class="window-control-icon close"></span>
+      </button>
+    </div>
+    <div class="login-card">
+      <div class="login-logo">SS</div>
+      <h1 class="login-title">StudioSync MyTasks</h1>
+      <p class="login-subtitle" id="login-subtitle">Enter your username to sign in.</p>
+      <div class="login-users" id="login-users">
+        <!-- Login form rendered by JS -->
+      </div>
+      <div id="login-error" class="login-error hidden"></div>
+    </div>
+  </div>
+
+  <!-- ── Main App Shell ─────────────────────────────── -->
+  <div id="app-shell" class="app-shell hidden">
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="topbar-logo">SS</span>
+        <span class="topbar-title">MyTasks</span>
+      </div>
+      <div class="topbar-center">
+        <div class="search-wrapper">
+          <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="search-input" class="search-input" placeholder="Search tasks...">
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="user-badge" id="user-badge">
+          <span class="user-avatar" id="user-avatar"></span>
+          <span class="user-name" id="user-name"></span>
+          <span class="user-role-badge" id="user-role-badge"></span>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="logout-btn">Sign Out</button>
+      </div>
+      <div class="window-controls" aria-label="Window Controls">
+        <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
+          <span class="window-control-icon minimize"></span>
+        </button>
+        <button class="window-control-btn" data-window-action="maximize" title="Maximize" aria-label="Maximize">
+          <span class="window-control-icon maximize"></span>
+          <span class="window-control-icon restore hidden"></span>
+        </button>
+        <button class="window-control-btn window-control-close" data-window-action="close" title="Close" aria-label="Close">
+          <span class="window-control-icon close"></span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Content Area -->
+    <div class="content">
+      <!-- Sidebar: staff list (partner only) -->
+      <aside class="sidebar hidden" id="sidebar">
+        <button class="sidebar-toggle" id="sidebar-toggle" title="Collapse sidebar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="sidebar-content" id="sidebar-content">
+          <div class="sidebar-section sidebar-staff-section" id="staff-section">
+            <div class="sidebar-section-label">STAFF</div>
+            <div class="sidebar-staff-list" id="staff-list">
+              <!-- Filled by JS -->
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Panel -->
+      <main class="main-panel" id="main-panel">
+        <!-- Tab bar (partner view) -->
+        <div class="tab-bar hidden" id="tab-bar">
+          <button class="tab active" data-tab="my-tasks">My Tasks</button>
+          <button class="tab" data-tab="my-projects">My Projects</button>
+          <button class="tab" data-tab="staff-view">Staff Overview</button>
+        </div>
+
+        <!-- My Tasks View -->
+        <div class="view active" id="view-my-tasks">
+          <!-- Stats header bar -->
+          <div class="stats-bar" id="stats-bar">
+            <!-- Filled by JS -->
+          </div>
+
+          <div class="view-header">
+            <h2 class="view-title">My Tasks</h2>
+            <span class="private-info-icon hidden" id="my-tasks-private-badge" title="All Tasks Listed Are Private And Not Visible To Staff">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            </span>
+            <span class="view-count" id="my-task-count">0 tasks</span>
+            <div class="view-header-spacer"></div>
+            <button class="btn btn-accent btn-sm hidden" id="add-private-task-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Task
+            </button>
+          </div>
+          <div class="task-list" id="my-task-list">
+            <!-- Task cards rendered by JS -->
+          </div>
+        </div>
+
+        <!-- My Projects View (partner only) -->
+        <div class="view hidden" id="view-my-projects">
+          <div class="view-header">
+            <h2 class="view-title">My Projects</h2>
+            <span class="view-count" id="my-projects-count">0 projects</span>
+            <div class="view-header-spacer"></div>
+            <button class="btn btn-accent btn-sm" id="add-project-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Project
+            </button>
+          </div>
+          <div id="my-projects-list">
+            <!-- Project cards rendered by JS -->
+          </div>
+        </div>
+
+        <!-- Staff Overview (partner only) -->
+        <div class="view hidden" id="view-staff-view">
+          <div class="staff-overview" id="staff-overview">
+            <!-- Staff sections rendered by JS -->
+          </div>
+        </div>
+      </main>
+
+      <!-- Detail Panel (always visible) -->
+      <aside class="detail-panel" id="detail-panel">
+        <div class="detail-header" id="detail-header">
+          <h3 class="detail-title" id="detail-title">Task Details</h3>
+        </div>
+        <div class="detail-body" id="detail-body">
+          <div class="detail-empty-state">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg>
+            <span>Select a task for details</span>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Add Task Dialog (project picker) -->
+    <div class="dialog-overlay hidden" id="add-task-overlay">
+      <div class="dialog-card">
+        <div class="dialog-header">
+          <h3 class="dialog-title" id="add-task-title">Add Task</h3>
+          <button class="detail-close" id="add-task-close">&times;</button>
+        </div>
+        <div class="dialog-body">
+          <p class="dialog-subtitle" id="add-task-subtitle"></p>
+
+          <div class="form-group">
+            <label>Project</label>
+            <div class="project-picker" id="project-picker">
+              <!-- Project list rendered by JS -->
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Task Title</label>
+            <div class="task-title-display" id="add-task-title-display">Select a project above</div>
+          </div>
+
+          <div class="form-group">
+            <label>Notes</label>
+            <textarea class="input" id="add-task-notes-input" placeholder="Optional notes..." rows="2" style="resize:vertical"></textarea>
+          </div>
+
+          <div style="display:flex;gap:12px">
+            <div class="form-group" style="flex:1">
+              <label>Priority</label>
+              <select class="select" id="add-task-priority">
+                <option value="">None</option>
+                <option value="1">1 - Urgent</option>
+                <option value="2">2 - High</option>
+                <option value="3">3 - Medium</option>
+                <option value="4">4 - Low</option>
+                <option value="w">W - Wait</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>Due Date</label>
+              <input type="date" class="input" id="add-task-due">
+            </div>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn btn-ghost" id="add-task-cancel">Cancel</button>
+          <button class="btn btn-primary" id="add-task-save">Add Task</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Project Dialog (adds to Excel project list) -->
+    <div class="dialog-overlay hidden" id="add-personal-project-overlay">
+      <div class="dialog-card">
+        <div class="dialog-header">
+          <h3 class="dialog-title">Add Project</h3>
+          <button class="detail-close" id="add-pp-close">&times;</button>
+        </div>
+        <div class="dialog-body">
+          <p class="dialog-subtitle">This project will be added to the project list and synced to the Excel file.</p>
+
+          <div class="form-group">
+            <label>Client</label>
+            <input type="text" class="input" id="add-pp-client" placeholder="Client name...">
+          </div>
+
+          <div class="form-group">
+            <label>Project Name</label>
+            <input type="text" class="input" id="add-pp-name" placeholder="Project name...">
+          </div>
+
+          <div class="form-group">
+            <label>Notes</label>
+            <textarea class="input" id="add-pp-notes" placeholder="Optional notes..." rows="2" style="resize:vertical"></textarea>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn btn-ghost" id="add-pp-cancel">Cancel</button>
+          <button class="btn btn-primary" id="add-pp-save">Add Project</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Project Notes Dialog -->
+    <div class="dialog-overlay hidden" id="project-notes-overlay">
+      <div class="dialog-card">
+        <div class="dialog-header">
+          <h3 class="dialog-title" id="project-notes-title">Project Notes</h3>
+          <button class="detail-close" id="project-notes-close">&times;</button>
+        </div>
+        <div class="dialog-body">
+          <p class="dialog-subtitle" id="project-notes-subtitle"></p>
+          <textarea class="dialog-textarea" id="project-notes-textarea" placeholder="Add project notes here... These notes stay with the project even after tasks are completed." rows="8"></textarea>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn btn-ghost" id="project-notes-cancel">Cancel</button>
+          <button class="btn btn-primary" id="project-notes-save">Save Notes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+    <!-- Add Subtask Dialog -->
+    <div class="dialog-overlay hidden" id="add-subtask-overlay">
+      <div class="dialog-card" style="max-width:400px">
+        <div class="dialog-header">
+          <h3 class="dialog-title">Add Subtask</h3>
+          <button class="detail-close" id="add-subtask-close">&times;</button>
+        </div>
+        <div class="dialog-body">
+          <p class="dialog-subtitle" id="add-subtask-subtitle"></p>
+          <div class="form-group">
+            <label>Subtask Title</label>
+            <input type="text" class="input" id="add-subtask-title" placeholder="What needs to be done...">
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn btn-ghost" id="add-subtask-cancel">Cancel</button>
+          <button class="btn btn-primary" id="add-subtask-save">Add Subtask</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog-overlay hidden" id="update-overlay">
+    <div class="dialog-card update-dialog-card">
+      <div class="update-dialog-hero">
+        <div class="update-dialog-badge">Update Ready</div>
+        <h2 class="update-dialog-title" id="update-title">A newer version is available</h2>
+        <p class="update-dialog-subtitle" id="update-subtitle">Install the latest build when you're ready.</p>
+      </div>
+      <div class="dialog-body update-dialog-body">
+        <div class="update-dialog-grid">
+          <div class="update-dialog-row">
+            <span class="update-dialog-label">Current Version</span>
+            <span class="update-dialog-value" id="update-current-version">-</span>
+          </div>
+          <div class="update-dialog-row">
+            <span class="update-dialog-label">Available Version</span>
+            <span class="update-dialog-value" id="update-latest-version">-</span>
+          </div>
+          <div class="update-dialog-row">
+            <span class="update-dialog-label">Installer</span>
+            <span class="update-dialog-value update-dialog-file" id="update-installer-name">-</span>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button class="btn btn-ghost" id="update-later">Later</button>
+        <button class="btn btn-primary" id="update-install">Install Update</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="components/app.js"></script>
+</body>
+</html>

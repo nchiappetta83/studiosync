@@ -1,0 +1,281 @@
+/* ── Design Tokens ─────────────────────────────────────── */
+
+:root {
+  /* Surfaces */
+  --bg:               #F7F9FB;
+  --bg-secondary:     #F0F4F7;
+  --bg-tertiary:      #E4EAF0;
+  --bg-card:          #FFFFFF;
+  --bg-card-hover:    #FAFBFC;
+
+  /* Sidebar */
+  --sidebar:              #2A3439;
+  --sidebar-hover:        #353F45;
+  --sidebar-selected:     #1E2629;
+  --sidebar-pill:         #3D4A52;
+  --sidebar-text:         #E8ECF0;
+  --sidebar-text-secondary: #8A9AA6;
+
+  /* Accent */
+  --accent:           #4D4AD5;
+  --accent-hover:     #3F3CC4;
+  --accent-light:     #EDEDFB;
+
+  /* Priority colors */
+  --priority-1:       #D95F5F;
+  --priority-2:       #D4883A;
+  --priority-3:       #2EAD7F;
+  --priority-4:       #4880C8;
+  --priority-w:       #8899AA;
+
+  /* Priority backgrounds */
+  --priority-bg-1:    #FDF2F2;
+  --priority-bg-2:    #FDF5ED;
+  --priority-bg-3:    #EEFAF5;
+  --priority-bg-4:    #EEF4FB;
+  --priority-bg-w:    #F2F4F6;
+
+  /* Text */
+  --text-primary:     #2A3439;
+  --text-secondary:   #5C6B75;
+  --text-tertiary:    #94A3AF;
+
+  /* Borders */
+  --border:           #E4EAF0;
+  --border-light:     #F0F4F7;
+
+  /* Badges */
+  --badge-bg:         #2EAD7F;
+  --badge-fg:         #FFFFFF;
+
+  /* Special */
+  --status-active:    #D4A017;
+  --pto-bg:           #FDF0E0;
+  --pto-text:         #D4883A;
+  --danger:           #D95F5F;
+  --danger-hover:     #C74E4E;
+  --success:          #2EAD7F;
+
+  /* Typography */
+  --font-display:     'Manrope', 'Segoe UI', 'SF Pro Display', 'Helvetica Neue', sans-serif;
+  --font-body:        'Inter', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+
+  /* Spacing */
+  --space-xs:   4px;
+  --space-sm:   8px;
+  --space-md:   12px;
+  --space-lg:   16px;
+  --space-xl:   20px;
+  --space-2xl:  28px;
+
+  /* Radii */
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  12px;
+  --radius-pill: 100px;
+
+  /* Shadows */
+  --shadow-card:      0 2px 8px rgba(42, 52, 57, 0.06), 0 4px 20px rgba(42, 52, 57, 0.04);
+  --shadow-card-lg:   0 4px 12px rgba(42, 52, 57, 0.08), 0 8px 28px rgba(42, 52, 57, 0.06);
+  --shadow-dropdown:  0 8px 32px rgba(42, 52, 57, 0.12);
+  --shadow-dialog:    0 16px 48px rgba(42, 52, 57, 0.16);
+
+  /* Transitions */
+  --ease-out:   cubic-bezier(0.16, 1, 0.3, 1);
+  --duration:   0.15s;
+}
+
+/* ── Reset ─────────────────────────────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+}
+
+input, textarea, button {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input, textarea {
+  outline: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  transition: border-color var(--duration);
+}
+
+input:focus, textarea:focus {
+  border-color: var(--accent);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* ── Utility Classes ───────────────────────────────────── */
+
+.hidden {
+  display: none !important;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  font-size: 13px;
+  transition: background var(--duration), transform 0.1s;
+  white-space: nowrap;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #FFFFFF;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-accent {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.btn-accent:hover {
+  background: #DDDCF8;
+}
+
+.btn-danger {
+  background: var(--priority-bg-1);
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: #FACECE;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-ghost:hover {
+  background: var(--bg-secondary);
+}
+
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.badge-green {
+  background: var(--badge-bg);
+  color: var(--badge-fg);
+}
+
+.badge-pto {
+  background: var(--pto-bg);
+  color: var(--pto-text);
+}
+
+.badge-status {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+
+.badge-active {
+  color: var(--status-active);
+}
+
+.badge-inactive {
+  color: var(--text-tertiary);
+}
+
+.badge-future {
+  color: var(--priority-4);
+}
+
+/* Form elements */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.select {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2394A3AF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+
+.select:focus {
+  border-color: var(--accent);
+}

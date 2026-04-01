@@ -1,0 +1,124 @@
+name: Release And Sign Windows Installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  build-sign-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            sd-scheduling/package-lock.json
+            sd-companion/package-lock.json
+
+      - name: Install StudioSync dependencies
+        working-directory: sd-scheduling
+        run: npm ci
+
+      - name: Install StudioSync MyTasks dependencies
+        working-directory: sd-companion
+        run: npm ci
+
+      - name: Build StudioSync installer
+        working-directory: sd-scheduling
+        run: npm run build
+
+      - name: Build StudioSync MyTasks installer
+        working-directory: sd-companion
+        run: npm run build
+
+      - name: Upload unsigned StudioSync installer
+        id: upload_studiosync_unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: studiosync-unsigned-installer
+          path: sd-scheduling/dist/StudioSync Setup *.exe
+          if-no-files-found: error
+
+      - name: Upload unsigned StudioSync MyTasks installer
+        id: upload_mytasks_unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: studiosync-mytasks-unsigned-installer
+          path: sd-companion/dist/StudioSync MyTasks Setup *.exe
+          if-no-files-found: error
+
+      - name: Sign StudioSync installer with SignPath
+        id: sign_studiosync
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_STUDIOSYNC_ARTIFACT_CONFIG_SLUG }}
+          github-artifact-id: ${{ steps.upload_studiosync_unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/studiosync
+
+      - name: Sign StudioSync MyTasks installer with SignPath
+        id: sign_mytasks
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_MYTASKS_ARTIFACT_CONFIG_SLUG }}
+          github-artifact-id: ${{ steps.upload_mytasks_unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/mytasks
+
+      - name: Show signed artifacts
+        shell: pwsh
+        run: Get-ChildItem -Recurse -File signed | Select-Object FullName
+
+      - name: Upload signed StudioSync workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: studiosync-signed-installer
+          path: signed/studiosync/**
+          if-no-files-found: error
+
+      - name: Upload signed StudioSync MyTasks workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: studiosync-mytasks-signed-installer
+          path: signed/mytasks/**
+          if-no-files-found: error
+
+      - name: Create or update GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title $tag --notes "Signed StudioSync installers."
+          }
+
+          $files = Get-ChildItem -Recurse -File signed | Select-Object -ExpandProperty FullName
+          if (-not $files) {
+            throw "No signed installers were found."
+          }
+
+          gh release upload $tag $files --clobber
