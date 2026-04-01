@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="StudioSync_Logo.png" alt="StudioSync logo" width="360">
+</p>
+
 # StudioSync
 
 StudioSync is a two-app Windows scheduling system for small production and professional-services teams that need a clear daily board in the office and a lighter personal workspace on each desktop.
