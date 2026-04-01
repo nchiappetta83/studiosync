@@ -10,7 +10,7 @@
     "postinstall": "electron-rebuild"
   },
   "author": "",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "dependencies": {
     "better-sqlite3": "^11.6.0",

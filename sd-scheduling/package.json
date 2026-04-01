@@ -9,7 +9,7 @@
     "build:portable": "electron-builder --win portable"
   },
   "author": "",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "devDependencies": {
     "electron": "^33.0.0",
