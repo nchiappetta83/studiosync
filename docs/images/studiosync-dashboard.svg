@@ -1,0 +1,138 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1440" height="900" fill="#EEF3F6"/>
+  <rect x="44" y="34" width="1352" height="832" rx="28" fill="#F7F9FB"/>
+  <rect x="44" y="34" width="1352" height="832" rx="28" stroke="#DCE5EB"/>
+  <rect x="44" y="34" width="1352" height="62" rx="28" fill="#FFFFFF"/>
+  <path d="M44 68C44 52.536 56.536 40 72 40H1368C1383.46 40 1396 52.536 1396 68V96H44V68Z" fill="#FFFFFF"/>
+  <circle cx="82" cy="65" r="7" fill="#EE6B5F"/>
+  <circle cx="106" cy="65" r="7" fill="#F5C451"/>
+  <circle cx="130" cy="65" r="7" fill="#61C454"/>
+  <text x="164" y="72" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700">StudioSync</text>
+  <text x="1188" y="72" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="18">Mock data preview</text>
+
+  <rect x="68" y="116" width="236" height="726" rx="22" fill="#2A3439"/>
+  <text x="94" y="164" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Today</text>
+  <text x="94" y="190" fill="#97A8B3" font-family="Segoe UI, Arial, sans-serif" font-size="13">Monday, March 31</text>
+
+  <rect x="88" y="224" width="196" height="64" rx="18" fill="#1E2629"/>
+  <circle cx="118" cy="256" r="18" fill="#5F7AE6"/>
+  <text x="118" y="261" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">AL</text>
+  <text x="146" y="252" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600">Avery Lane</text>
+  <text x="146" y="272" fill="#9CB0BC" font-family="Segoe UI, Arial, sans-serif" font-size="12">Partner   6 tasks</text>
+  <rect x="236" y="242" width="28" height="28" rx="14" fill="#2EAD7F"/>
+  <text x="250" y="261" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">6</text>
+
+  <rect x="88" y="304" width="196" height="64" rx="18" fill="#334148"/>
+  <circle cx="118" cy="336" r="18" fill="#3C9A78"/>
+  <text x="118" y="341" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">JR</text>
+  <text x="146" y="332" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600">Jordan Reed</text>
+  <text x="146" y="352" fill="#AAB8C0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Designer   4 tasks</text>
+
+  <rect x="88" y="384" width="196" height="64" rx="18" fill="#334148"/>
+  <circle cx="118" cy="416" r="18" fill="#B97A38"/>
+  <text x="118" y="421" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">MK</text>
+  <text x="146" y="412" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600">Mina Kwon</text>
+  <text x="146" y="432" fill="#AAB8C0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Producer   PTO Fri</text>
+
+  <rect x="88" y="464" width="196" height="64" rx="18" fill="#334148"/>
+  <circle cx="118" cy="496" r="18" fill="#8F67C8"/>
+  <text x="118" y="501" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">ST</text>
+  <text x="146" y="492" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="600">Sam Torres</text>
+  <text x="146" y="512" fill="#AAB8C0" font-family="Segoe UI, Arial, sans-serif" font-size="12">Editor   3 tasks</text>
+
+  <text x="94" y="586" fill="#97A8B3" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4">TOOLS</text>
+  <rect x="88" y="604" width="196" height="50" rx="14" fill="#334148"/>
+  <text x="112" y="635" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Export PDF / HTML</text>
+  <rect x="88" y="666" width="196" height="50" rx="14" fill="#334148"/>
+  <text x="112" y="697" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Weekly rollover</text>
+  <rect x="88" y="728" width="196" height="50" rx="14" fill="#334148"/>
+  <text x="112" y="759" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Admin settings</text>
+
+  <rect x="332" y="116" width="660" height="726" rx="22" fill="#F7F9FB"/>
+  <text x="362" y="162" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="32" font-weight="700">Assignments</text>
+  <text x="362" y="191" fill="#6D7E88" font-family="Segoe UI, Arial, sans-serif" font-size="16">The main dashboard is the source of truth for work planning, staffing, and exports.</text>
+
+  <rect x="756" y="136" width="206" height="42" rx="21" fill="#FFFFFF" stroke="#DCE5EB"/>
+  <text x="792" y="163" fill="#7A8C97" font-family="Segoe UI, Arial, sans-serif" font-size="14">Search tasks or notes</text>
+  <rect x="858" y="208" width="104" height="38" rx="19" fill="#4D4AD5"/>
+  <text x="910" y="232" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="700">Add Task</text>
+
+  <rect x="356" y="224" width="612" height="170" rx="22" fill="#FFFFFF" stroke="#E3EAF0"/>
+  <text x="386" y="262" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Avery Lane</text>
+  <text x="878" y="262" fill="#6F808B" font-family="Segoe UI, Arial, sans-serif" font-size="13">Partner view</text>
+
+  <rect x="386" y="286" width="250" height="84" rx="18" fill="#FCF3F2" stroke="#F3D9D7"/>
+  <rect x="406" y="306" width="28" height="28" rx="14" fill="#D95F5F"/>
+  <text x="420" y="325" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">1</text>
+  <text x="448" y="318" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Northlight Brewery</text>
+  <text x="448" y="340" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="13">Finalize kickoff agenda and confirm vendor list</text>
+  <text x="448" y="360" fill="#B05858" font-family="Segoe UI, Arial, sans-serif" font-size="12">Due today   3 subtasks</text>
+
+  <rect x="652" y="286" width="286" height="84" rx="18" fill="#EEF4FB" stroke="#D8E5F4"/>
+  <rect x="672" y="306" width="28" height="28" rx="14" fill="#4880C8"/>
+  <text x="686" y="325" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">4</text>
+  <text x="714" y="318" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Summit Electric</text>
+  <text x="714" y="340" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="13">Prepare staffing plan for site walkthrough</text>
+  <text x="714" y="360" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="12">Due Thu   waiting on client schedule</text>
+
+  <rect x="356" y="416" width="612" height="170" rx="22" fill="#FFFFFF" stroke="#E3EAF0"/>
+  <text x="386" y="454" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Jordan Reed</text>
+  <text x="890" y="454" fill="#2EAD7F" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700">2 confirmed</text>
+
+  <rect x="386" y="478" width="262" height="84" rx="18" fill="#FDF5ED" stroke="#F1DFC8"/>
+  <rect x="406" y="498" width="28" height="28" rx="14" fill="#D4883A"/>
+  <text x="420" y="517" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">2</text>
+  <text x="448" y="510" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Harbor House Film</text>
+  <text x="448" y="532" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="13">Draft location board and delivery checklist</text>
+  <text x="448" y="552" fill="#A77639" font-family="Segoe UI, Arial, sans-serif" font-size="12">Due tomorrow   client deck linked</text>
+
+  <rect x="664" y="478" width="274" height="84" rx="18" fill="#EEFAF5" stroke="#D8EFE4"/>
+  <rect x="684" y="498" width="28" height="28" rx="14" fill="#2EAD7F"/>
+  <text x="698" y="517" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700">3</text>
+  <text x="726" y="510" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Granite Health</text>
+  <text x="726" y="532" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="13">Post revised timeline to the shared folder</text>
+  <text x="726" y="552" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="12">Exported to HTML   11x17 PDF ready</text>
+
+  <rect x="356" y="608" width="612" height="190" rx="22" fill="#FFFFFF" stroke="#E3EAF0"/>
+  <text x="386" y="646" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">What admins can manage</text>
+  <rect x="386" y="670" width="170" height="46" rx="16" fill="#F0F4F7"/>
+  <text x="471" y="698" text-anchor="middle" fill="#43545E" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Users and roles</text>
+  <rect x="572" y="670" width="170" height="46" rx="16" fill="#F0F4F7"/>
+  <text x="657" y="698" text-anchor="middle" fill="#43545E" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Custom priorities</text>
+  <rect x="758" y="670" width="180" height="46" rx="16" fill="#F0F4F7"/>
+  <text x="848" y="698" text-anchor="middle" fill="#43545E" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Excel import sync</text>
+  <rect x="386" y="732" width="260" height="46" rx="16" fill="#F0F4F7"/>
+  <text x="516" y="760" text-anchor="middle" fill="#43545E" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Shared update folder</text>
+  <rect x="662" y="732" width="276" height="46" rx="16" fill="#F0F4F7"/>
+  <text x="800" y="760" text-anchor="middle" fill="#43545E" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">Weekly rollover and exports</text>
+
+  <rect x="1016" y="116" width="350" height="726" rx="22" fill="#F0F4F7"/>
+  <text x="1046" y="162" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="32" font-weight="700">Projects</text>
+  <text x="1046" y="191" fill="#6D7E88" font-family="Segoe UI, Arial, sans-serif" font-size="16">Drag a project onto a staff member to create an assignment.</text>
+
+  <rect x="1046" y="228" width="290" height="132" rx="22" fill="#FFFFFF" stroke="#E3EAF0"/>
+  <text x="1070" y="264" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Northlight Brewery</text>
+  <text x="1070" y="288" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="13">Brand video refresh</text>
+  <rect x="1070" y="306" width="78" height="28" rx="14" fill="#FFF0D6"/>
+  <text x="1109" y="324" text-anchor="middle" fill="#B57A21" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="700">ACTIVE</text>
+  <text x="1070" y="346" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="12">Notes: kickoff this week, social cutdowns next</text>
+
+  <rect x="1046" y="380" width="290" height="132" rx="22" fill="#FFFFFF" stroke="#E3EAF0"/>
+  <text x="1070" y="416" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Harbor House Film</text>
+  <text x="1070" y="440" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="13">Spring campaign</text>
+  <rect x="1070" y="458" width="78" height="28" rx="14" fill="#E8F6EE"/>
+  <text x="1109" y="476" text-anchor="middle" fill="#2E8C66" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="700">CURRENT</text>
+  <text x="1070" y="498" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="12">Imported from Excel, synced to the office view</text>
+
+  <rect x="1046" y="532" width="290" height="132" rx="22" fill="#FFFFFF" stroke="#E3EAF0"/>
+  <text x="1070" y="568" fill="#263238" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Summit Electric</text>
+  <text x="1070" y="592" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="13">Field training launch</text>
+  <rect x="1070" y="610" width="74" height="28" rx="14" fill="#EEF4FB"/>
+  <text x="1107" y="628" text-anchor="middle" fill="#3E72B5" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="700">FUTURE</text>
+  <text x="1070" y="650" fill="#60717C" font-family="Segoe UI, Arial, sans-serif" font-size="12">Queued for next week staffing and PDF export</text>
+
+  <rect x="1046" y="694" width="290" height="112" rx="22" fill="#2A3439"/>
+  <text x="1070" y="732" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Shared output</text>
+  <text x="1070" y="760" fill="#B0C0C9" font-family="Segoe UI, Arial, sans-serif" font-size="13">HTML board published for the whole office</text>
+  <text x="1070" y="786" fill="#B0C0C9" font-family="Segoe UI, Arial, sans-serif" font-size="13">Installer update folder synced to MyTasks</text>
+</svg>
