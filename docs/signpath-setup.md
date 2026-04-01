@@ -41,9 +41,12 @@ SignPath's GitHub integration expects workflow artifacts to arrive as ZIP archiv
 <?xml version="1.0" encoding="utf-8" ?>
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
-    <pe-file path="StudioSync Setup *.exe">
-      <authenticode-sign />
-    </pe-file>
+    <pe-file-set>
+      <include path="StudioSync Setup *.exe" max-matches="1" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
   </zip-file>
 </artifact-configuration>
 ```
@@ -54,9 +57,12 @@ SignPath's GitHub integration expects workflow artifacts to arrive as ZIP archiv
 <?xml version="1.0" encoding="utf-8" ?>
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
-    <pe-file path="StudioSync MyTasks Setup *.exe">
-      <authenticode-sign />
-    </pe-file>
+    <pe-file-set>
+      <include path="StudioSync MyTasks Setup *.exe" max-matches="1" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
   </zip-file>
 </artifact-configuration>
 ```
@@ -65,11 +71,11 @@ SignPath's GitHub integration expects workflow artifacts to arrive as ZIP archiv
 
 Add these repository variables:
 
-- `SIGNPATH_ORGANIZATION_ID`
-- `SIGNPATH_PROJECT_SLUG`
-- `SIGNPATH_SIGNING_POLICY_SLUG`
-- `SIGNPATH_STUDIOSYNC_ARTIFACT_CONFIG_SLUG`
-- `SIGNPATH_MYTASKS_ARTIFACT_CONFIG_SLUG`
+- `SIGNPATH_ORGANIZATION_ID` = your SignPath organization ID
+- `SIGNPATH_PROJECT_SLUG` = `studiosync`
+- `SIGNPATH_SIGNING_POLICY_SLUG` = `release-signing`
+- `SIGNPATH_STUDIOSYNC_ARTIFACT_CONFIG_SLUG` = `studiosync-installer`
+- `SIGNPATH_MYTASKS_ARTIFACT_CONFIG_SLUG` = `studiosync-mytasks-installer`
 
 Add this repository secret:
 
