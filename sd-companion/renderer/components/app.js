@@ -3,6 +3,7 @@
 
 let currentUser = null;
 let selectedTaskId = null;
+let selectedProjectId = null;
 let selectedStaffFilter = null;
 let activeFilter = null; // 'pending' | 'completed' | 'overdue' | null
 let activeTab = 'my-tasks';
@@ -19,6 +20,7 @@ let SUBTASK_CACHE = {};       // taskId -> subtask[]
 let COMMENT_CACHE = {};       // taskId -> comment[]
 let UPDATE_UI_BOUND = false;
 let WINDOW_CHROME_BOUND = false;
+let SYNC_STATUS_RESET_TIMER = null;
 const STAFF_SECTION_COLLAPSE = {};
 const PROJECT_SECTION_COLLAPSE = { active: false, future: true, inactive: true };
 
@@ -49,6 +51,10 @@ async function loadAllData() {
   // Pre-fetch subtasks and comments for all tasks
   const allTaskIds = [...TASKS, ...PRIVATE_TASKS].map(t => t.id);
   await loadSubtasksAndComments(allTaskIds);
+
+  if (currentUser) {
+    currentUser = USERS.find((user) => user.id === currentUser.id) || currentUser;
+  }
 }
 
 async function loadSubtasksAndComments(taskIds) {
@@ -134,6 +140,20 @@ function canPartnerManageTask(task) {
   return isProjectManagedByCurrentPartner(getProjectById(task?.project_id));
 }
 
+function canCurrentUserAddOwnTasks() {
+  return Boolean(currentUser && currentUser.role === 'staff' && currentUser.can_self_assign);
+}
+
+function canCurrentUserAddActionItems(task) {
+  return Boolean(
+    task &&
+    (
+      canPartnerManageTask(task) ||
+      (canCurrentUserAddOwnTasks() && task.assigned_to === currentUser?.id)
+    )
+  );
+}
+
 function getProjectSection(project) {
   if (project?.status !== 'active') return 'inactive';
   return isFutureProject(project) ? 'future' : 'active';
@@ -141,6 +161,48 @@ function getProjectSection(project) {
 
 function getTasksForUser(userId) {
   return TASKS.filter(t => t.assigned_to === userId);
+}
+
+function getTaskThreadTasks(task) {
+  if (!task || !task.project_id) return task ? [task] : [];
+
+  const threadTasks = TASKS.filter((item) => item.project_id === task.project_id);
+  if (threadTasks.length === 0) return [task];
+  return sortTasksLikeScheduling(threadTasks);
+}
+
+function getTaskAssignees(task) {
+  const seen = new Set();
+  const assignees = [];
+
+  for (const item of getTaskThreadTasks(task)) {
+    if (!item.assigned_to || seen.has(item.assigned_to)) continue;
+    const user = getUserById(item.assigned_to);
+    if (!user) continue;
+    seen.add(item.assigned_to);
+    assignees.push(user);
+  }
+
+  return assignees.sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''));
+}
+
+function getTaskComments(task) {
+  const comments = [];
+  const seen = new Set();
+
+  for (const item of getTaskThreadTasks(task)) {
+    for (const comment of COMMENT_CACHE[item.id] || []) {
+      if (seen.has(comment.id)) continue;
+      seen.add(comment.id);
+      comments.push(comment);
+    }
+  }
+
+  return comments.sort((a, b) => {
+    const timeCompare = String(a.created_at || '').localeCompare(String(b.created_at || ''));
+    if (timeCompare !== 0) return timeCompare;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
 }
 
 function getPTOForUser(userId) {
@@ -274,6 +336,72 @@ function escapeAttr(value) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function getAvailableProjectsForTaskCreation() {
+  if (isPartner()) {
+    return getProjectsForCurrentPartner({ includeFuture: false });
+  }
+
+  return PROJECTS
+    .filter((project) => project.status === 'active' && !isFutureProject(project))
+    .sort((a, b) => {
+      const clientCompare = (a.client || '').localeCompare(b.client || '');
+      if (clientCompare !== 0) return clientCompare;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+}
+
+function setTaskTitleInputValue(input, project) {
+  if (!input) return;
+
+  if (project) {
+    input.value = `${project.client} | ${project.name}`;
+    input.readOnly = true;
+    input.dataset.projectLocked = 'true';
+    input.classList.add('task-title-locked');
+  } else {
+    if (input.dataset.projectLocked === 'true') {
+      input.value = '';
+    }
+    input.readOnly = false;
+    input.dataset.projectLocked = 'false';
+    input.classList.remove('task-title-locked');
+  }
+}
+
+function bindProjectPickerSelection(picker, projects, titleInput, onProjectChange) {
+  if (!picker) return;
+
+  let selectedProjectId = null;
+
+  picker.innerHTML = projects.length === 0 ? `
+    <div class="project-picker-empty">No active projects are available right now.</div>
+  ` : projects.map((project) => `
+    <div class="project-picker-item" data-project-id="${project.id}">
+      <span class="pp-name">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</span>
+      <span class="pp-status" style="color:var(--status-active)">ACTIVE</span>
+    </div>
+  `).join('');
+
+  const applySelection = (projectId) => {
+    selectedProjectId = projectId;
+    picker.querySelectorAll('.project-picker-item').forEach((item) => {
+      item.classList.toggle('selected', item.dataset.projectId === selectedProjectId);
+    });
+    const selectedProject = selectedProjectId ? getProjectById(selectedProjectId) : null;
+    setTaskTitleInputValue(titleInput, selectedProject);
+    if (onProjectChange) onProjectChange(selectedProjectId, selectedProject);
+  };
+
+  picker.querySelectorAll('.project-picker-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      const nextProjectId = item.dataset.projectId;
+      applySelection(selectedProjectId === nextProjectId ? null : nextProjectId);
+    });
+  });
+
+  applySelection(null);
 }
 
 function positionMenu(menu, x, y) {
@@ -901,23 +1029,7 @@ async function enterApp() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app-shell').classList.remove('hidden');
 
-  // Set user badge
-  const avatar = document.getElementById('user-avatar');
-  avatar.style.background = currentUser.avatar_color;
-  avatar.textContent = getInitials(currentUser);
-  document.getElementById('user-name').textContent = currentUser.display_name;
-
-  // Get business role name
-  const roleName = currentUser.business_role || (currentUser.role === 'partner' ? 'Partner' : 'Staff');
-  document.getElementById('user-role-badge').textContent = roleName;
-
-  // Show/hide partner-only elements
-  if (isPartner()) {
-    document.getElementById('tab-bar').classList.remove('hidden');
-    document.getElementById('sidebar').classList.remove('hidden');
-    document.getElementById('add-private-task-btn').classList.remove('hidden');
-    document.getElementById('my-tasks-private-badge').classList.remove('hidden');
-  }
+  syncCurrentUserUI();
 
   // Sidebar collapse toggle
   document.getElementById('sidebar-toggle').addEventListener('click', () => {
@@ -928,8 +1040,10 @@ async function enterApp() {
   });
 
   selectedTaskId = null;
+  selectedProjectId = null;
   activeFilter = null;
   showDetailEmptyState();
+  setSyncIndicatorState('synced');
 
   renderStatsBar();
   renderMyTasks();
@@ -940,24 +1054,65 @@ async function enterApp() {
     setupAddPrivateTask();
     setupAddProject();
   }
+  setupAddSelfTask();
   setupTabBar();
   setupSearch();
-  setupLogout();
+  setupSettingsMenu();
 
   // Listen for sync updates
   window.api.onDataUpdated(async () => {
+    flashSyncIndicator();
     await loadAllData();
+    syncCurrentUserUI();
     renderStatsBar();
     const searchValue = document.getElementById('search-input').value;
     if (activeTab === 'my-projects') renderMyProjects();
+    else if (activeTab === 'staff-view') renderStaffOverview();
     else renderMyTasks(searchValue);
     if (isPartner()) {
       renderSidebar();
-      renderStaffOverview();
-      renderMyProjects();
+      if (activeTab === 'staff-view') renderStaffOverview();
+      if (activeTab === 'my-projects') renderMyProjects();
     }
     if (selectedTaskId) await openDetailPanel(selectedTaskId);
+    if (selectedProjectId) await openProjectDetailPanel(selectedProjectId);
   });
+}
+
+function syncCurrentUserUI() {
+  const avatar = document.getElementById('user-avatar');
+  if (avatar && currentUser) {
+    avatar.style.background = currentUser.avatar_color;
+    avatar.textContent = getInitials(currentUser);
+  }
+
+  const nameEl = document.getElementById('user-name');
+  if (nameEl && currentUser) {
+    nameEl.textContent = currentUser.display_name;
+  }
+
+  const roleEl = document.getElementById('user-role-badge');
+  if (roleEl && currentUser) {
+    const roleName = currentUser.business_role || (currentUser.role === 'partner' ? 'Partner' : 'Staff');
+    roleEl.textContent = roleName;
+  }
+
+  document.getElementById('add-private-task-btn')?.classList.add('hidden');
+  document.getElementById('add-self-task-btn')?.classList.add('hidden');
+  document.getElementById('my-tasks-private-badge')?.classList.add('hidden');
+
+  if (isPartner()) {
+    document.getElementById('tab-bar')?.classList.remove('hidden');
+    document.getElementById('sidebar')?.classList.remove('hidden');
+    document.getElementById('add-private-task-btn')?.classList.remove('hidden');
+    document.getElementById('my-tasks-private-badge')?.classList.remove('hidden');
+  } else {
+    document.getElementById('tab-bar')?.classList.add('hidden');
+    document.getElementById('sidebar')?.classList.add('hidden');
+    if (canCurrentUserAddOwnTasks()) {
+      document.getElementById('add-self-task-btn')?.classList.remove('hidden');
+    }
+  }
 }
 
 // ── Stats Header Bar ────────────────────────────────
@@ -1000,33 +1155,42 @@ function renderStatsBar() {
 
 function renderSidebar() {
   const staffUsers = USERS.filter(u => u.role === 'staff' && u.active !== 0);
-  document.getElementById('staff-list').innerHTML = staffUsers.map(user => {
+  document.getElementById('staff-list').innerHTML = `
+    <button class="sidebar-clear-filter ${selectedStaffFilter ? '' : 'active'}" data-clear-staff-filter="true">All Staff</button>
+    ${staffUsers.map(user => {
     const count = getTasksForUser(user.id).filter(t => !t.completed).length;
     const pto = getPTOForUser(user.id);
     return `
-      <div class="sidebar-staff-item" data-user-id="${user.id}">
+      <div class="sidebar-staff-item ${selectedStaffFilter === user.id ? 'active' : ''}" data-user-id="${user.id}">
         <div class="avatar" style="background: ${user.avatar_color}">${getInitials(user)}</div>
         <span class="staff-name">${user.display_name}${pto ? ' <span class="badge badge-pto" style="font-size:8px;padding:1px 5px;margin-left:4px">' + pto.label + '</span>' : ''}</span>
         <span class="staff-count ${count === 0 ? 'zero' : ''}">${count}</span>
       </div>
     `;
-  }).join('');
+  }).join('')}
+  `;
 
-  document.getElementById('staff-list').addEventListener('click', (e) => {
+  document.getElementById('staff-list').onclick = (e) => {
+    if (e.target.closest('[data-clear-staff-filter]')) {
+      selectedStaffFilter = null;
+      renderSidebar();
+      activateTab('staff-view', { preserveStaffFilter: false });
+      renderStaffOverview();
+      return;
+    }
+
     const item = e.target.closest('.sidebar-staff-item');
     if (!item) return;
     const userId = item.dataset.userId;
     if (selectedStaffFilter === userId) {
       selectedStaffFilter = null;
-      item.classList.remove('active');
     } else {
-      document.querySelectorAll('.sidebar-staff-item').forEach(el => el.classList.remove('active'));
       selectedStaffFilter = userId;
-      item.classList.add('active');
     }
-    activateTab('staff-view');
+    renderSidebar();
+    activateTab('staff-view', { preserveStaffFilter: true });
     renderStaffOverview();
-  });
+  };
 }
 
 // ── My Tasks View ───────────────────────────────────
@@ -1107,10 +1271,6 @@ function renderMyProjects() {
       actions.push(`<button class="pp-action-btn pp-action-primary" data-project-state="${project.id}" data-next-status="active" data-next-category="current">Make Active</button>`);
     }
 
-    if (sectionKey !== 'future') {
-      actions.push(`<button class="pp-action-btn" data-project-state="${project.id}" data-next-status="active" data-next-category="future">Move to Future</button>`);
-    }
-
     if (sectionKey !== 'inactive') {
       actions.push(`<button class="pp-action-btn pp-action-danger" data-project-state="${project.id}" data-next-status="inactive">Mark Inactive</button>`);
     }
@@ -1138,7 +1298,7 @@ function renderMyProjects() {
             <div class="empty-state-text">No ${title.toLowerCase()}.</div>
           </div>
         ` : items.map(project => `
-          <div class="personal-project-card" data-project-id="${project.id}">
+          <div class="personal-project-card ${selectedProjectId === project.id ? 'selected' : ''}" data-project-id="${project.id}">
             <div class="pp-card-info">
               <div class="pp-card-title">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</div>
               <div class="pp-card-notes">${getStatusLabel(project)}</div>
@@ -1184,6 +1344,16 @@ function renderMyProjects() {
       await window.api.updateProject(updates);
       await loadAllData();
       renderMyProjects();
+      if (selectedProjectId === projectId) {
+        await openProjectDetailPanel(projectId);
+      }
+    });
+  });
+
+  container.querySelectorAll('.personal-project-card').forEach((card) => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.pp-card-actions')) return;
+      openProjectDetailPanel(card.dataset.projectId);
     });
   });
 }
@@ -1203,37 +1373,21 @@ function openAddPrivateTaskDialog() {
   document.getElementById('add-task-title').textContent = 'Add Private Task';
   document.getElementById('add-task-subtitle').textContent = 'This task is only visible to you';
 
-  const titleDisplay = document.getElementById('add-task-title-display');
-  titleDisplay.textContent = 'Select a project above';
-  titleDisplay.classList.add('placeholder');
+  const titleInput = document.getElementById('add-task-title-input');
   document.getElementById('add-task-notes-input').value = '';
   document.getElementById('add-task-priority').value = '';
   document.getElementById('add-task-due').value = '';
+  titleInput.value = '';
+  titleInput.placeholder = 'Task title...';
+  titleInput.dataset.projectLocked = 'false';
+  titleInput.readOnly = false;
+  titleInput.classList.remove('task-title-locked');
 
   let selectedProjectId = null;
 
-  const activeProjects = getProjectsForCurrentPartner({ includeFuture: false });
   const picker = document.getElementById('project-picker');
-  picker.innerHTML = activeProjects.length === 0 ? `
-    <div class="project-picker-empty">No active projects are currently assigned to your initials.</div>
-  ` : activeProjects.map(p => `
-    <div class="project-picker-item" data-project-id="${p.id}">
-      <span class="pp-name">${p.client} | ${p.name}</span>
-      <span class="pp-status" style="color:var(--status-active)">ACTIVE</span>
-    </div>
-  `).join('');
-
-  picker.querySelectorAll('.project-picker-item').forEach(item => {
-    item.addEventListener('click', () => {
-      picker.querySelectorAll('.project-picker-item').forEach(i => i.classList.remove('selected'));
-      item.classList.add('selected');
-      selectedProjectId = item.dataset.projectId;
-      const project = getProjectById(selectedProjectId);
-      if (project) {
-        titleDisplay.textContent = `${project.client} | ${project.name}`;
-        titleDisplay.classList.remove('placeholder');
-      }
-    });
+  bindProjectPickerSelection(picker, getAvailableProjectsForTaskCreation(), titleInput, (projectId) => {
+    selectedProjectId = projectId;
   });
 
   const close = () => {
@@ -1245,8 +1399,8 @@ function openAddPrivateTaskDialog() {
   overlay.onclick = (e) => { if (e.target === overlay) close(); };
 
   document.getElementById('add-task-save').onclick = async () => {
-    if (!selectedProjectId) return;
-    const project = getProjectById(selectedProjectId);
+    const title = titleInput.value.trim();
+    if (!title) return;
 
     const notes = document.getElementById('add-task-notes-input').value.trim();
     const priorityVal = document.getElementById('add-task-priority').value;
@@ -1257,7 +1411,7 @@ function openAddPrivateTaskDialog() {
 
     await window.api.createPrivateTask({
       project_id: selectedProjectId,
-      title: `${project.client} | ${project.name}`,
+      title,
       notes,
       priority,
       due_date: dueDate,
@@ -1299,7 +1453,7 @@ function setupAddProject() {
       const notes = document.getElementById('add-pp-notes').value.trim();
       if (!client || !name) return;
 
-      await window.api.createProject({
+      const project = await window.api.createProject({
         client,
         name,
         status: 'active',
@@ -1309,6 +1463,9 @@ function setupAddProject() {
       close();
       await loadAllData();
       renderMyProjects();
+      if (project?.id) {
+        await openProjectDetailPanel(project.id);
+      }
     };
 
     const escHandler = (e) => {
@@ -1326,7 +1483,7 @@ function renderTaskCard(task, options = {}) {
   const project = getProjectById(task.project_id);
   const partnerLabel = getTaskPartnerLabel(task, project);
   const subtasks = SUBTASK_CACHE[task.id] || [];
-  const comments = COMMENT_CACHE[task.id] || [];
+  const comments = isPrivate ? (COMMENT_CACHE[task.id] || []) : getTaskComments(task);
   const completedSubs = subtasks.filter(s => s.completed).length;
   const assignee = showAssignee ? getUserById(task.assigned_to) : null;
   const canManageSharedTask = !isPrivate && canPartnerManageTask(task);
@@ -1487,11 +1644,12 @@ function attachTaskCardEvents(container) {
 async function refreshAll() {
   renderStatsBar();
   if (activeTab === 'my-projects') renderMyProjects();
+  else if (activeTab === 'staff-view') renderStaffOverview();
   else renderMyTasks(document.getElementById('search-input').value);
   if (isPartner()) {
     renderSidebar();
-    renderStaffOverview();
-    renderMyProjects();
+    if (activeTab === 'staff-view') renderStaffOverview();
+    if (activeTab === 'my-projects') renderMyProjects();
   }
 }
 
@@ -1568,37 +1726,21 @@ function openAddStaffTaskDialog(staffId) {
   document.getElementById('add-task-title').textContent = 'Add Task';
   document.getElementById('add-task-subtitle').textContent = `Assigning to ${staffUser.display_name}`;
 
-  const titleDisplay = document.getElementById('add-task-title-display');
-  titleDisplay.textContent = 'Select a project above';
-  titleDisplay.classList.add('placeholder');
+  const titleInput = document.getElementById('add-task-title-input');
   document.getElementById('add-task-notes-input').value = '';
   document.getElementById('add-task-priority').value = '';
   document.getElementById('add-task-due').value = '';
+  titleInput.value = '';
+  titleInput.placeholder = 'Task title...';
+  titleInput.dataset.projectLocked = 'false';
+  titleInput.readOnly = false;
+  titleInput.classList.remove('task-title-locked');
 
   let selectedProjectId = null;
 
-  const activeProjects = getProjectsForCurrentPartner({ includeFuture: false });
   const picker = document.getElementById('project-picker');
-  picker.innerHTML = activeProjects.length === 0 ? `
-    <div class="project-picker-empty">No active projects are currently assigned to your initials.</div>
-  ` : activeProjects.map(p => `
-    <div class="project-picker-item" data-project-id="${p.id}">
-      <span class="pp-name">${p.client} | ${p.name}</span>
-      <span class="pp-status" style="color:var(--status-active)">ACTIVE</span>
-    </div>
-  `).join('');
-
-  picker.querySelectorAll('.project-picker-item').forEach(item => {
-    item.addEventListener('click', () => {
-      picker.querySelectorAll('.project-picker-item').forEach(i => i.classList.remove('selected'));
-      item.classList.add('selected');
-      selectedProjectId = item.dataset.projectId;
-      const project = getProjectById(selectedProjectId);
-      if (project) {
-        titleDisplay.textContent = `${project.client} | ${project.name}`;
-        titleDisplay.classList.remove('placeholder');
-      }
-    });
+  bindProjectPickerSelection(picker, getAvailableProjectsForTaskCreation(), titleInput, (projectId) => {
+    selectedProjectId = projectId;
   });
 
   const close = () => {
@@ -1610,8 +1752,9 @@ function openAddStaffTaskDialog(staffId) {
   overlay.onclick = (e) => { if (e.target === overlay) close(); };
 
   document.getElementById('add-task-save').onclick = async () => {
-    if (!selectedProjectId) return;
     const project = getProjectById(selectedProjectId);
+    const title = titleInput.value.trim();
+    if (!title) return;
 
     const notes = document.getElementById('add-task-notes-input').value.trim();
     const priorityVal = document.getElementById('add-task-priority').value;
@@ -1624,8 +1767,8 @@ function openAddStaffTaskDialog(staffId) {
       project_id: selectedProjectId,
       assigned_to: staffId,
       created_by: currentUser.id,
-      partner_id: currentUser.id,
-      title: `${project.client} | ${project.name}`,
+      partner_id: project?.partner_id || currentUser.id,
+      title,
       notes,
       priority,
       due_date: dueDate,
@@ -1639,6 +1782,72 @@ function openAddStaffTaskDialog(staffId) {
     if (e.key === 'Escape') close();
   };
   document.addEventListener('keydown', escHandler);
+}
+
+function setupAddSelfTask() {
+  document.getElementById('add-self-task-btn').addEventListener('click', () => {
+    const overlay = document.getElementById('add-task-overlay');
+    overlay.classList.remove('hidden');
+
+    document.getElementById('add-task-title').textContent = 'Add Task';
+    document.getElementById('add-task-subtitle').textContent = 'Add a project-linked or freeform task to your list';
+
+    const titleInput = document.getElementById('add-task-title-input');
+    document.getElementById('add-task-notes-input').value = '';
+    document.getElementById('add-task-priority').value = '';
+    document.getElementById('add-task-due').value = '';
+    titleInput.value = '';
+    titleInput.placeholder = 'Task title...';
+    titleInput.dataset.projectLocked = 'false';
+    titleInput.readOnly = false;
+    titleInput.classList.remove('task-title-locked');
+
+    let selectedProjectId = null;
+    const picker = document.getElementById('project-picker');
+    bindProjectPickerSelection(picker, getAvailableProjectsForTaskCreation(), titleInput, (projectId) => {
+      selectedProjectId = projectId;
+    });
+
+    const close = () => {
+      document.removeEventListener('keydown', escHandler);
+      overlay.classList.add('hidden');
+    };
+    document.getElementById('add-task-close').onclick = close;
+    document.getElementById('add-task-cancel').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+    document.getElementById('add-task-save').onclick = async () => {
+      const project = getProjectById(selectedProjectId);
+      const title = titleInput.value.trim();
+      if (!title) return;
+
+      const notes = document.getElementById('add-task-notes-input').value.trim();
+      const priorityVal = document.getElementById('add-task-priority').value;
+      const dueDate = document.getElementById('add-task-due').value || null;
+      let priority = 0;
+      if (priorityVal === 'w') priority = -1;
+      else if (priorityVal) priority = parseInt(priorityVal, 10);
+
+      await window.api.createTask({
+        project_id: selectedProjectId,
+        assigned_to: currentUser.id,
+        created_by: currentUser.id,
+        partner_id: project?.partner_id || null,
+        title,
+        notes,
+        priority,
+        due_date: dueDate,
+      });
+      close();
+      await loadAllData();
+      await refreshAll();
+    };
+
+    const escHandler = (e) => {
+      if (e.key === 'Escape') close();
+    };
+    document.addEventListener('keydown', escHandler);
+  });
 }
 
 // ── Detail Panel ────────────────────────────────────
@@ -1657,6 +1866,7 @@ function showDetailEmptyState() {
 
 async function openDetailPanel(taskId) {
   selectedTaskId = taskId;
+  selectedProjectId = null;
   // Look in both regular and private tasks
   let task = TASKS.find(t => t.id === taskId);
   const isPrivateTask = !task;
@@ -1664,6 +1874,7 @@ async function openDetailPanel(taskId) {
   if (!task) return;
 
   document.querySelectorAll('.task-card').forEach(c => c.classList.toggle('selected', c.dataset.taskId === taskId));
+  document.querySelectorAll('.personal-project-card').forEach((card) => card.classList.remove('selected'));
 
   const header = document.getElementById('detail-header');
   header.innerHTML = `
@@ -1678,14 +1889,15 @@ async function openDetailPanel(taskId) {
   });
 
   const assignee = getUserById(task.assigned_to || task.owner_id);
+  const assignees = isPrivateTask ? (assignee ? [assignee] : []) : getTaskAssignees(task);
   const project = getProjectById(task.project_id);
   const partnerLabel = getTaskPartnerLabel(task, project);
   const partner = getUserById(task.partner_id || project?.partner_id);
   const subtasks = SUBTASK_CACHE[task.id] || [];
-  const comments = COMMENT_CACHE[task.id] || [];
+  const comments = isPrivateTask ? (COMMENT_CACHE[task.id] || []) : getTaskComments(task);
   const due = formatDate(task.due_date);
   const projectNotes = project ? (PROJECT_NOTES_CACHE[project.id] || '') : '';
-  const canManageThisTask = canPartnerManageTask(task);
+  const canManageThisTask = canCurrentUserAddActionItems(task);
 
   const priority = getPriorityPresentation(task);
   const priorityHTML = `<span class="task-priority ${priority.className}" style="font-size:11px;padding:3px 10px;${priority.inlineStyle}">${priority.label}</span>`;
@@ -1699,7 +1911,7 @@ async function openDetailPanel(taskId) {
     ${task.notes ? `
     <div class="detail-field">
       <div class="detail-field-label">Notes</div>
-      <div class="detail-field-value" style="font-style:italic;color:var(--text-secondary)">${task.notes}</div>
+      <div class="detail-field-value" style="font-style:italic;color:var(--text-secondary)">${escapeHtml(task.notes)}</div>
     </div>
     ` : ''}
 
@@ -1707,7 +1919,7 @@ async function openDetailPanel(taskId) {
       ${project ? `
       <div class="detail-field" style="margin-bottom:0">
         <div class="detail-field-label">Project</div>
-        <span class="task-project-label">${project.client} | ${project.name}</span>
+        <span class="task-project-label">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</span>
       </div>
       ` : ''}
     </div>
@@ -1720,15 +1932,21 @@ async function openDetailPanel(taskId) {
     </button>
     ` : ''}
 
-    ${assignee ? `
+    ${(assignees.length > 0 || partnerLabel) ? `
     <div style="display:flex;gap:24px;margin-bottom:8px">
+      ${assignees.length > 0 ? `
       <div class="detail-field">
         <div class="detail-field-label">Assigned To</div>
-        <div class="detail-field-value" style="display:flex;align-items:center;gap:8px">
-          <span class="avatar-mini" style="background:${assignee.avatar_color};width:20px;height:20px;font-size:8px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:700">${getInitials(assignee)}</span>
-          ${assignee.display_name}
+        <div class="detail-person-list">
+          ${assignees.map((user) => `
+            <span class="detail-person-pill">
+              <span class="avatar-mini" style="background:${user.avatar_color};width:20px;height:20px;font-size:8px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:700">${getInitials(user)}</span>
+              ${escapeHtml(user.display_name)}
+            </span>
+          `).join('')}
         </div>
       </div>
+      ` : ''}
       ${partnerLabel ? `
       <div class="detail-field">
         <div class="detail-field-label">Partner</div>
@@ -1744,11 +1962,11 @@ async function openDetailPanel(taskId) {
     <!-- Subtasks -->
     <div class="detail-subtasks">
       <div class="detail-section-title">
-        Subtasks ${subtasks.length > 0 ? `(${subtasks.filter(s => s.completed).length}/${subtasks.length})` : ''}
-        ${isPartner() && canManageThisTask ? '<span class="add-btn" id="add-subtask-btn">+ Add</span>' : ''}
+        Action Items ${subtasks.length > 0 ? `(${subtasks.filter(s => s.completed).length}/${subtasks.length})` : ''}
+        ${canManageThisTask ? '<span class="add-btn" id="add-subtask-btn">+ Add</span>' : ''}
       </div>
       ${subtasks.length === 0 ? `
-        <div style="font-size:12px;color:var(--text-tertiary);padding:8px 0">No subtasks yet</div>
+        <div style="font-size:12px;color:var(--text-tertiary);padding:8px 0">No action items yet</div>
       ` : subtasks.map(s => `
         <div class="subtask-item ${s.completed ? 'completed' : ''}">
           <div class="task-checkbox ${s.completed ? 'checked' : ''}" data-subtask-id="${s.id}"></div>
@@ -1776,7 +1994,7 @@ async function openDetailPanel(taskId) {
                 <span class="avatar-mini" style="background:${authorColor}">${authorInitials}</span>
                 <div class="comment-body">
                   <span class="comment-author">${authorName}<span class="comment-time">${timeAgo(c.created_at)}</span></span>
-                  <div class="comment-text">${c.body}</div>
+                  <div class="comment-text">${escapeHtml(c.body)}</div>
                 </div>
               </div>
             `;
@@ -1835,7 +2053,7 @@ async function openDetailPanel(taskId) {
 // ── Add Subtask Dialog ──────────────────────────────
 
 function openAddSubtaskDialog(task) {
-  if (!canPartnerManageTask(task)) return;
+  if (!canCurrentUserAddActionItems(task)) return;
 
   const overlay = document.getElementById('add-subtask-overlay');
   overlay.classList.remove('hidden');
@@ -1913,15 +2131,96 @@ async function openProjectNotesDialog(project) {
   document.addEventListener('keydown', escHandler);
 }
 
+async function openProjectDetailPanel(projectId) {
+  const project = getProjectById(projectId);
+  if (!project) return;
+
+  selectedProjectId = projectId;
+  selectedTaskId = null;
+  document.querySelectorAll('.task-card').forEach((card) => card.classList.remove('selected'));
+  document.querySelectorAll('.personal-project-card').forEach((card) => {
+    card.classList.toggle('selected', card.dataset.projectId === projectId);
+  });
+
+  const header = document.getElementById('detail-header');
+  header.innerHTML = `
+    <h3 class="detail-title" id="detail-title">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</h3>
+    <button class="detail-close" id="detail-close">&times;</button>
+  `;
+
+  document.getElementById('detail-close').addEventListener('click', () => {
+    selectedProjectId = null;
+    document.querySelectorAll('.personal-project-card').forEach((card) => card.classList.remove('selected'));
+    showDetailEmptyState();
+  });
+
+  const partnerNotes = PROJECT_NOTES_CACHE[project.id] || '';
+  document.getElementById('detail-body').innerHTML = `
+    <div class="detail-field">
+      <div class="detail-field-label">Client Name</div>
+      <input type="text" class="input" id="project-detail-client" value="${escapeAttr(project.client || '')}">
+    </div>
+    <div class="detail-field">
+      <div class="detail-field-label">Project Name</div>
+      <input type="text" class="input" id="project-detail-name" value="${escapeAttr(project.name || '')}">
+    </div>
+    <div class="detail-field">
+      <div class="detail-field-label">Status</div>
+      <div class="detail-field-value">${escapeHtml(getProjectSection(project).toUpperCase())}</div>
+    </div>
+    <div class="detail-field">
+      <div class="detail-field-label">Project Notes</div>
+      <textarea class="dialog-textarea" id="project-detail-notes" rows="4" placeholder="Visible on the project record.">${escapeHtml(project.notes || '')}</textarea>
+    </div>
+    <div class="detail-field">
+      <div class="detail-field-label">Partner Notes</div>
+      <textarea class="dialog-textarea" id="project-detail-partner-notes" rows="6" placeholder="Internal notes for this project.">${escapeHtml(partnerNotes)}</textarea>
+    </div>
+    <div class="detail-actions">
+      <button class="btn btn-primary btn-sm" id="project-detail-save">Save Changes</button>
+    </div>
+  `;
+
+  document.getElementById('project-detail-save').addEventListener('click', async () => {
+    const client = document.getElementById('project-detail-client').value.trim();
+    const name = document.getElementById('project-detail-name').value.trim();
+    const notes = document.getElementById('project-detail-notes').value.trim();
+    const partnerProjectNotes = document.getElementById('project-detail-partner-notes').value.trim();
+    if (!client || !name) return;
+
+    await window.api.updateProject({
+      id: project.id,
+      client,
+      name,
+      notes,
+    });
+    await window.api.updateProjectNotes({
+      project_id: project.id,
+      notes: partnerProjectNotes,
+      updated_by: currentUser?.id || null,
+    });
+    PROJECT_NOTES_CACHE[project.id] = partnerProjectNotes;
+    await loadAllData();
+    renderMyProjects();
+    await openProjectDetailPanel(project.id);
+  });
+}
+
 // ── Tab Bar ─────────────────────────────────────────
 
 function setupTabBar() {
   document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+    tab.addEventListener('click', () => activateTab(tab.dataset.tab, { preserveStaffFilter: false }));
   });
 }
 
-function activateTab(tabName) {
+function activateTab(tabName, options = {}) {
+  const { preserveStaffFilter = false } = options;
+  if (tabName === 'staff-view' && activeTab !== 'staff-view' && !preserveStaffFilter) {
+    selectedStaffFilter = null;
+    if (isPartner()) renderSidebar();
+  }
+
   activeTab = tabName;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
   document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -1934,12 +2233,27 @@ function activateTab(tabName) {
   if (tabName === 'my-projects') {
     searchInput.placeholder = 'Search projects...';
     renderMyProjects();
+    if (selectedProjectId) {
+      openProjectDetailPanel(selectedProjectId);
+    } else {
+      showDetailEmptyState();
+    }
   } else if (tabName === 'staff-view') {
     searchInput.placeholder = 'Search tasks...';
     renderStaffOverview();
+    if (selectedTaskId) {
+      openDetailPanel(selectedTaskId);
+    } else {
+      showDetailEmptyState();
+    }
   } else {
     searchInput.placeholder = 'Search tasks...';
     renderMyTasks(searchInput.value);
+    if (selectedTaskId) {
+      openDetailPanel(selectedTaskId);
+    } else {
+      showDetailEmptyState();
+    }
   }
 }
 
@@ -1959,10 +2273,73 @@ function setupSearch() {
 
 // ── Logout ──────────────────────────────────────────
 
-function setupLogout() {
-  document.getElementById('logout-btn').addEventListener('click', async () => {
-    await window.api.logout();
-    window.location.reload();
+function setSyncIndicatorState(state) {
+  const indicator = document.getElementById('sync-indicator');
+  if (!indicator) return;
+
+  const dot = indicator.querySelector('.sync-dot');
+  if (!dot) return;
+
+  dot.classList.remove('syncing', 'error');
+  if (SYNC_STATUS_RESET_TIMER) {
+    clearTimeout(SYNC_STATUS_RESET_TIMER);
+    SYNC_STATUS_RESET_TIMER = null;
+  }
+
+  if (state === 'syncing') {
+    dot.classList.add('syncing');
+    indicator.title = 'Syncing...';
+  } else if (state === 'error') {
+    dot.classList.add('error');
+    indicator.title = 'Sync error';
+  } else {
+    indicator.title = 'Synced';
+  }
+}
+
+function flashSyncIndicator() {
+  setSyncIndicatorState('syncing');
+  SYNC_STATUS_RESET_TIMER = setTimeout(() => {
+    setSyncIndicatorState('synced');
+  }, 1200);
+}
+
+function setupSettingsMenu() {
+  document.getElementById('settings-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const menu = ContextMenu.create([
+      {
+        label: 'Sync Now',
+        action: async () => {
+          try {
+            setSyncIndicatorState('syncing');
+            await window.api.forceSync();
+            setSyncIndicatorState('synced');
+          } catch (_) {
+            setSyncIndicatorState('error');
+          }
+        }
+      },
+      {
+        label: 'Check for Updates',
+        action: async () => {
+          await window.api.checkForUpdates();
+        }
+      },
+      { divider: true },
+      {
+        label: 'Sign Out',
+        action: async () => {
+          await window.api.logout();
+          window.location.reload();
+        }
+      }
+    ]);
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    positionMenu(menu, rect.right - 220, rect.bottom + 6);
   });
 }
 

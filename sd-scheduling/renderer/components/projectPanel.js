@@ -86,9 +86,11 @@ const ProjectPanel = {
       });
     }
 
-    AppState.on('projects', () => this.render());
-    AppState.on('projectTab', () => this._updateTabs());
-    AppState.on('projectTab', () => this.render());
+    this._renderListener = this._renderListener || (() => this.render());
+    this._tabListener = this._tabListener || (() => this._updateTabs());
+    AppState.on('projects', this._renderListener);
+    AppState.on('projectTab', this._tabListener);
+    AppState.on('projectTab', this._renderListener);
     this._updateTabs();
     this.render();
 

@@ -1,7 +1,7 @@
 /**
  * Mock API for browser preview — simulates the Electron IPC bridge
  * with sample data so the UI can be previewed without Electron.
- * This file is NOT included in the production Electron build.
+ * This file is only loaded when the Electron bridge is unavailable.
  */
 
 if (!window.api) {
@@ -57,6 +57,7 @@ if (!window.api) {
   window.api = {
     getConfig:        async () => ({ sharedDrivePath: 'C:\\MockSharedDrive' }),
     saveConfig:       async () => true,
+    getAppVersion:    async () => '1.0.3',
     selectFolder:     async () => 'C:\\MockSharedDrive',
     initializeApp:    async () => ({ success: true, user: MOCK_USERS[0] }),
     getWindowsUsername: async () => 'jsmith',
@@ -64,7 +65,7 @@ if (!window.api) {
     getUsers:         async () => MOCK_USERS.filter(u => u.active),
     createUser:       async (d) => { const u = { ...d, id: 'u' + Date.now(), active: 1 }; MOCK_USERS.push(u); return u; },
     updateUser:       async (d) => d,
-    deleteUser:       async () => true,
+    deleteUser:       async () => ({ success: true }),
     getTasks:         async () => MOCK_TASKS,
     createTask:       async (d) => { const t = { ...d, id: 't' + Date.now(), completed: 0, sort_order: 99 }; MOCK_TASKS.push(t); return t; },
     updateTask:       async (d) => { const i = MOCK_TASKS.findIndex(t => t.id === d.id); if (i >= 0) Object.assign(MOCK_TASKS[i], d); return MOCK_TASKS[i]; },

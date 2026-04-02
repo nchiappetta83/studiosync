@@ -1,6 +1,6 @@
 {
   "name": "sd-companion",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "StudioSync MyTasks - Role-based task viewer",
   "main": "main/index.js",
   "scripts": {
@@ -27,7 +27,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/studiosync-mytasks-fixed.ico"
+      "icon": "assets/studiosync-mytasks.ico"
     },
     "nsis": {
       "oneClick": false,

@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   // Config & setup
   getConfig:        ()          => ipcRenderer.invoke('get-config'),
   saveConfig:       (config)    => ipcRenderer.invoke('save-config', config),
+  getAppVersion:    ()          => ipcRenderer.invoke('get-app-version'),
   getUpdateFolderPath: ()       => ipcRenderer.invoke('get-update-folder-path'),
   setUpdateFolderPath: (path)   => ipcRenderer.invoke('set-update-folder-path', path),
   checkForUpdates:  ()          => ipcRenderer.invoke('check-for-updates'),

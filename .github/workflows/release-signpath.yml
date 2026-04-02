@@ -43,6 +43,15 @@ jobs:
         working-directory: sd-companion
         run: npm run build
 
+      - name: Package win-unpacked downloads
+        shell: pwsh
+        run: |
+          $version = (Get-Content sd-scheduling/package.json | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force release-packages | Out-Null
+
+          Compress-Archive -Path sd-scheduling/dist/win-unpacked -DestinationPath "release-packages/StudioSync win-unpacked $version.zip" -Force
+          Compress-Archive -Path sd-companion/dist/win-unpacked -DestinationPath "release-packages/StudioSync MyTasks win-unpacked $version.zip" -Force
+
       - name: Upload unsigned StudioSync installer
         id: upload_studiosync_unsigned
         uses: actions/upload-artifact@v4
@@ -57,6 +66,20 @@ jobs:
         with:
           name: studiosync-mytasks-unsigned-installer
           path: sd-companion/dist/StudioSync MyTasks Setup *.exe
+          if-no-files-found: error
+
+      - name: Upload StudioSync win-unpacked package
+        uses: actions/upload-artifact@v4
+        with:
+          name: studiosync-win-unpacked-package
+          path: release-packages/StudioSync win-unpacked *.zip
+          if-no-files-found: error
+
+      - name: Upload StudioSync MyTasks win-unpacked package
+        uses: actions/upload-artifact@v4
+        with:
+          name: studiosync-mytasks-win-unpacked-package
+          path: release-packages/StudioSync MyTasks win-unpacked *.zip
           if-no-files-found: error
 
       - name: Sign StudioSync installer with SignPath
@@ -113,12 +136,15 @@ jobs:
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title $tag --notes "Signed StudioSync installers."
+            gh release create $tag --title $tag --notes "Signed StudioSync installers and win-unpacked download packages."
           }
 
-          $files = Get-ChildItem -Recurse -File signed | Select-Object -ExpandProperty FullName
+          $files = @(
+            Get-ChildItem -Recurse -File signed | Select-Object -ExpandProperty FullName
+            Get-ChildItem -Recurse -File release-packages | Select-Object -ExpandProperty FullName
+          ) | Where-Object { $_ }
           if (-not $files) {
-            throw "No signed installers were found."
+            throw "No release files were found."
           }
 
           gh release upload $tag $files --clobber

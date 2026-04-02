@@ -141,12 +141,13 @@
   display: flex;
   align-items: center;
   height: 54px;
-  padding: 0 0 0 20px;
+  padding: 0 132px 0 20px;
   background: var(--sidebar);
   color: var(--sidebar-text);
   flex-shrink: 0;
   gap: 16px;
   -webkit-app-region: drag;
+  position: relative;
 }
 
 .topbar-left {
@@ -179,6 +180,7 @@
 
 .topbar-center {
   flex: 1;
+  min-width: 0;
   display: flex;
   justify-content: center;
   -webkit-app-region: drag;
@@ -187,6 +189,7 @@
 .search-wrapper {
   position: relative;
   width: 280px;
+  max-width: 100%;
   -webkit-app-region: no-drag;
 }
 
@@ -222,16 +225,21 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
   -webkit-app-region: no-drag;
-  margin-right: 8px;
 }
 
 .window-controls {
   display: flex;
   align-items: stretch;
-  margin-left: 4px;
   -webkit-app-region: no-drag;
+}
+
+.topbar > .window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
 }
 
 .window-controls-floating {
@@ -327,6 +335,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .user-avatar {
@@ -345,6 +354,9 @@
 .user-name {
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-role-badge {
@@ -358,14 +370,50 @@
   color: var(--sidebar-text-secondary);
 }
 
-.topbar-right .btn-ghost {
-  color: var(--sidebar-text-secondary);
-  font-size: 11px;
+.sync-indicator {
+  padding: 4px;
+  cursor: default;
 }
 
-.topbar-right .btn-ghost:hover {
-  color: var(--sidebar-text);
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  transition: background 0.3s;
+}
+
+.sync-dot.syncing {
+  background: var(--status-active);
+  animation: pulse 1s infinite;
+}
+
+.sync-dot.error {
+  background: var(--danger);
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--sidebar-text-secondary);
+  transition: background var(--duration), color var(--duration);
+}
+
+.icon-btn:hover {
   background: var(--sidebar-hover);
+  color: var(--sidebar-text);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 /* ── Content Layout ───────────────────────────────── */
@@ -533,6 +581,28 @@
 
 .sidebar-staff-item.active {
   background: var(--accent-light);
+}
+
+.sidebar-clear-filter {
+  width: calc(100% - 24px);
+  margin: 0 12px 10px;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-align: left;
+}
+
+.sidebar-clear-filter.active {
+  background: var(--accent-light);
+  color: var(--accent);
+  border-color: rgba(0, 116, 228, 0.18);
 }
 
 .sidebar-staff-item .avatar {
@@ -1199,6 +1269,24 @@
   color: var(--text-primary);
 }
 
+.detail-person-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-person-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
 /* Detail: subtasks */
 .detail-subtasks {
   margin-top: 20px;
@@ -1533,6 +1621,11 @@
   transform: translateY(-1px);
 }
 
+.personal-project-card.selected {
+  border-color: rgba(0, 116, 228, 0.22);
+  box-shadow: 0 0 0 1px rgba(0, 116, 228, 0.14), var(--shadow-card);
+}
+
 .personal-project-card .pp-card-info {
   flex: 1;
   min-width: 0;
@@ -1622,25 +1715,10 @@
   background: var(--priority-bg-1);
 }
 
-/* ── Task Title Display (non-editable) ───────────── */
-
-.task-title-display {
-  padding: 10px 14px;
+.task-title-locked {
   background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 600;
   color: var(--text-primary);
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-}
-
-.task-title-display.placeholder {
-  color: var(--text-tertiary);
-  font-weight: 400;
-  font-style: italic;
+  font-weight: 600;
 }
 
 /* ── Scrollable Comments Section ─────────────────── */
@@ -1657,6 +1735,12 @@
   overflow-y: auto;
   margin-bottom: 12px;
   padding-right: 4px;
+}
+
+.detail-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 16px;
 }
 
 /* ── My Projects Section (partner) ───────────────── */
@@ -1931,11 +2015,20 @@
     overflow: visible;
     text-overflow: unset;
     flex-basis: 100%;
-    order: -1;
+    order: 3;
+  }
+
+  .task-priority {
+    order: 1;
   }
 
   .task-due {
-    order: 1;
+    order: 2;
+  }
+
+  .task-delete-btn {
+    order: 4;
+    margin-left: auto;
   }
 
   .task-meta {
@@ -1957,7 +2050,7 @@
   }
 
   .search-wrapper {
-    width: 180px;
+    width: 150px;
   }
 
   .view {
@@ -1975,6 +2068,10 @@
 
   .stat-value {
     font-size: 16px;
+  }
+
+  .user-role-badge {
+    display: none;
   }
 }
 

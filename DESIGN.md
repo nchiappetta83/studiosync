@@ -446,6 +446,6 @@ This section is the current source of truth for the app naming, repository shape
 - The current app IDs are `com.studiosync.dashboard` and `com.studiosync.mytasks`.
 - The current signed-release workflow lives in `.github/workflows/release-signpath.yml`.
 - The current SignPath setup guide lives in `docs/signpath-setup.md`.
-- The current build icons are `sd-scheduling/assets/studiosync-clean.ico` and `sd-companion/assets/studiosync-mytasks-fixed.ico`.
+- The current build icons are `sd-scheduling/assets/studiosync-clean.ico` and `sd-companion/assets/studiosync-mytasks.ico`.
 
 When older sections below mention `SD Scheduling` or `SD Companion`, read them as the current StudioSync names.

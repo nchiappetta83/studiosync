@@ -65,6 +65,15 @@ const UserDialog = {
                   Allows this staff member to access admin-only controls in the app.
                 </div>
               </div>
+              <div class="form-group" id="staff-self-assign-group" style="margin-top:4px;">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                  <input type="checkbox" id="staff-self-assign">
+                  <span>Can Add Tasks In MyTasks</span>
+                </label>
+                <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">
+                  Lets this staff member add project-linked tasks and action items to their own MyTasks list.
+                </div>
+              </div>
               <input type="hidden" id="staff-edit-id" value="">
               <div class="staff-form-actions">
                 <button class="btn btn-ghost" id="staff-form-cancel">Cancel</button>
@@ -238,6 +247,9 @@ const UserDialog = {
       } else if (user.is_admin) {
         adminBadge = '<span class="user-list-role admin">Admin</span>';
       }
+      const inactiveBadge = user.active === 0
+        ? '<span class="user-list-role">Inactive</span>'
+        : '';
 
       return `
         <div class="user-list-item" data-user-id="${user.id}">
@@ -247,6 +259,7 @@ const UserDialog = {
             <div class="user-list-username">${this._esc(user.username)}${roleLabel ? ' &middot; ' + this._esc(roleLabel) : ''}</div>
           </div>
           ${adminBadge}
+          ${inactiveBadge}
           <div class="user-list-actions">
             <button class="task-action-btn" data-action="edit-user" data-user-id="${user.id}" title="Edit">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
@@ -283,8 +296,12 @@ const UserDialog = {
         const user = AppState.getUserById(btn.dataset.userId);
         if (!user) return;
 
-        if (confirm(`Remove ${user.display_name}? All their assigned tasks will be deleted.`)) {
-          await window.api.deleteUser(user.id);
+        if (confirm(`Remove ${user.display_name}? Reassign or clear any remaining tasks first.`)) {
+          const result = await window.api.deleteUser(user.id);
+          if (!result?.success) {
+            Toast.show(result?.error || 'Unable to remove this person yet.', 'error');
+            return;
+          }
           await AppState.refresh();
           this._refreshList();
           Toast.show(`${user.display_name} removed`, 'success');
@@ -306,6 +323,7 @@ const UserDialog = {
     this._overlay.querySelector('#staff-edit-id').value = '';
     this._overlay.querySelector('#staff-username-preview strong').textContent = '—';
     this._overlay.querySelector('#staff-admin-access').checked = false;
+    this._overlay.querySelector('#staff-self-assign').checked = false;
 
     // Populate business roles dropdown
     this._populateRoleDropdown();
@@ -313,9 +331,11 @@ const UserDialog = {
     // Show/hide staff-only fields
     const roleGroup = this._overlay.querySelector('#staff-role-group');
     const adminGroup = this._overlay.querySelector('#staff-admin-group');
+    const selfAssignGroup = this._overlay.querySelector('#staff-self-assign-group');
     const showStaffFields = this._activeTab !== 'partners';
     roleGroup.style.display = showStaffFields ? '' : 'none';
     adminGroup.style.display = showStaffFields ? '' : 'none';
+    selfAssignGroup.style.display = showStaffFields ? '' : 'none';
 
     const label = this._activeTab === 'partners' ? 'Partner' : 'Staff';
     titleEl.textContent = `Add ${label}`;
@@ -339,6 +359,7 @@ const UserDialog = {
     this._overlay.querySelector('#staff-last-name').value = user.last_name || '';
     this._overlay.querySelector('#staff-edit-id').value = user.id;
     this._overlay.querySelector('#staff-admin-access').checked = !!user.is_admin;
+    this._overlay.querySelector('#staff-self-assign').checked = !!user.can_self_assign;
 
     // Update username preview
     const first = user.first_name || '';
@@ -356,9 +377,11 @@ const UserDialog = {
     // Show/hide staff-only fields
     const roleGroup = this._overlay.querySelector('#staff-role-group');
     const adminGroup = this._overlay.querySelector('#staff-admin-group');
+    const selfAssignGroup = this._overlay.querySelector('#staff-self-assign-group');
     const showStaffFields = user.role !== 'partner';
     roleGroup.style.display = showStaffFields ? '' : 'none';
     adminGroup.style.display = showStaffFields ? '' : 'none';
+    selfAssignGroup.style.display = showStaffFields ? '' : 'none';
 
     titleEl.textContent = `Edit ${user.display_name}`;
     saveBtn.textContent = 'Save';
@@ -392,13 +415,16 @@ const UserDialog = {
     const preview = this._overlay.querySelector('#staff-username-preview strong');
     preview.textContent = currentUser.username || '—';
     this._overlay.querySelector('#staff-admin-access').checked = !!currentUser.is_admin;
+    this._overlay.querySelector('#staff-self-assign').checked = !!currentUser.can_self_assign;
 
     this._populateRoleDropdown(currentUser.business_role_id);
     const roleGroup = this._overlay.querySelector('#staff-role-group');
     const adminGroup = this._overlay.querySelector('#staff-admin-group');
+    const selfAssignGroup = this._overlay.querySelector('#staff-self-assign-group');
     const showStaffFields = role !== 'partner';
     roleGroup.style.display = showStaffFields ? '' : 'none';
     adminGroup.style.display = showStaffFields ? '' : 'none';
+    selfAssignGroup.style.display = showStaffFields ? '' : 'none';
 
     titleEl.textContent = role === 'partner' ? 'Add Me As Partner' : 'Add Me As Staff';
     saveBtn.textContent = role === 'partner' ? 'Become Partner' : 'Become Staff';
@@ -430,6 +456,7 @@ const UserDialog = {
     const editId = this._overlay.querySelector('#staff-edit-id').value;
     const businessRoleId = this._overlay.querySelector('#staff-business-role').value || null;
     const adminAccess = this._overlay.querySelector('#staff-admin-access').checked;
+    const selfAssign = this._overlay.querySelector('#staff-self-assign').checked;
 
     if (!firstName) {
       this._overlay.querySelector('#staff-first-name').style.borderColor = 'var(--danger)';
@@ -465,6 +492,7 @@ const UserDialog = {
           username: username,
           role: role,
           is_admin: role === 'partner' ? 1 : (adminAccess ? 1 : 0),
+          can_self_assign: role === 'staff' && selfAssign ? 1 : 0,
         };
         // Only set business_role_id for staff
         if (role === 'staff') {
@@ -483,6 +511,7 @@ const UserDialog = {
           username: username,
           role: role,
           is_admin: role === 'partner' ? 1 : (adminAccess ? 1 : 0),
+          can_self_assign: role === 'staff' && selfAssign ? 1 : 0,
         };
         if (role === 'staff') {
           createData.business_role_id = businessRoleId;

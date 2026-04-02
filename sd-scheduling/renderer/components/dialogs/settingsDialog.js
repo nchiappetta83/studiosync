@@ -503,13 +503,14 @@ const SettingsDialog = {
 
   // ── About Section ────────────────────────────────────
 
-  _renderAbout(container) {
+  async _renderAbout(container) {
+    const version = await window.api.getAppVersion();
     container.innerHTML = `
       <div class="settings-section">
         <h2 class="settings-section-title">About</h2>
         <div class="settings-about">
           <div class="settings-about-name">StudioSync</div>
-          <div class="settings-about-version">Version 1.0.2</div>
+          <div class="settings-about-version">Version ${this._esc(version || 'Unknown')}</div>
           <p class="settings-about-desc">A desktop scheduling tool for managing staff task assignments, project tracking, and team coordination.</p>
         </div>
       </div>

@@ -127,8 +127,6 @@ const SubTasks = {
       this.bindEvents(detailEl, taskId);
       Comments.bindEvents(detailEl, taskId);
     }
-    // Also refresh task counts in sidebar
-    AppState.refresh();
   },
 
   _escapeHtml(str) {

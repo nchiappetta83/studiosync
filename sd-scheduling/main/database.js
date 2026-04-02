@@ -324,6 +324,24 @@ class Database {
       }
       this._setMeta('schema_version', '9');
     }
+
+    if (version < 10) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_processed_events (
+          filename     TEXT PRIMARY KEY,
+          processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      this._setMeta('schema_version', '10');
+    }
+
+    if (version < 11) {
+      const userCols = this.db.pragma('table_info(users)').map(c => c.name);
+      if (!userCols.includes('can_self_assign')) {
+        this.db.exec(`ALTER TABLE users ADD COLUMN can_self_assign INTEGER NOT NULL DEFAULT 0`);
+      }
+      this._setMeta('schema_version', '11');
+    }
   }
 
   _getMetaInt(key, defaultVal) {
@@ -344,6 +362,21 @@ class Database {
 
   setLastSyncTimestamp(ts) {
     this.db.prepare("INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('last_sync', ?)").run(ts);
+  }
+
+  getProcessedSyncFiles() {
+    return this.db.prepare('SELECT filename FROM sync_processed_events').all().map((row) => row.filename);
+  }
+
+  markSyncFileProcessed(filename) {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO sync_processed_events (filename, processed_at)
+      VALUES (?, datetime('now'))
+    `).run(filename);
+  }
+
+  cleanupProcessedSyncFiles(cutoffStr) {
+    this.db.prepare('DELETE FROM sync_processed_events WHERE filename < ?').run(cutoffStr);
   }
 
   _globalSettingKey(key) {
@@ -475,7 +508,16 @@ class Database {
   getUsers() {
     return this.db.prepare(`
       SELECT * FROM users
-      WHERE active = 1 AND role != 'bootstrap'
+      WHERE role != 'bootstrap'
+        AND (
+          active = 1
+          OR EXISTS (
+            SELECT 1
+            FROM tasks
+            WHERE tasks.assigned_to = users.id
+               OR tasks.partner_id = users.id
+          )
+        )
       ORDER BY sort_order, display_name
     `).all();
   }
@@ -486,8 +528,8 @@ class Database {
 
   getUserByUsername(username) {
     // First try windows_username (used for auth), then fall back to username
-    return this.db.prepare('SELECT * FROM users WHERE windows_username = ? COLLATE NOCASE').get(username)
-      || this.db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username);
+    return this.db.prepare('SELECT * FROM users WHERE active = 1 AND windows_username = ? COLLATE NOCASE').get(username)
+      || this.db.prepare('SELECT * FROM users WHERE active = 1 AND username = ? COLLATE NOCASE').get(username);
   }
 
   getUserById(id) {
@@ -511,11 +553,11 @@ class Database {
     const windowsUsername = data.windows_username || null;
 
     this.db.prepare(`
-      INSERT INTO users (id, username, display_name, role, avatar_color, sort_order, first_name, last_name, business_role_id, is_admin, windows_username)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, username, display_name, role, avatar_color, sort_order, first_name, last_name, business_role_id, is_admin, windows_username, can_self_assign)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, username, displayName, data.role, color, data.sort_order ?? maxOrder + 1,
-      firstName, lastName, data.business_role_id || null, isAdmin, windowsUsername
+      firstName, lastName, data.business_role_id || null, isAdmin, windowsUsername, data.can_self_assign ? 1 : 0
     );
 
     return this.getUserById(id);
@@ -524,7 +566,7 @@ class Database {
   updateUser(data) {
     const fields = [];
     const values = [];
-    for (const key of ['display_name', 'role', 'avatar_color', 'sort_order', 'active', 'username', 'first_name', 'last_name', 'business_role_id', 'is_admin', 'windows_username']) {
+    for (const key of ['display_name', 'role', 'avatar_color', 'sort_order', 'active', 'username', 'first_name', 'last_name', 'business_role_id', 'is_admin', 'windows_username', 'can_self_assign']) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
         values.push(data[key]);
@@ -536,8 +578,11 @@ class Database {
     return this.getUserById(data.id);
   }
 
+  getAssignedTaskCount(userId) {
+    return this.db.prepare('SELECT COUNT(*) as count FROM tasks WHERE assigned_to = ?').get(userId)?.count || 0;
+  }
+
   deleteUser(id) {
-    this.db.prepare('DELETE FROM tasks WHERE assigned_to = ?').run(id);
     this.db.prepare('UPDATE users SET active = 0 WHERE id = ?').run(id);
   }
 

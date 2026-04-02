@@ -93,13 +93,13 @@ It:
 2. uploads the unsigned installers as GitHub Actions artifacts
 3. submits both workflow artifacts to SignPath
 4. downloads the signed installers back into the workflow
-5. uploads the signed installers to the GitHub release for tags like `v1.0.2`
+5. uploads the signed installers and win-unpacked zip packages to the GitHub release for tags like `v1.0.3`
 
 To publish a signed release:
 
 ```powershell
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.0.3
+git push origin v1.0.3
 ```
 
 You can also run the workflow manually with `workflow_dispatch` to test the SignPath connection before tagging a release.

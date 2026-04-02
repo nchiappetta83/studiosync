@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const crypto = require('crypto');
 const Database = require('./database');
 const SyncEngine = require('./sync');
 const Auth = require('./auth');
@@ -15,8 +17,11 @@ let sync = null;
 let auth = null;
 let autoExportTimer = null;
 let lockFilePath = null;
+let lockTimer = null;
+let lockToken = null;
 let updateManager = null;
 let excelSync = null;
+let excelWriteQueue = Promise.resolve();
 
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
@@ -155,55 +160,148 @@ const APP_DATA_DIR = ensureAppDataDir();
 // ── Lock File ────────────────────────────────────────────
 // Prevents two people from opening the main app simultaneously.
 
-function acquireLock() {
-  const sharedDrivePath = getConfiguredSharedDrivePath();
+function getLockFilePath(sharedDrivePath = getConfiguredSharedDrivePath()) {
   const lockDir = sharedDrivePath || APP_DATA_DIR;
   const lockFileName = sharedDrivePath ? '.dashboard.lock' : '.lock';
+  return path.join(lockDir, lockFileName);
+}
 
-  fs.mkdirSync(lockDir, { recursive: true });
-  lockFilePath = path.join(lockDir, lockFileName);
+function readLockFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (_) {
+    return null;
+  }
+}
 
-  if (fs.existsSync(lockFilePath)) {
-    try {
-      const lockData = JSON.parse(fs.readFileSync(lockFilePath, 'utf-8'));
-      // Check if the lock is stale (older than 2 minutes — process likely crashed)
-      const age = Date.now() - (lockData.timestamp || 0);
-      if (age < 120000) {
-        dialog.showErrorBox(
-          'StudioSync',
-          `The app is already in use by ${lockData.user || 'another user'}.\n\nIf this is incorrect, wait 2 minutes or delete:\n${lockFilePath}`
-        );
-        app.exit(0);
-        return false;
-      }
-    } catch (_) {
-      // Corrupted lock file — remove and continue
-    }
+function buildLockData() {
+  const config = loadConfig() || {};
+  const windowsUser = os.userInfo().username;
+  const appUser = config.loggedInUsername || null;
+
+  if (!lockToken) {
+    lockToken = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : crypto.randomBytes(16).toString('hex');
   }
 
-  // Write lock file
-  const lockData = {
-    user: require('os').userInfo().username,
-    machine: require('os').hostname(),
+  return {
+    token: lockToken,
+    user: appUser || windowsUser,
+    windowsUser,
+    appUser,
+    machine: os.hostname(),
+    pid: process.pid,
     timestamp: Date.now()
   };
-  fs.writeFileSync(lockFilePath, JSON.stringify(lockData, null, 2));
+}
 
-  // Refresh timestamp every 30 seconds to keep the lock alive
-  setInterval(() => {
+function showLockConflict(filePath, lockData) {
+  const owner = lockData?.appUser || lockData?.windowsUser || lockData?.user || 'another user';
+  const machine = lockData?.machine ? ` on ${lockData.machine}` : '';
+  dialog.showErrorBox(
+    'StudioSync',
+    `The app is already in use by ${owner}${machine}.\n\nIf this is incorrect, wait 2 minutes or delete:\n${filePath}`
+  );
+}
+
+function writeLockHeartbeat() {
+  if (!lockFilePath || !lockToken) return;
+
+  const lockData = buildLockData();
+  const existing = readLockFile(lockFilePath);
+  if (existing?.token && existing.token !== lockToken) return;
+
+  try {
+    fs.writeFileSync(lockFilePath, JSON.stringify(lockData, null, 2));
+  } catch (_) {}
+}
+
+function startLockHeartbeat() {
+  if (lockTimer) {
+    clearInterval(lockTimer);
+  }
+  lockTimer = setInterval(() => writeLockHeartbeat(), 30000);
+}
+
+function acquireLock(sharedDrivePath = getConfiguredSharedDrivePath(), options = {}) {
+  const { exitOnFailure = true } = options;
+  const nextLockFilePath = getLockFilePath(sharedDrivePath);
+
+  if (lockFilePath && path.resolve(lockFilePath) === path.resolve(nextLockFilePath)) {
+    writeLockHeartbeat();
+    return true;
+  }
+
+  fs.mkdirSync(path.dirname(nextLockFilePath), { recursive: true });
+
+  while (true) {
     try {
-      lockData.timestamp = Date.now();
-      fs.writeFileSync(lockFilePath, JSON.stringify(lockData, null, 2));
-    } catch (_) {}
-  }, 30000);
+      const handle = fs.openSync(nextLockFilePath, 'wx');
+      fs.writeFileSync(handle, JSON.stringify(buildLockData(), null, 2), 'utf-8');
+      fs.closeSync(handle);
+      lockFilePath = nextLockFilePath;
+      startLockHeartbeat();
+      return true;
+    } catch (err) {
+      if (err.code !== 'EEXIST') {
+        throw err;
+      }
+
+      const existingLock = readLockFile(nextLockFilePath);
+      const age = Date.now() - (existingLock?.timestamp || 0);
+      if (!existingLock || age >= 120000) {
+        try {
+          fs.unlinkSync(nextLockFilePath);
+          continue;
+        } catch (_) {}
+      }
+
+      showLockConflict(nextLockFilePath, existingLock);
+      if (exitOnFailure) {
+        app.exit(0);
+      }
+      return false;
+    }
+  }
+}
+
+function releaseLockFile(filePath) {
+  if (!filePath) return;
+
+  const existing = readLockFile(filePath);
+  if (existing?.token && lockToken && existing.token !== lockToken) return;
+
+  try {
+    fs.unlinkSync(filePath);
+  } catch (_) {}
+}
+
+function switchToSharedLock(sharedDrivePath) {
+  const previousLockPath = lockFilePath;
+  if (!acquireLock(sharedDrivePath, { exitOnFailure: false })) {
+    return false;
+  }
+
+  if (previousLockPath && previousLockPath !== lockFilePath) {
+    releaseLockFile(previousLockPath);
+  }
 
   return true;
 }
 
+function refreshLockMetadata() {
+  writeLockHeartbeat();
+}
+
 function releaseLock() {
-  if (lockFilePath) {
-    try { fs.unlinkSync(lockFilePath); } catch (_) {}
+  if (lockTimer) {
+    clearInterval(lockTimer);
+    lockTimer = null;
   }
+
+  releaseLockFile(lockFilePath);
+  lockFilePath = null;
 }
 
 // ── Config ───────────────────────────────────────────────
@@ -289,6 +387,7 @@ function closeRuntime() {
     db = null;
   }
   excelSync = null;
+  excelWriteQueue = Promise.resolve();
   auth = null;
 }
 
@@ -381,13 +480,18 @@ async function applyProjectEventsToExcel(events = []) {
   );
   if (relevantEvents.length === 0) return false;
 
-  try {
-    await excelSync.applyEvents(excelPath, relevantEvents);
-    return true;
-  } catch (err) {
-    console.error('Excel write-back failed:', err.message);
-    return false;
-  }
+  const runWrite = async () => {
+    try {
+      await excelSync.applyEvents(excelPath, relevantEvents);
+      return true;
+    } catch (err) {
+      console.error('Excel write-back failed:', err.message);
+      return false;
+    }
+  };
+
+  excelWriteQueue = excelWriteQueue.then(runWrite, runWrite);
+  return excelWriteQueue;
 }
 
 function emitUpdatePrompt(result) {
@@ -439,12 +543,27 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-
-  mainWindow.once('ready-to-show', () => {
+  let hasShownWindow = false;
+  const showWindow = () => {
+    if (!mainWindow || mainWindow.isDestroyed() || hasShownWindow) return;
+    hasShownWindow = true;
     mainWindow.show();
     emitWindowState();
+  };
+
+  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  mainWindow.webContents.once('dom-ready', () => {
+    showWindow();
   });
+
+  mainWindow.once('ready-to-show', () => {
+    showWindow();
+  });
+
+  setTimeout(() => {
+    showWindow();
+  }, 1500);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -465,6 +584,7 @@ function registerIPC() {
     saveConfig(config);
     return true;
   });
+  ipcMain.handle('get-app-version', () => app.getVersion());
 
   ipcMain.handle('get-update-folder-path', () => {
     if (!db) return null;
@@ -575,6 +695,10 @@ function registerIPC() {
       const config = { ...existingConfig, sharedDrivePath: resolvedSharedPath };
       saveConfig(config);
 
+      if (!switchToSharedLock(resolvedSharedPath)) {
+        return { success: false, error: 'StudioSync is already open for this shared folder on another machine.' };
+      }
+
       // Initialize database
       const localDbPath = getLocalDbPath();
       db = new Database(localDbPath);
@@ -627,6 +751,7 @@ function registerIPC() {
       const config = loadConfig() || {};
       config.loggedInUsername = username;
       saveConfig(config);
+      refreshLockMetadata();
       return user;
     }
     return null;
@@ -638,6 +763,7 @@ function registerIPC() {
     const config = loadConfig() || {};
     delete config.loggedInUsername;
     saveConfig(config);
+    refreshLockMetadata();
     return true;
   });
 
@@ -664,11 +790,21 @@ function registerIPC() {
   });
 
   ipcMain.handle('delete-user', (_e, userId) => {
-    if (!db) return false;
+    if (!db) return { success: false, error: 'Database is not ready.' };
+    const assignedTaskCount = db.getAssignedTaskCount(userId);
+    if (assignedTaskCount > 0) {
+      return {
+        success: false,
+        error: assignedTaskCount === 1
+          ? 'Reassign or clear the remaining task before removing this person.'
+          : `Reassign or clear the ${assignedTaskCount} remaining tasks before removing this person.`,
+        assignedTaskCount,
+      };
+    }
     db.deleteUser(userId);
     if (sync) sync.pushEvent('user-deleted', { id: userId });
     if (auth) auth.clearCache();
-    return true;
+    return { success: true };
   });
 
   // Business Roles
@@ -1152,9 +1288,11 @@ app.whenReady().then(async () => {
     onPrompt: (result) => emitUpdatePrompt(result),
   });
 
-  // Try to auto-initialize from saved config
-  const config = loadConfig();
-  if (config && config.sharedDrivePath) {
+  // Defer heavier auto-init work so the auth/setup window can paint immediately.
+  setTimeout(async () => {
+    const config = loadConfig();
+    if (!config || !config.sharedDrivePath) return;
+
     try {
       const inspection = inspectSharedDrivePath(config.sharedDrivePath, { allowEmpty: true });
       if (!inspection.valid) throw new Error(inspection.reason);
@@ -1209,7 +1347,7 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.error('Auto-init failed:', err.message);
     }
-  }
+  }, 0);
 });
 
 app.on('window-all-closed', () => {

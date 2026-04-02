@@ -229,7 +229,7 @@ function emitWindowState() {
 }
 
 function getTrayIconPath() {
-  return path.join(__dirname, '..', 'assets', 'studiosync-mytasks-fixed.ico');
+  return path.join(__dirname, '..', 'assets', 'studiosync-mytasks.ico');
 }
 
 function restoreMainWindow() {
@@ -278,6 +278,14 @@ function getDisplayName(userId) {
   return db.getUserById(userId)?.display_name || null;
 }
 
+function isTaskRelevantToCurrentUser(task, currentUserId) {
+  if (!task || !currentUserId) return false;
+  if (task.assigned_to === currentUserId) return true;
+  if (!task.project_id || !db) return false;
+
+  return db.getTasks({ project_id: task.project_id }).some((candidate) => candidate.assigned_to === currentUserId);
+}
+
 function notifyForTaskEvent(event, actionLabel) {
   const currentUserId = getCurrentUserId();
   if (!currentUserId || !event?.data) return;
@@ -298,7 +306,7 @@ function notifyForCommentEvent(event) {
 
   const comment = event.data;
   const task = db.getTaskById(comment.task_id);
-  if (!task || task.assigned_to !== currentUserId) return;
+  if (!isTaskRelevantToCurrentUser(task, currentUserId)) return;
 
   const authorName = getDisplayName(comment.author_id) || event.author || 'Someone';
   const commentPreview = (comment.body || '').replace(/\s+/g, ' ').trim();

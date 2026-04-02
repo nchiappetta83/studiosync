@@ -1,6 +1,6 @@
 {
   "name": "sd-scheduling",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "StudioSync - Collaborative task management",
   "main": "main/index.js",
   "scripts": {

@@ -27,13 +27,13 @@ const Sidebar = {
       });
     }
 
-    // Re-render when users, tasks, pto, or selection changes
-    AppState.on('users', () => this.render());
-    AppState.on('tasks', () => this.render());
-    AppState.on('pto', () => this.render());
-    AppState.on('selectedStaffId', () => this.render());
-    AppState.on('selectedPartnerId', () => this.render());
-    AppState.on('sidebarSort', () => this.render());
+    this._renderListener = this._renderListener || (() => this.render());
+    AppState.on('users', this._renderListener);
+    AppState.on('tasks', this._renderListener);
+    AppState.on('pto', this._renderListener);
+    AppState.on('selectedStaffId', this._renderListener);
+    AppState.on('selectedPartnerId', this._renderListener);
+    AppState.on('sidebarSort', this._renderListener);
 
     this.render();
   },
@@ -43,9 +43,10 @@ const Sidebar = {
     const selectedId = AppState.get('selectedStaffId');
     const selectedPartnerId = AppState.get('selectedPartnerId');
     const sortMode = AppState.get('sidebarSort') || 'default';
+    const shouldShowUser = (user) => user && (user.active !== 0 || AppState.getTaskCountForUser(user.id) > 0);
 
-    const partners = users.filter(u => u.role === 'partner' && u.active !== 0);
-    let staff = users.filter(u => u.role === 'staff' && u.active !== 0);
+    const partners = users.filter((u) => u.role === 'partner' && shouldShowUser(u));
+    let staff = users.filter((u) => u.role === 'staff' && shouldShowUser(u));
 
     // Sort staff based on sort mode
     if (sortMode === 'role') {

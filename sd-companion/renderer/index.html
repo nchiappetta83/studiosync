@@ -52,11 +52,19 @@
       </div>
       <div class="topbar-right">
         <div class="user-badge" id="user-badge">
+          <div id="sync-indicator" class="sync-indicator" title="Synced">
+            <div class="sync-dot"></div>
+          </div>
           <span class="user-avatar" id="user-avatar"></span>
           <span class="user-name" id="user-name"></span>
           <span class="user-role-badge" id="user-role-badge"></span>
         </div>
-        <button class="btn btn-ghost btn-sm" id="logout-btn">Sign Out</button>
+        <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
       </div>
       <div class="window-controls" aria-label="Window Controls">
         <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
@@ -113,6 +121,10 @@
             <span class="view-count" id="my-task-count">0 tasks</span>
             <div class="view-header-spacer"></div>
             <button class="btn btn-accent btn-sm hidden" id="add-private-task-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Task
+            </button>
+            <button class="btn btn-accent btn-sm hidden" id="add-self-task-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Task
             </button>
@@ -179,7 +191,7 @@
 
           <div class="form-group">
             <label>Task Title</label>
-            <div class="task-title-display" id="add-task-title-display">Select a project above</div>
+            <input type="text" class="input" id="add-task-title-input" placeholder="Task title...">
           </div>
 
           <div class="form-group">
@@ -267,19 +279,19 @@
     <div class="dialog-overlay hidden" id="add-subtask-overlay">
       <div class="dialog-card" style="max-width:400px">
         <div class="dialog-header">
-          <h3 class="dialog-title">Add Subtask</h3>
+          <h3 class="dialog-title">Add Action Item</h3>
           <button class="detail-close" id="add-subtask-close">&times;</button>
         </div>
         <div class="dialog-body">
           <p class="dialog-subtitle" id="add-subtask-subtitle"></p>
           <div class="form-group">
-            <label>Subtask Title</label>
+            <label>Action Item Title</label>
             <input type="text" class="input" id="add-subtask-title" placeholder="What needs to be done...">
           </div>
         </div>
         <div class="dialog-footer">
           <button class="btn btn-ghost" id="add-subtask-cancel">Cancel</button>
-          <button class="btn btn-primary" id="add-subtask-save">Add Subtask</button>
+          <button class="btn btn-primary" id="add-subtask-save">Add Action Item</button>
         </div>
       </div>
     </div>

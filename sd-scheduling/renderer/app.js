@@ -5,6 +5,7 @@
 
 const App = {
   async init() {
+    await this._ensureApiBridge();
     this._initWindowChrome();
     this._initUpdatePrompt();
 
@@ -95,6 +96,27 @@ const App = {
     if (pendingUpdate) {
       this._showUpdatePrompt(pendingUpdate);
     }
+  },
+
+  _ensureApiBridge() {
+    if (window.api) return Promise.resolve();
+
+    const existing = document.querySelector('script[data-mock-api="true"]');
+    if (existing) {
+      return new Promise((resolve, reject) => {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Failed to load mock API bridge.')), { once: true });
+      });
+    }
+
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'lib/mock.js';
+      script.dataset.mockApi = 'true';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load mock API bridge.'));
+      document.head.appendChild(script);
+    });
   },
 
   _initWindowChrome() {

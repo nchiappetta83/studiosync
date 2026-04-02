@@ -325,6 +325,24 @@ class Database {
       this._setMeta('schema_version', '9');
     }
 
+    if (version < 10) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_processed_events (
+          filename     TEXT PRIMARY KEY,
+          processed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      this._setMeta('schema_version', '10');
+    }
+
+    if (version < 11) {
+      const userCols = this.db.pragma('table_info(users)').map(c => c.name);
+      if (!userCols.includes('can_self_assign')) {
+        this.db.exec(`ALTER TABLE users ADD COLUMN can_self_assign INTEGER NOT NULL DEFAULT 0`);
+      }
+      this._setMeta('schema_version', '11');
+    }
+
     // Companion-only: private tasks table (local, not synced)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS private_tasks (
@@ -361,6 +379,21 @@ class Database {
 
   setLastSyncTimestamp(ts) {
     this.db.prepare("INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('last_sync', ?)").run(ts);
+  }
+
+  getProcessedSyncFiles() {
+    return this.db.prepare('SELECT filename FROM sync_processed_events').all().map((row) => row.filename);
+  }
+
+  markSyncFileProcessed(filename) {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO sync_processed_events (filename, processed_at)
+      VALUES (?, datetime('now'))
+    `).run(filename);
+  }
+
+  cleanupProcessedSyncFiles(cutoffStr) {
+    this.db.prepare('DELETE FROM sync_processed_events WHERE filename < ?').run(cutoffStr);
   }
 
   _globalSettingKey(key) {
@@ -503,8 +536,8 @@ class Database {
 
   getUserByUsername(username) {
     // First try windows_username (used for auth), then fall back to username
-    return this.db.prepare('SELECT * FROM users WHERE windows_username = ? COLLATE NOCASE').get(username)
-      || this.db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username);
+    return this.db.prepare('SELECT * FROM users WHERE active = 1 AND windows_username = ? COLLATE NOCASE').get(username)
+      || this.db.prepare('SELECT * FROM users WHERE active = 1 AND username = ? COLLATE NOCASE').get(username);
   }
 
   getUserById(id) {
@@ -528,11 +561,11 @@ class Database {
     const windowsUsername = data.windows_username || null;
 
     this.db.prepare(`
-      INSERT INTO users (id, username, display_name, role, avatar_color, sort_order, first_name, last_name, business_role_id, is_admin, windows_username)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, username, display_name, role, avatar_color, sort_order, first_name, last_name, business_role_id, is_admin, windows_username, can_self_assign)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, username, displayName, data.role, color, data.sort_order ?? maxOrder + 1,
-      firstName, lastName, data.business_role_id || null, isAdmin, windowsUsername
+      firstName, lastName, data.business_role_id || null, isAdmin, windowsUsername, data.can_self_assign ? 1 : 0
     );
 
     return this.getUserById(id);
@@ -541,7 +574,7 @@ class Database {
   updateUser(data) {
     const fields = [];
     const values = [];
-    for (const key of ['display_name', 'role', 'avatar_color', 'sort_order', 'active', 'username', 'first_name', 'last_name', 'business_role_id', 'is_admin', 'windows_username']) {
+    for (const key of ['display_name', 'role', 'avatar_color', 'sort_order', 'active', 'username', 'first_name', 'last_name', 'business_role_id', 'is_admin', 'windows_username', 'can_self_assign']) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
         values.push(data[key]);

@@ -14,13 +14,14 @@ const TaskPanel = {
       TaskDialog.show({ assigned_to: selectedId !== 'all' ? selectedId : null });
     });
 
-    AppState.on('tasks', () => this.render());
-    AppState.on('users', () => this.render());
-    AppState.on('selectedStaffId', () => this.render());
-    AppState.on('selectedPartnerId', () => this.render());
-    AppState.on('searchQuery', () => this.render());
-    AppState.on('pto', () => this.render());
-    AppState.on('filterPriority', () => this.render());
+    this._renderListener = this._renderListener || (() => this.render());
+    AppState.on('tasks', this._renderListener);
+    AppState.on('users', this._renderListener);
+    AppState.on('selectedStaffId', this._renderListener);
+    AppState.on('selectedPartnerId', this._renderListener);
+    AppState.on('searchQuery', this._renderListener);
+    AppState.on('pto', this._renderListener);
+    AppState.on('filterPriority', this._renderListener);
 
     this.render();
   },
@@ -59,13 +60,14 @@ const TaskPanel = {
     let html = '';
 
     let sortedUsers;
+    const shouldShowUser = (user) => user && user.role !== 'partner' && (user.active !== 0 || AppState.getTaskCountForUser(user.id) > 0);
     if (selectedId === 'all') {
-      sortedUsers = users.filter(u => u.active !== 0 && u.role !== 'partner');
+      sortedUsers = users.filter((u) => shouldShowUser(u));
     } else if (Array.isArray(selectedId)) {
-      sortedUsers = users.filter(u => selectedId.includes(u.id) && u.role !== 'partner');
+      sortedUsers = users.filter((u) => selectedId.includes(u.id) && shouldShowUser(u));
     } else {
       const user = users.find(u => u.id === selectedId);
-      sortedUsers = (user && user.role !== 'partner') ? [user] : [];
+      sortedUsers = shouldShowUser(user) ? [user] : [];
     }
 
     sortedUsers = [...sortedUsers].sort((a, b) => a.display_name.localeCompare(b.display_name));

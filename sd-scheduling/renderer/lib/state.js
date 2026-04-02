@@ -5,6 +5,9 @@
 
 const AppState = {
   _listeners: {},
+  _batchDepth: 0,
+  _pendingKeys: new Set(),
+  _tasksByStaffCache: null,
   _data: {
     currentUser: null,
     users: [],
@@ -27,6 +30,7 @@ const AppState = {
 
   set(key, value) {
     this._data[key] = value;
+    this._invalidateCaches(key);
     this._notify(key);
   },
 
@@ -39,6 +43,11 @@ const AppState = {
   },
 
   _notify(key) {
+    if (this._batchDepth > 0) {
+      this._pendingKeys.add(key);
+      return;
+    }
+
     if (this._listeners[key]) {
       for (const cb of this._listeners[key]) {
         try { cb(this._data[key]); } catch (e) { console.error('State listener error:', e); }
@@ -49,6 +58,50 @@ const AppState = {
       for (const cb of this._listeners['*']) {
         try { cb(key, this._data[key]); } catch (e) { console.error('State listener error:', e); }
       }
+    }
+  },
+
+  batch(callback) {
+    this._batchDepth += 1;
+    try {
+      return callback();
+    } finally {
+      this._batchDepth -= 1;
+      if (this._batchDepth === 0) {
+        this._flushPending();
+      }
+    }
+  },
+
+  _flushPending() {
+    if (this._pendingKeys.size === 0) return;
+
+    const keys = [...this._pendingKeys];
+    this._pendingKeys.clear();
+
+    const specificListeners = new Set();
+    for (const key of keys) {
+      for (const cb of this._listeners[key] || []) {
+        specificListeners.add(cb);
+      }
+    }
+
+    for (const cb of specificListeners) {
+      try { cb(); } catch (e) { console.error('State listener error:', e); }
+    }
+
+    if (this._listeners['*']) {
+      for (const key of keys) {
+        for (const cb of this._listeners['*']) {
+          try { cb(key, this._data[key]); } catch (e) { console.error('State listener error:', e); }
+        }
+      }
+    }
+  },
+
+  _invalidateCaches(key) {
+    if (['users', 'tasks', 'projects', 'selectedStaffId', 'selectedPartnerId'].includes(key)) {
+      this._tasksByStaffCache = null;
     }
   },
 
@@ -66,21 +119,24 @@ const AppState = {
       window.api.getCustomPriorities()
     ]);
 
-    this._data.users = users;
-    this._data.tasks = tasks;
-    this._data.projects = projects;
-    this._data.pto = pto;
-    this._data.currentUser = currentUser;
-    this._data.businessRoles = businessRoles;
-    this._data.customPriorities = customPriorities;
+    this.batch(() => {
+      this._data.users = users;
+      this._data.tasks = tasks;
+      this._data.projects = projects;
+      this._data.pto = pto;
+      this._data.currentUser = currentUser;
+      this._data.businessRoles = businessRoles;
+      this._data.customPriorities = customPriorities;
+      this._tasksByStaffCache = null;
 
-    this._notify('users');
-    this._notify('tasks');
-    this._notify('projects');
-    this._notify('pto');
-    this._notify('currentUser');
-    this._notify('businessRoles');
-    this._notify('customPriorities');
+      this._notify('users');
+      this._notify('tasks');
+      this._notify('projects');
+      this._notify('pto');
+      this._notify('currentUser');
+      this._notify('businessRoles');
+      this._notify('customPriorities');
+    });
   },
 
   // ── Helpers ──────────────────────────────────────────
@@ -91,6 +147,18 @@ const AppState = {
   },
 
   getTasksByStaffGrouped() {
+    const cache = this._tasksByStaffCache;
+    if (
+      cache
+      && cache.users === this._data.users
+      && cache.tasks === this._data.tasks
+      && cache.projects === this._data.projects
+      && cache.selectedStaffId === this._data.selectedStaffId
+      && cache.selectedPartnerId === this._data.selectedPartnerId
+    ) {
+      return cache.value;
+    }
+
     const groups = {};
     const users = this._data.users;
     const selectedId = this._data.selectedStaffId;
@@ -123,6 +191,15 @@ const AppState = {
           })
       };
     }
+
+    this._tasksByStaffCache = {
+      users: this._data.users,
+      tasks: this._data.tasks,
+      projects: this._data.projects,
+      selectedStaffId: this._data.selectedStaffId,
+      selectedPartnerId: this._data.selectedPartnerId,
+      value: groups,
+    };
 
     return groups;
   },

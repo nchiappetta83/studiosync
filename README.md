@@ -95,9 +95,9 @@ GitHub Actions is configured in [`.github/workflows/release-signpath.yml`](.gith
 1. build both Windows installers on GitHub-hosted runners
 2. upload the unsigned installers as workflow artifacts
 3. submit both artifacts to SignPath for code signing
-4. publish the signed installers to the GitHub release for version tags
+4. publish the signed installers and win-unpacked zip packages to the GitHub release for version tags
 
-Push a tag like `v1.0.2` after the SignPath variables, project, and artifact configurations are in place.
+Push a tag like `v1.0.3` after the SignPath variables, project, and artifact configurations are in place.
 
 ## SignPath setup
 
