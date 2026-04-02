@@ -1,4 +1,4 @@
-name: Release And Sign Windows Installers
+name: Release Windows Installers
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  build-sign-release:
+  build-release:
     runs-on: windows-latest
 
     steps:
@@ -82,50 +82,6 @@ jobs:
           path: release-packages/StudioSync MyTasks win-unpacked *.zip
           if-no-files-found: error
 
-      - name: Sign StudioSync installer with SignPath
-        id: sign_studiosync
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          artifact-configuration-slug: ${{ vars.SIGNPATH_STUDIOSYNC_ARTIFACT_CONFIG_SLUG }}
-          github-artifact-id: ${{ steps.upload_studiosync_unsigned.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed/studiosync
-
-      - name: Sign StudioSync MyTasks installer with SignPath
-        id: sign_mytasks
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          artifact-configuration-slug: ${{ vars.SIGNPATH_MYTASKS_ARTIFACT_CONFIG_SLUG }}
-          github-artifact-id: ${{ steps.upload_mytasks_unsigned.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed/mytasks
-
-      - name: Show signed artifacts
-        shell: pwsh
-        run: Get-ChildItem -Recurse -File signed | Select-Object FullName
-
-      - name: Upload signed StudioSync workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: studiosync-signed-installer
-          path: signed/studiosync/**
-          if-no-files-found: error
-
-      - name: Upload signed StudioSync MyTasks workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: studiosync-mytasks-signed-installer
-          path: signed/mytasks/**
-          if-no-files-found: error
-
       - name: Create or update GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -136,11 +92,12 @@ jobs:
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title $tag --notes "Signed StudioSync installers and win-unpacked download packages."
+            gh release create $tag --title $tag --notes "StudioSync installers and win-unpacked download packages."
           }
 
           $files = @(
-            Get-ChildItem -Recurse -File signed | Select-Object -ExpandProperty FullName
+            Get-ChildItem -File sd-scheduling/dist/StudioSync*.exe | Select-Object -ExpandProperty FullName
+            Get-ChildItem -File sd-companion/dist/StudioSync*.exe | Select-Object -ExpandProperty FullName
             Get-ChildItem -Recurse -File release-packages | Select-Object -ExpandProperty FullName
           ) | Where-Object { $_ }
           if (-not $files) {
