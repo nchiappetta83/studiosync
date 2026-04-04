@@ -57,7 +57,7 @@ if (!window.api) {
   window.api = {
     getConfig:        async () => ({ sharedDrivePath: 'C:\\MockSharedDrive' }),
     saveConfig:       async () => true,
-    getAppVersion:    async () => '1.0.3',
+    getAppVersion:    async () => '1.0.4',
     selectFolder:     async () => 'C:\\MockSharedDrive',
     initializeApp:    async () => ({ success: true, user: MOCK_USERS[0] }),
     getWindowsUsername: async () => 'jsmith',

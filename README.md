@@ -1,10 +1,12 @@
 <p align="center">
-  <img src="StudioSync_Logo.png" alt="StudioSync logo" width="360">
+  <img src="docs/images/studiosync-github-logo.png" alt="StudioSync logo" width="520">
 </p>
 
 # StudioSync
 
 StudioSync is a two-app Windows scheduling system for small production and professional-services teams that need a clear daily board in the office and a lighter personal workspace on each desktop.
+
+Latest public release: [v1.0.4](https://github.com/nchiappetta83/studiosync/releases/tag/v1.0.4)
 
 - `StudioSync` is the main dashboard used to plan work, manage people, import projects, and publish office-wide updates.
 - `StudioSync MyTasks` is the companion app used by partners and staff to track assigned work, add follow-up notes, and stay in sync with the main board.
@@ -30,7 +32,10 @@ Core capabilities:
 - Start in a compact branded sign-in window before expanding into the full dashboard
 - Install through a current-user installer flow that seeds the default path under `C:\SD Apps`
 
-![StudioSync dashboard screenshot](docs/images/studiosync-dashboard.png)
+<p align="center">
+  <img src="docs/images/studiosync-dashboard.png" alt="StudioSync Dashboard showing the office schedule with fictional demo staff, tasks, and projects." width="920"><br>
+  <em>StudioSync Dashboard: office-wide task planning, staff workload, and project management with fictional demo data.</em>
+</p>
 
 ### StudioSync MyTasks
 
@@ -53,7 +58,32 @@ Core capabilities:
 - Detect new installers from the shared update folder
 - Start in a compact branded sign-in window that mirrors the StudioSync auth flow
 
-![StudioSync MyTasks screenshot](docs/images/studiosync-mytasks.png)
+<p align="center">
+  <img src="docs/images/studiosync-mytasks.png" alt="StudioSync MyTasks showing a focused personal task list with fictional demo assignments and notes." width="920"><br>
+  <em>StudioSync MyTasks: the focused daily workspace for assigned work, action items, and shared project context.</em>
+</p>
+
+## Usage flows
+
+<p align="center">
+  <img src="docs/images/flows-dashboard-manage-staff.png" alt="Manage Staff dialog in StudioSync showing fictional demo users and roles." width="920"><br>
+  <em>Manage Staff: add, edit, and organize staff and partner accounts from the Dashboard app.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/flows-dashboard-add-project.png" alt="Add Project dialog in StudioSync with the future-project option enabled." width="920"><br>
+  <em>Add Project: create a project directly into the current or future list from the Dashboard workflow.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/flows-mytasks-add-task.png" alt="Add Task dialog in StudioSync MyTasks showing project-linked task creation with fictional demo data." width="920"><br>
+  <em>Add Task in MyTasks: create a project-linked or freeform task from the companion app.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/flows-mytasks-project-detail.png" alt="My Projects detail view in StudioSync MyTasks showing scheduling notes and project notes with fictional demo data." width="920"><br>
+  <em>Partner project detail: update Scheduling Notes and shared Project Notes directly from MyTasks.</em>
+</p>
 
 ## How the apps work together
 
@@ -120,4 +150,4 @@ Setup details for restoring signed releases later are documented in [`docs/signp
 
 ## Screenshot note
 
-The screenshots in this README use fictional demo users, project names, and notes created specifically for documentation.
+The screenshots in this README use fictional demo users, project names, comments, and notes created specifically for documentation.
