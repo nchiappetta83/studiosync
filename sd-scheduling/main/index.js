@@ -27,7 +27,7 @@ const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
 
 const WINDOW_MODES = {
-  auth: { width: 860, height: 640, minWidth: 760, minHeight: 580 },
+  auth: { width: 760, height: 620, minWidth: 700, minHeight: 560 },
   main: { width: 1400, height: 900, minWidth: 1100, minHeight: 700 }
 };
 
@@ -530,7 +530,7 @@ function createWindow() {
     height: initialMode.height,
     minWidth: initialMode.minWidth,
     minHeight: initialMode.minHeight,
-    icon: path.join(__dirname, '..', 'assets', 'studiosync-clean.ico'),
+    icon: path.join(__dirname, '..', 'assets', 'studiosync-main.ico'),
     title: 'StudioSync',
     show: false,
     backgroundColor: '#F7F9FB',

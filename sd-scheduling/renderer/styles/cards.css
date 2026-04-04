@@ -4,14 +4,26 @@
   background: var(--bg-card);
   border-radius: var(--radius-sm);
   padding: 10px 16px;
+  border: 1px solid rgba(228, 234, 240, 0.82);
   box-shadow: var(--shadow-card);
-  transition: box-shadow var(--duration);
+  transition: box-shadow var(--duration), transform var(--duration), background var(--duration), border-color var(--duration);
   cursor: default;
   position: relative;
 }
 
+.task-card.task-card-draggable {
+  cursor: grab;
+}
+
+.task-card.task-card-draggable:active {
+  cursor: grabbing;
+}
+
 .task-card:hover {
+  background: var(--bg-card-hover);
+  border-color: rgba(77, 74, 213, 0.12);
   box-shadow: var(--shadow-card-lg);
+  transform: translateY(-1px);
 }
 
 .task-card.dragging {
@@ -21,6 +33,7 @@
 .task-card-main {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -34,6 +47,7 @@
   border-radius: var(--radius-pill);
   font-size: 9px;
   font-weight: 700;
+  letter-spacing: 0.02em;
   white-space: nowrap;
   flex-shrink: 0;
   min-width: 22px;
@@ -44,19 +58,19 @@
 .task-priority-pill.priority-2 { color: var(--priority-2); background: var(--priority-bg-2); }
 .task-priority-pill.priority-3 { color: var(--priority-3); background: var(--priority-bg-3); }
 .task-priority-pill.priority-4 { color: var(--priority-4); background: var(--priority-bg-4); }
+.task-priority-pill.priority-numeric { color: var(--priority-4); background: var(--priority-bg-4); }
 .task-priority-pill.priority-w { color: var(--priority-w); background: var(--priority-bg-w); }
 .task-priority-pill.priority-unset { color: var(--text-tertiary); background: var(--bg-secondary); }
 
 .task-title {
   flex: 1;
-  min-width: 0;
+  min-width: 180px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .task-card.completed .task-title {
@@ -68,7 +82,7 @@
 
 .task-due-label {
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-secondary);
   padding: 2px 0;
   font-family: var(--font-body);
@@ -214,6 +228,7 @@
   align-items: center;
   gap: 8px;
   padding-left: 30px;
+  margin-top: 7px;
 }
 
 /* Inline-editable notes input (V4 style) */
@@ -254,6 +269,7 @@
 .priority-menu {
   position: fixed;
   background: var(--bg-card);
+  border: 1px solid rgba(228, 234, 240, 0.9);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-dropdown);
   padding: 6px;
@@ -268,7 +284,7 @@
   position: fixed;
   width: 240px;
   background: var(--bg-card);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(228, 234, 240, 0.92);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-dropdown);
   padding: 10px 10px 8px;
@@ -673,6 +689,25 @@
   text-overflow: ellipsis;
   box-shadow: 0 4px 12px rgba(77, 74, 213, 0.3);
   animation: chipFadeIn 0.1s ease-out;
+}
+
+body.window-resizing .task-card,
+body.window-resizing .project-card,
+body.window-resizing .drag-chip {
+  transition: none !important;
+  animation: none !important;
+  transform: none !important;
+}
+
+body.window-resizing .task-card,
+body.window-resizing .project-card {
+  box-shadow: var(--shadow-card) !important;
+}
+
+body.window-resizing .task-card:hover,
+body.window-resizing .project-card:hover {
+  box-shadow: var(--shadow-card) !important;
+  transform: none !important;
 }
 
 @keyframes chipFadeIn {

@@ -4,9 +4,16 @@
  */
 
 const App = {
+  _resizeClassTimer: null,
+
+  _nextFrame() {
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  },
+
   async init() {
     await this._ensureApiBridge();
     this._initWindowChrome();
+    this._bindResizePerfMode();
     this._initUpdatePrompt();
 
     // Check if we have a saved config
@@ -154,6 +161,21 @@ const App = {
     window.api.getWindowState().then((state) => {
       this._applyWindowState(state);
     });
+  },
+
+  _bindResizePerfMode() {
+    if (document.body.dataset.resizePerfBound === 'true') return;
+    document.body.dataset.resizePerfBound = 'true';
+
+    const markResizing = () => {
+      document.body.classList.add('window-resizing');
+      clearTimeout(this._resizeClassTimer);
+      this._resizeClassTimer = setTimeout(() => {
+        document.body.classList.remove('window-resizing');
+      }, 140);
+    };
+
+    window.addEventListener('resize', markResizing, { passive: true });
   },
 
   _applyWindowState(state) {
@@ -359,7 +381,7 @@ const App = {
       const user = await window.api.login(username);
       if (user) {
         document.getElementById('login-screen').classList.add('hidden');
-        document.getElementById('app').classList.remove('hidden');
+        await App._nextFrame();
         await App._launchApp();
       } else {
         errorEl.textContent = 'Username not found. Check with your administrator.';
@@ -381,7 +403,6 @@ const App = {
     document.getElementById('setup-screen').classList.add('hidden');
     document.getElementById('register-screen').classList.add('hidden');
     document.getElementById('login-screen').classList.add('hidden');
-    document.getElementById('app').classList.remove('hidden');
 
     // Load data
     await AppState.refresh();
@@ -395,6 +416,7 @@ const App = {
     Toolbar.init();
     TaskPanel.init();
     ProjectPanel.init();
+    document.getElementById('app').classList.remove('hidden');
 
     // Check weekly rollover (V4 behavior)
     await this._checkWeeklyRollover();

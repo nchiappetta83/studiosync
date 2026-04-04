@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self';">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="styles/layout.css">
   <link rel="stylesheet" href="styles/sidebar.css">
@@ -32,12 +32,7 @@
     </div>
     <div class="setup-card">
       <div class="setup-icon">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-          <rect x="14" y="3" width="7" height="7" rx="1"></rect>
-          <rect x="3" y="14" width="7" height="7" rx="1"></rect>
-          <rect x="14" y="14" width="7" height="7" rx="1"></rect>
-        </svg>
+        <img class="setup-logo setup-logo-hero" src="../assets/studiosync-main.svg" alt="StudioSync logo">
       </div>
       <h1 class="setup-title">StudioSync</h1>
       <p class="setup-subtitle">Connect to your team's shared drive to get started.</p>
@@ -63,10 +58,7 @@
     </div>
     <div class="setup-card">
       <div class="setup-icon">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-          <circle cx="12" cy="7" r="4"></circle>
-        </svg>
+        <img class="setup-logo setup-logo-hero" src="../assets/studiosync-main.svg" alt="StudioSync logo">
       </div>
       <h1 class="setup-title">Welcome</h1>
       <p class="setup-subtitle">You're not registered yet. Ask a partner to add your account, or set up as the first user.</p>
@@ -95,19 +87,20 @@
         <span class="window-control-icon close"></span>
       </button>
     </div>
-    <div class="setup-card">
+    <div class="setup-card setup-card-auth">
       <div class="setup-icon">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-          <circle cx="12" cy="7" r="4"></circle>
-        </svg>
+        <img class="setup-logo setup-logo-auth" src="../assets/studiosync-main.svg" alt="StudioSync logo">
       </div>
-      <h1 class="setup-title">Sign In</h1>
+      <div class="setup-brand-group">
+        <div class="setup-brand-name">STUDIOSYNC</div>
+        <div class="setup-brand-product">DASHBOARD</div>
+      </div>
+      <h1 class="setup-title setup-title-auth">Sign In</h1>
       <p class="setup-subtitle">Enter your username to continue.</p>
       <div class="form-group">
         <input type="text" id="login-username" class="input" placeholder="e.g. nchiappetta" autocomplete="off" spellcheck="false">
       </div>
-      <button id="login-submit" class="btn btn-primary" style="width:100%">Sign In</button>
+      <button id="login-submit" class="btn btn-primary auth-submit-btn">Sign In</button>
       <p id="login-error" class="setup-error"></p>
     </div>
   </div>
@@ -117,7 +110,15 @@
     <!-- Toolbar -->
     <header class="toolbar">
       <div class="toolbar-left">
-        <span class="toolbar-brand">StudioSync</span>
+        <div class="toolbar-brand-lockup">
+          <span class="toolbar-brand-chip">
+            <img class="toolbar-brandmark" src="../assets/studiosync-main.svg" alt="StudioSync logo">
+          </span>
+          <span class="toolbar-brand-copy">
+            <span class="toolbar-brand-title">StudioSync</span>
+            <span class="toolbar-brand-subtitle">Dashboard</span>
+          </span>
+        </div>
       </div>
       <div class="toolbar-center">
         <div class="search-wrapper">

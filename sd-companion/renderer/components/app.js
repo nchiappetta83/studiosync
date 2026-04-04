@@ -21,6 +21,7 @@ let COMMENT_CACHE = {};       // taskId -> comment[]
 let UPDATE_UI_BOUND = false;
 let WINDOW_CHROME_BOUND = false;
 let SYNC_STATUS_RESET_TIMER = null;
+let RESIZE_PERF_TIMER = null;
 const STAFF_SECTION_COLLAPSE = {};
 const PROJECT_SECTION_COLLAPSE = { active: false, future: true, inactive: true };
 
@@ -134,6 +135,26 @@ function getProjectsForCurrentPartner({ includeFuture = true, includeInactive = 
   });
 }
 
+function getProjectDisplayTitle(project) {
+  if (!project) return '';
+  return project.client ? `${project.client} | ${project.name}` : (project.name || '');
+}
+
+function getAssignedStaffForProject(projectId) {
+  const seen = new Set();
+  const assigned = [];
+
+  for (const task of TASKS) {
+    if (task.project_id !== projectId || !task.assigned_to || seen.has(task.assigned_to)) continue;
+    const user = getUserById(task.assigned_to);
+    if (!user || user.role !== 'staff' || user.active === 0) continue;
+    seen.add(task.assigned_to);
+    assigned.push(user);
+  }
+
+  return assigned.sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''));
+}
+
 function canPartnerManageTask(task) {
   if (!isPartner()) return false;
   if (task?.partner_id === currentUser?.id) return true;
@@ -145,6 +166,16 @@ function canCurrentUserAddOwnTasks() {
 }
 
 function canCurrentUserAddActionItems(task) {
+  return Boolean(
+    task &&
+    (
+      canPartnerManageTask(task) ||
+      (canCurrentUserAddOwnTasks() && task.assigned_to === currentUser?.id)
+    )
+  );
+}
+
+function canCurrentUserManageTaskPriority(task) {
   return Boolean(
     task &&
     (
@@ -171,6 +202,17 @@ function getTaskThreadTasks(task) {
   return sortTasksLikeScheduling(threadTasks);
 }
 
+function getTaskThreadOwner(task) {
+  const threadTasks = getTaskThreadTasks(task);
+  if (threadTasks.length === 0) return task || null;
+
+  return [...threadTasks].sort((a, b) => {
+    const createdCompare = String(a.created_at || '').localeCompare(String(b.created_at || ''));
+    if (createdCompare !== 0) return createdCompare;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  })[0];
+}
+
 function getTaskAssignees(task) {
   const seen = new Set();
   const assignees = [];
@@ -184,6 +226,11 @@ function getTaskAssignees(task) {
   }
 
   return assignees.sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''));
+}
+
+function getTaskActionItems(task) {
+  const ownerTask = getTaskThreadOwner(task);
+  return ownerTask ? (SUBTASK_CACHE[ownerTask.id] || []) : [];
 }
 
 function getTaskComments(task) {
@@ -205,15 +252,36 @@ function getTaskComments(task) {
   });
 }
 
+function getSharedPriorityTaskCount(userId) {
+  const numericPool = TASKS.filter((item) => (
+    item.assigned_to === userId &&
+    item.priority !== -1 &&
+    item.priority !== -2
+  ));
+  return Math.max(numericPool.length, 1);
+}
+
+function getPriorityTone(priority) {
+  if (priority <= 1) return { color: 'var(--priority-1)', background: 'var(--priority-bg-1)' };
+  if (priority === 2) return { color: 'var(--priority-2)', background: 'var(--priority-bg-2)' };
+  if (priority === 3) return { color: 'var(--priority-3)', background: 'var(--priority-bg-3)' };
+  return { color: 'var(--priority-4)', background: 'var(--priority-bg-4)' };
+}
+
+function getPriorityInlineStyle(priority) {
+  const tone = getPriorityTone(priority);
+  return tone ? `color:${tone.color};background:${tone.background};` : '';
+}
+
 function getPTOForUser(userId) {
   return PTO_DATA.find(p => p.user_id === userId) || null;
 }
 
 function getPrioritySortKey(priority) {
-  if (priority >= 1 && priority <= 4) return priority;
-  if (priority === -2) return 50;
+  if (typeof priority === 'number' && priority >= 1) return priority;
+  if (priority === -2) return 500;
   if (priority === 0 || priority === null || priority === undefined) return 100;
-  if (priority === -1) return 200;
+  if (priority === -1) return 1000;
   return 150;
 }
 
@@ -262,8 +330,8 @@ function getPriorityPresentation(task) {
     return { label: customLabel, className: 'pcustom', inlineStyle };
   }
 
-  if (priority >= 1 && priority <= 4) {
-    return { label: String(priority), className: `p${priority}`, inlineStyle: '' };
+  if (typeof priority === 'number' && priority >= 1) {
+    return { label: String(priority), className: 'pnumeric', inlineStyle: getPriorityInlineStyle(priority) };
   }
 
   return { label: '–', className: 'punset', inlineStyle: '' };
@@ -528,15 +596,13 @@ async function refreshAfterTaskChange(taskId = null) {
 }
 
 function buildPriorityMenuItems(task) {
-  const staffTasks = TASKS.filter((item) => item.assigned_to === task.assigned_to);
-  const maxPriority = Math.max(staffTasks.length, 1);
-  const colors = { 1: 'var(--priority-1)', 2: 'var(--priority-2)', 3: 'var(--priority-3)', 4: 'var(--priority-4)' };
+  const maxPriority = getSharedPriorityTaskCount(task.assigned_to);
   const items = [];
 
   for (let i = 1; i <= maxPriority; i++) {
     items.push({
       label: String(i),
-      color: colors[i] || 'var(--text-tertiary)',
+      color: getPriorityTone(i).color,
       action: async () => {
         await window.api.updateTask({ id: task.id, priority: i, priority_label: null });
         await refreshAfterTaskChange(task.id);
@@ -584,6 +650,30 @@ function openPriorityMenu(anchor, task) {
   const menu = ContextMenu.create(buildPriorityMenuItems(task));
   const rect = anchor.getBoundingClientRect();
   positionMenu(menu, rect.left, rect.bottom + 4);
+}
+
+function buildPrioritySelectOptions(maxPriority) {
+  const labels = { 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low' };
+  const options = ['<option value="">None</option>'];
+  for (let i = 1; i <= maxPriority; i++) {
+    const suffix = labels[i] ? ` - ${labels[i]}` : '';
+    options.push(`<option value="${i}">${i}${suffix}</option>`);
+  }
+  options.push('<option value="w">W - Wait</option>');
+  return options.join('');
+}
+
+function populatePrioritySelect(userId, selectedValue = '') {
+  const select = document.getElementById('add-task-priority');
+  if (!select) return;
+
+  const maxPriority = getSharedPriorityTaskCount(userId);
+  select.innerHTML = buildPrioritySelectOptions(maxPriority);
+  if (selectedValue && select.querySelector(`option[value="${selectedValue}"]`)) {
+    select.value = selectedValue;
+  } else {
+    select.value = '';
+  }
 }
 
 async function duplicateSharedTask(task) {
@@ -818,6 +908,21 @@ function bindWindowChrome() {
   });
 }
 
+function bindResizePerfMode() {
+  if (document.body.dataset.resizePerfBound === 'true') return;
+  document.body.dataset.resizePerfBound = 'true';
+
+  const markResizing = () => {
+    document.body.classList.add('window-resizing');
+    clearTimeout(RESIZE_PERF_TIMER);
+    RESIZE_PERF_TIMER = setTimeout(() => {
+      document.body.classList.remove('window-resizing');
+    }, 140);
+  };
+
+  window.addEventListener('resize', markResizing, { passive: true });
+}
+
 function applyWindowState(state) {
   const isMaximized = Boolean(state?.isMaximized);
   document.querySelectorAll('[data-window-action="maximize"]').forEach((btn) => {
@@ -890,11 +995,19 @@ function showUpdatePrompt(payload) {
 
 async function initApp() {
   bindWindowChrome();
+  bindResizePerfMode();
   bindUpdatePrompt();
+  const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
   const subtitleEl = document.getElementById('login-subtitle');
+  const titleEl = document.getElementById('login-title');
   const usersEl = document.getElementById('login-users');
   const errorEl = document.getElementById('login-error');
+
+  function setLoginHeading(title, subtitle) {
+    if (titleEl) titleEl.textContent = title;
+    if (subtitleEl) subtitleEl.textContent = subtitle;
+  }
 
   function resetLoginState() {
     usersEl.innerHTML = '';
@@ -912,11 +1025,11 @@ async function initApp() {
     if (!folderPath) return;
 
     resetLoginState();
-    subtitleEl.textContent = 'Connecting to shared drive...';
+    setLoginHeading('Connect', 'Connecting to shared drive...');
 
     const result = await window.api.initializeApp(folderPath);
     if (!result.success) {
-      subtitleEl.textContent = 'Select the StudioSync folder or its data folder.';
+      setLoginHeading('Connect', 'Select the StudioSync folder or its data folder.');
       errorEl.classList.remove('hidden');
       errorEl.textContent = result.error || 'Failed to connect to the shared drive.';
       return;
@@ -924,7 +1037,7 @@ async function initApp() {
 
     const users = await window.api.getUsers();
     if (users.length === 0) {
-      subtitleEl.textContent = 'No users were found in that shared folder yet.';
+      setLoginHeading('Connect', 'No users were found in that shared folder yet.');
       errorEl.classList.remove('hidden');
       errorEl.textContent = 'Open StudioSync first and finish setup, then try again.';
       usersEl.innerHTML = `
@@ -945,6 +1058,9 @@ async function initApp() {
   if (user) {
     currentUser = user;
     await loadAllData();
+    document.getElementById('login-screen').classList.add('hidden');
+    await nextFrame();
+    await window.api.setWindowMode('app');
     enterApp();
     return;
   }
@@ -953,7 +1069,7 @@ async function initApp() {
   const config = await window.api.getConfig();
   if (!config || !config.sharedDrivePath) {
     resetLoginState();
-      subtitleEl.textContent = 'Select the StudioSync folder or its data folder to connect.';
+    setLoginHeading('Connect', 'Select the StudioSync folder or its data folder to connect.');
     usersEl.innerHTML = `
       <button class="btn btn-primary" id="setup-btn">Select Shared Drive Folder</button>
     `;
@@ -967,7 +1083,7 @@ async function initApp() {
   const existingUsers = await window.api.getUsers();
   if (existingUsers.length === 0) {
     resetLoginState();
-      subtitleEl.textContent = 'Select the StudioSync folder or its data folder to connect.';
+    setLoginHeading('Connect', 'Select the StudioSync folder or its data folder to connect.');
     errorEl.classList.remove('hidden');
     errorEl.textContent = 'No users were found in the configured shared folder yet.';
     usersEl.innerHTML = `
@@ -982,11 +1098,11 @@ async function initApp() {
 
   // Show username login form
   resetLoginState();
-  subtitleEl.textContent = 'Enter your username to sign in.';
+  setLoginHeading('Sign In', 'Enter your username to continue.');
   usersEl.innerHTML = `
     <div class="login-form">
       <input type="text" id="login-username" class="input" placeholder="e.g. nchiappetta" autocomplete="off" spellcheck="false">
-      <button class="btn btn-primary" id="login-submit" style="margin-top:12px;width:100%">Sign In</button>
+      <button class="btn btn-primary auth-submit-btn" id="login-submit">Sign In</button>
     </div>
   `;
   errorEl.classList.add('hidden');
@@ -1006,6 +1122,9 @@ async function initApp() {
     if (loggedInUser) {
       currentUser = loggedInUser;
       await loadAllData();
+      document.getElementById('login-screen').classList.add('hidden');
+      await nextFrame();
+      await window.api.setWindowMode('app');
       enterApp();
     } else {
       errorEl.classList.remove('hidden');
@@ -1264,25 +1383,29 @@ function renderMyProjects() {
     return;
   }
 
-  const renderActions = (project, sectionKey) => {
-    const actions = [];
-
-    if (sectionKey !== 'active') {
-      actions.push(`<button class="pp-action-btn pp-action-primary" data-project-state="${project.id}" data-next-status="active" data-next-category="current">Make Active</button>`);
-    }
-
-    if (sectionKey !== 'inactive') {
-      actions.push(`<button class="pp-action-btn pp-action-danger" data-project-state="${project.id}" data-next-status="inactive">Mark Inactive</button>`);
-    }
-
-    return actions.join('');
-  };
-
   const getStatusLabel = (project) => {
     const section = getProjectSection(project);
     if (section === 'future') return 'FUTURE';
     if (section === 'inactive') return 'INACTIVE';
     return 'ACTIVE';
+  };
+
+  const renderAssignedStaff = (project) => {
+    const staff = getAssignedStaffForProject(project.id);
+    if (staff.length === 0) return '';
+
+    const visibleStaff = staff.slice(0, 4);
+    const overflow = staff.length - visibleStaff.length;
+    const title = staff.map((user) => user.display_name).join(', ');
+
+    return `
+      <div class="pp-card-assignees" title="${escapeAttr(title)}">
+        ${visibleStaff.map((user) => `
+          <span class="pp-card-avatar" style="background:${user.avatar_color}" aria-hidden="true">${getInitials(user)}</span>
+        `).join('')}
+        ${overflow > 0 ? `<span class="pp-card-avatar pp-card-avatar-more" aria-hidden="true">+${overflow}</span>` : ''}
+      </div>
+    `;
   };
 
   const renderSection = (sectionKey, title, items) => `
@@ -1300,10 +1423,15 @@ function renderMyProjects() {
         ` : items.map(project => `
           <div class="personal-project-card ${selectedProjectId === project.id ? 'selected' : ''}" data-project-id="${project.id}">
             <div class="pp-card-info">
-              <div class="pp-card-title">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</div>
-              <div class="pp-card-notes">${getStatusLabel(project)}</div>
-              <div class="pp-card-actions">
-                ${renderActions(project, sectionKey)}
+              <div class="pp-card-top">
+                <div class="pp-card-title">${escapeHtml(getProjectDisplayTitle(project))}</div>
+                ${renderAssignedStaff(project)}
+              </div>
+              <div class="pp-card-notes">
+                <span class="pp-card-status">${getStatusLabel(project)}</span>
+                ${project.notes
+                  ? `<span class="pp-card-note-text">${escapeHtml(project.notes)}</span>`
+                  : '<span class="pp-card-note-text pp-card-note-empty">No scheduling notes yet</span>'}
               </div>
             </div>
           </div>
@@ -1326,34 +1454,17 @@ function renderMyProjects() {
     });
   });
 
-  container.querySelectorAll('[data-project-state]').forEach((button) => {
-    button.addEventListener('click', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const projectId = button.dataset.projectState;
-      const nextStatus = button.dataset.nextStatus;
-      const nextCategory = button.dataset.nextCategory;
-      const updates = { id: projectId, status: nextStatus };
-      if (nextCategory) updates.category = nextCategory;
-      if (nextStatus === 'inactive' && !nextCategory) {
-        // Keep category stable when archiving so a later future reactivation can still make sense.
-        const existing = getProjectById(projectId);
-        updates.category = existing?.category || 'current';
-      }
-
-      await window.api.updateProject(updates);
-      await loadAllData();
-      renderMyProjects();
-      if (selectedProjectId === projectId) {
-        await openProjectDetailPanel(projectId);
-      }
-    });
-  });
-
   container.querySelectorAll('.personal-project-card').forEach((card) => {
     card.addEventListener('click', (e) => {
-      if (e.target.closest('.pp-card-actions')) return;
       openProjectDetailPanel(card.dataset.projectId);
+    });
+
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const project = getProjectById(card.dataset.projectId);
+      if (!project || !isPartner()) return;
+      openProjectContextMenu(e, project);
     });
   });
 }
@@ -1375,7 +1486,7 @@ function openAddPrivateTaskDialog() {
 
   const titleInput = document.getElementById('add-task-title-input');
   document.getElementById('add-task-notes-input').value = '';
-  document.getElementById('add-task-priority').value = '';
+  populatePrioritySelect(currentUser?.id || null);
   document.getElementById('add-task-due').value = '';
   titleInput.value = '';
   titleInput.placeholder = 'Task title...';
@@ -1437,6 +1548,7 @@ function setupAddProject() {
     document.getElementById('add-pp-client').value = '';
     document.getElementById('add-pp-name').value = '';
     document.getElementById('add-pp-notes').value = '';
+    document.getElementById('add-pp-future').checked = false;
     document.getElementById('add-pp-client').focus();
 
     const close = () => {
@@ -1451,12 +1563,14 @@ function setupAddProject() {
       const client = document.getElementById('add-pp-client').value.trim();
       const name = document.getElementById('add-pp-name').value.trim();
       const notes = document.getElementById('add-pp-notes').value.trim();
+      const category = document.getElementById('add-pp-future').checked ? 'future' : 'current';
       if (!client || !name) return;
 
       const project = await window.api.createProject({
         client,
         name,
         status: 'active',
+        category,
         notes,
         partner_id: currentUser.id,
       });
@@ -1475,6 +1589,144 @@ function setupAddProject() {
   });
 }
 
+async function assignProjectToStaff(project, staffId) {
+  const staffUser = getUserById(staffId);
+  if (!project || !staffUser) return;
+
+  const existingTask = TASKS.find((task) => task.project_id === project.id && task.assigned_to === staffId);
+  if (existingTask) return existingTask;
+
+  return window.api.createTask({
+    project_id: project.id,
+    assigned_to: staffId,
+    created_by: currentUser?.id || null,
+    partner_id: project.partner_id || currentUser?.id || null,
+    title: project.client ? `${project.client} — ${project.name}` : project.name,
+    notes: '',
+    priority: 0,
+    due_date: null,
+  });
+}
+
+async function duplicateProject(project) {
+  if (!project) return null;
+
+  return window.api.createProject({
+    client: project.client || '',
+    name: `${project.name || 'Project'} Copy`,
+    status: 'active',
+    category: isFutureProject(project) ? 'future' : 'current',
+    notes: project.notes || '',
+    partner_id: project.partner_id || currentUser?.id || null,
+    partner_ids: getProjectPartnerIds(project),
+    partner_initials: project.partner_initials || '',
+  });
+}
+
+function openProjectContextMenu(e, project) {
+  const assignedStaffIds = new Set(getAssignedStaffForProject(project.id).map((user) => user.id));
+  const assignToItems = getActiveStaffUsers().map((user) => ({
+    label: `${assignedStaffIds.has(user.id) ? '✓ ' : ''}${user.display_name}`,
+    action: async () => {
+      if (assignedStaffIds.has(user.id)) return;
+      await assignProjectToStaff(project, user.id);
+      await loadAllData();
+      await refreshAll();
+      if (selectedProjectId === project.id) {
+        await openProjectDetailPanel(project.id);
+      }
+    }
+  }));
+
+  const items = [
+    {
+      label: 'Edit Project...',
+      action: () => openProjectDetailPanel(project.id)
+    }
+  ];
+
+  if (assignToItems.length > 0) {
+    items.push({ divider: true });
+    items.push({
+      label: 'Assign To',
+      submenu: assignToItems
+    });
+  }
+
+  items.push({ divider: true });
+
+  if (isFutureProject(project)) {
+    items.push({
+      label: 'Move To Current',
+      action: async () => {
+        await window.api.updateProject({ id: project.id, category: 'current', status: 'active' });
+        await loadAllData();
+        await refreshAll();
+        if (selectedProjectId === project.id) {
+          await openProjectDetailPanel(project.id);
+        }
+      }
+    });
+  } else if (project.status !== 'active') {
+    items.push({
+      label: 'Make Active',
+      action: async () => {
+        await window.api.updateProject({ id: project.id, status: 'active', category: project.category || 'current' });
+        await loadAllData();
+        await refreshAll();
+        if (selectedProjectId === project.id) {
+          await openProjectDetailPanel(project.id);
+        }
+      }
+    });
+  }
+
+  if (project.status !== 'inactive') {
+    items.push({
+      label: 'Mark Inactive',
+      action: async () => {
+        await window.api.updateProject({ id: project.id, status: 'inactive', category: project.category || 'current' });
+        await loadAllData();
+        await refreshAll();
+        if (selectedProjectId === project.id) {
+          await openProjectDetailPanel(project.id);
+        }
+      }
+    });
+  }
+
+  items.push(
+    {
+      label: 'Duplicate',
+      action: async () => {
+        const duplicated = await duplicateProject(project);
+        await loadAllData();
+        await refreshAll();
+        if (duplicated?.id) {
+          await openProjectDetailPanel(duplicated.id);
+        }
+      }
+    },
+    {
+      label: 'Delete',
+      danger: true,
+      action: async () => {
+        if (!confirm(`Delete '${getProjectDisplayTitle(project)}'?`)) return;
+        await window.api.deleteProject(project.id);
+        await loadAllData();
+        if (selectedProjectId === project.id) {
+          selectedProjectId = null;
+          showDetailEmptyState();
+        }
+        await refreshAll();
+      }
+    }
+  );
+
+  const menu = ContextMenu.create(items);
+  positionMenu(menu, e.clientX, e.clientY);
+}
+
 // ── Task Card HTML ──────────────────────────────────
 
 function renderTaskCard(task, options = {}) {
@@ -1482,11 +1734,12 @@ function renderTaskCard(task, options = {}) {
   const due = formatDate(task.due_date);
   const project = getProjectById(task.project_id);
   const partnerLabel = getTaskPartnerLabel(task, project);
-  const subtasks = SUBTASK_CACHE[task.id] || [];
+  const subtasks = isPrivate ? (SUBTASK_CACHE[task.id] || []) : getTaskActionItems(task);
   const comments = isPrivate ? (COMMENT_CACHE[task.id] || []) : getTaskComments(task);
   const completedSubs = subtasks.filter(s => s.completed).length;
   const assignee = showAssignee ? getUserById(task.assigned_to) : null;
   const canManageSharedTask = !isPrivate && canPartnerManageTask(task);
+  const canManagePriority = !isPrivate && canCurrentUserManageTaskPriority(task);
 
   const priority = getPriorityPresentation(task);
 
@@ -1497,7 +1750,7 @@ function renderTaskCard(task, options = {}) {
       </div>
       <div class="task-body">
         <div class="task-top-row">
-          <span class="task-priority ${priority.className} ${canManageSharedTask ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canManageSharedTask ? `data-priority-task-id="${task.id}"` : ''}>${priority.label}</span>
+          <span class="task-priority ${priority.className} ${canManagePriority ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canManagePriority ? `data-priority-task-id="${task.id}"` : ''}>${priority.label}</span>
           <span class="task-title">${escapeHtml(task.title)}</span>
           ${due.text ? `<span class="task-due ${due.cls}">${due.text}</span>` : ''}
           ${canManageSharedTask ? `<span class="task-delete-btn" data-delete-task-id="${task.id}" title="Delete task">&times;</span>` : ''}
@@ -1573,7 +1826,7 @@ function attachTaskCardEvents(container) {
     pill.addEventListener('click', (e) => {
       e.stopPropagation();
       const task = getSharedTaskById(pill.dataset.priorityTaskId);
-      if (task && canPartnerManageTask(task)) {
+      if (task && canCurrentUserManageTaskPriority(task)) {
         openPriorityMenu(pill, task);
       }
     });
@@ -1728,7 +1981,7 @@ function openAddStaffTaskDialog(staffId) {
 
   const titleInput = document.getElementById('add-task-title-input');
   document.getElementById('add-task-notes-input').value = '';
-  document.getElementById('add-task-priority').value = '';
+  populatePrioritySelect(staffId);
   document.getElementById('add-task-due').value = '';
   titleInput.value = '';
   titleInput.placeholder = 'Task title...';
@@ -1794,7 +2047,7 @@ function setupAddSelfTask() {
 
     const titleInput = document.getElementById('add-task-title-input');
     document.getElementById('add-task-notes-input').value = '';
-    document.getElementById('add-task-priority').value = '';
+    populatePrioritySelect(currentUser.id);
     document.getElementById('add-task-due').value = '';
     titleInput.value = '';
     titleInput.placeholder = 'Task title...';
@@ -1893,11 +2146,12 @@ async function openDetailPanel(taskId) {
   const project = getProjectById(task.project_id);
   const partnerLabel = getTaskPartnerLabel(task, project);
   const partner = getUserById(task.partner_id || project?.partner_id);
-  const subtasks = SUBTASK_CACHE[task.id] || [];
+  const subtasks = isPrivateTask ? (SUBTASK_CACHE[task.id] || []) : getTaskActionItems(task);
   const comments = isPrivateTask ? (COMMENT_CACHE[task.id] || []) : getTaskComments(task);
   const due = formatDate(task.due_date);
   const projectNotes = project ? (PROJECT_NOTES_CACHE[project.id] || '') : '';
   const canManageThisTask = canCurrentUserAddActionItems(task);
+  const canEditProjectNotes = Boolean(project && canPartnerManageTask(task));
 
   const priority = getPriorityPresentation(task);
   const priorityHTML = `<span class="task-priority ${priority.className}" style="font-size:11px;padding:3px 10px;${priority.inlineStyle}">${priority.label}</span>`;
@@ -1910,7 +2164,7 @@ async function openDetailPanel(taskId) {
 
     ${task.notes ? `
     <div class="detail-field">
-      <div class="detail-field-label">Notes</div>
+      <div class="detail-field-label">Scheduling Notes</div>
       <div class="detail-field-value" style="font-style:italic;color:var(--text-secondary)">${escapeHtml(task.notes)}</div>
     </div>
     ` : ''}
@@ -1925,11 +2179,17 @@ async function openDetailPanel(taskId) {
     </div>
 
     ${project ? `
-    <button class="project-notes-btn" id="open-project-notes" data-project-id="${project.id}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-      Project Notes
-      ${projectNotes ? `<span class="notes-preview">${projectNotes.substring(0, 50)}${projectNotes.length > 50 ? '...' : ''}</span>` : ''}
-    </button>
+    <div class="detail-field">
+      <div class="detail-field-label">Project Notes</div>
+      ${canEditProjectNotes
+        ? `
+          <textarea class="dialog-textarea" id="task-project-notes" rows="5" placeholder="Shared notes that staff can see on this project.">${escapeHtml(projectNotes)}</textarea>
+          <div class="detail-actions" style="margin-top:10px">
+            <button class="btn btn-primary btn-sm" id="save-task-project-notes">Save Project Notes</button>
+          </div>
+        `
+        : `<div class="detail-field-value">${projectNotes ? escapeHtml(projectNotes).replace(/\n/g, '<br>') : '<span style="color:var(--text-tertiary)">No project notes yet</span>'}</div>`}
+    </div>
     ` : ''}
 
     ${(assignees.length > 0 || partnerLabel) ? `
@@ -2041,8 +2301,17 @@ async function openDetailPanel(taskId) {
     this.style.height = Math.min(this.scrollHeight, 100) + 'px';
   });
 
-  document.getElementById('open-project-notes')?.addEventListener('click', () => {
-    openProjectNotesDialog(project);
+  document.getElementById('save-task-project-notes')?.addEventListener('click', async () => {
+    const notes = document.getElementById('task-project-notes').value.trim();
+    await window.api.updateProjectNotes({
+      project_id: project.id,
+      notes,
+      updated_by: currentUser?.id || null,
+    });
+    PROJECT_NOTES_CACHE[project.id] = notes;
+    await loadAllData();
+    await openDetailPanel(taskId);
+    await refreshAll();
   });
 
   document.getElementById('add-subtask-btn')?.addEventListener('click', () => {
@@ -2074,8 +2343,9 @@ function openAddSubtaskDialog(task) {
   document.getElementById('add-subtask-save').onclick = async () => {
     const title = titleInput.value.trim();
     if (!title) return;
+    const ownerTask = getTaskThreadOwner(task) || task;
     await window.api.createSubTask({
-      task_id: task.id,
+      task_id: ownerTask.id,
       title,
       assigned_to: task.assigned_to || task.owner_id,
     });
@@ -2154,7 +2424,7 @@ async function openProjectDetailPanel(projectId) {
     showDetailEmptyState();
   });
 
-  const partnerNotes = PROJECT_NOTES_CACHE[project.id] || '';
+  const sharedProjectNotes = PROJECT_NOTES_CACHE[project.id] || '';
   document.getElementById('detail-body').innerHTML = `
     <div class="detail-field">
       <div class="detail-field-label">Client Name</div>
@@ -2169,12 +2439,12 @@ async function openProjectDetailPanel(projectId) {
       <div class="detail-field-value">${escapeHtml(getProjectSection(project).toUpperCase())}</div>
     </div>
     <div class="detail-field">
-      <div class="detail-field-label">Project Notes</div>
-      <textarea class="dialog-textarea" id="project-detail-notes" rows="4" placeholder="Visible on the project record.">${escapeHtml(project.notes || '')}</textarea>
+      <div class="detail-field-label">Scheduling Notes</div>
+      <input type="text" class="input" id="project-detail-notes" value="${escapeAttr(project.notes || '')}" placeholder="Short note shown in Dashboard and project cards.">
     </div>
     <div class="detail-field">
-      <div class="detail-field-label">Partner Notes</div>
-      <textarea class="dialog-textarea" id="project-detail-partner-notes" rows="6" placeholder="Internal notes for this project.">${escapeHtml(partnerNotes)}</textarea>
+      <div class="detail-field-label">Project Notes</div>
+      <textarea class="dialog-textarea" id="project-detail-project-notes" rows="6" placeholder="Shared project details visible in task detail for staff and partners.">${escapeHtml(sharedProjectNotes)}</textarea>
     </div>
     <div class="detail-actions">
       <button class="btn btn-primary btn-sm" id="project-detail-save">Save Changes</button>
@@ -2185,7 +2455,7 @@ async function openProjectDetailPanel(projectId) {
     const client = document.getElementById('project-detail-client').value.trim();
     const name = document.getElementById('project-detail-name').value.trim();
     const notes = document.getElementById('project-detail-notes').value.trim();
-    const partnerProjectNotes = document.getElementById('project-detail-partner-notes').value.trim();
+    const projectDetailNotes = document.getElementById('project-detail-project-notes').value.trim();
     if (!client || !name) return;
 
     await window.api.updateProject({
@@ -2196,10 +2466,10 @@ async function openProjectDetailPanel(projectId) {
     });
     await window.api.updateProjectNotes({
       project_id: project.id,
-      notes: partnerProjectNotes,
+      notes: projectDetailNotes,
       updated_by: currentUser?.id || null,
     });
-    PROJECT_NOTES_CACHE[project.id] = partnerProjectNotes;
+    PROJECT_NOTES_CACHE[project.id] = projectDetailNotes;
     await loadAllData();
     renderMyProjects();
     await openProjectDetailPanel(project.id);
@@ -2333,6 +2603,7 @@ function setupSettingsMenu() {
         label: 'Sign Out',
         action: async () => {
           await window.api.logout();
+          await window.api.setWindowMode('login');
           window.location.reload();
         }
       }

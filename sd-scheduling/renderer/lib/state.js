@@ -271,12 +271,12 @@ const AppState = {
     return this._data.businessRoles.find(r => r.id === id);
   },
 
-  // V4 priority sort: 1-4 ascending, then custom (-2), then unset (0), then W (-1) always last
+  // Numbered priorities sort ascending, then custom (-2), then unset (0), then W (-1) always last.
   _prioritySortKey(p) {
-    if (p >= 1 && p <= 4) return p;       // 1-4 sort naturally
-    if (p === -2) return 50;              // custom priorities after numbered, before unset
+    if (typeof p === 'number' && p >= 1) return p;
+    if (p === -2) return 500;
     if (p === 0 || p === null || p === undefined) return 100; // unset after custom
-    if (p === -1) return 200;             // W always last
+    if (p === -1) return 1000;            // W always last
     return 150;
   },
 

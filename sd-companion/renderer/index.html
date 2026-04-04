@@ -6,7 +6,7 @@
   <title>StudioSync MyTasks</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="styles/companion.css">
 </head>
@@ -26,9 +26,15 @@
       </button>
     </div>
     <div class="login-card">
-      <div class="login-logo">SS</div>
-      <h1 class="login-title">StudioSync MyTasks</h1>
-      <p class="login-subtitle" id="login-subtitle">Enter your username to sign in.</p>
+      <div class="login-logo">
+        <img class="brand-logo-mark login-logo-mark" src="../assets/studiosync-mytasks.svg" alt="MyTasks logo">
+      </div>
+      <div class="login-brand-group">
+        <div class="login-brand-suite">STUDIOSYNC</div>
+        <div class="login-brand-name">MYTASKS</div>
+      </div>
+      <h1 class="login-title login-title-auth" id="login-title">Sign In</h1>
+      <p class="login-subtitle" id="login-subtitle">Enter your username to continue.</p>
       <div class="login-users" id="login-users">
         <!-- Login form rendered by JS -->
       </div>
@@ -41,8 +47,13 @@
     <!-- Top Bar -->
     <header class="topbar">
       <div class="topbar-left">
-        <span class="topbar-logo">SS</span>
-        <span class="topbar-title">MyTasks</span>
+        <span class="topbar-logo">
+          <img class="brand-logo-mark" src="../assets/studiosync-mytasks.svg" alt="MyTasks logo">
+        </span>
+        <span class="topbar-brand-copy">
+          <span class="topbar-title">StudioSync</span>
+          <span class="topbar-brand-subtitle">MyTasks</span>
+        </span>
       </div>
       <div class="topbar-center">
         <div class="search-wrapper">
@@ -202,14 +213,7 @@
           <div style="display:flex;gap:12px">
             <div class="form-group" style="flex:1">
               <label>Priority</label>
-              <select class="select" id="add-task-priority">
-                <option value="">None</option>
-                <option value="1">1 - Urgent</option>
-                <option value="2">2 - High</option>
-                <option value="3">3 - Medium</option>
-                <option value="4">4 - Low</option>
-                <option value="w">W - Wait</option>
-              </select>
+              <select class="select" id="add-task-priority"></select>
             </div>
             <div class="form-group" style="flex:1">
               <label>Due Date</label>
@@ -245,9 +249,17 @@
           </div>
 
           <div class="form-group">
-            <label>Notes</label>
+            <label>Scheduling Notes</label>
             <textarea class="input" id="add-pp-notes" placeholder="Optional notes..." rows="2" style="resize:vertical"></textarea>
           </div>
+
+          <label class="dialog-checkbox-row">
+            <input type="checkbox" id="add-pp-future">
+            <span class="dialog-checkbox-copy">
+              <span class="dialog-checkbox-label">Add To Future Projects</span>
+              <span class="dialog-checkbox-help">Leave unchecked to add this project to the current project list.</span>
+            </span>
+          </label>
         </div>
         <div class="dialog-footer">
           <button class="btn btn-ghost" id="add-pp-cancel">Cancel</button>

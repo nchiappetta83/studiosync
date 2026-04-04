@@ -1,6 +1,6 @@
 {
   "name": "sd-scheduling",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "StudioSync - Collaborative task management",
   "main": "main/index.js",
   "scripts": {
@@ -28,12 +28,13 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/studiosync-clean.ico"
+      "icon": "assets/studiosync-main.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
       "createDesktopShortcut": "always",
       "shortcutName": "StudioSync"
     },

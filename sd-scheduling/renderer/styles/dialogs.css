@@ -68,6 +68,44 @@
   flex: 1;
 }
 
+.dialog-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(228, 234, 240, 0.88);
+  background: linear-gradient(180deg, rgba(247, 249, 251, 0.96) 0%, rgba(242, 245, 248, 0.96) 100%);
+  cursor: pointer;
+}
+
+.dialog-checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.dialog-checkbox-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dialog-checkbox-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.dialog-checkbox-help {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
 .dialog-footer {
   display: flex;
   justify-content: flex-end;

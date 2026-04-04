@@ -1,6 +1,6 @@
 ﻿# SD Apps â€” Design System & Architecture
 
-> Current StudioSync branding, app IDs, repo layout, and release-flow notes are captured in the `Current Update (2026-03-31)` section near the end of this file.
+> Current StudioSync branding, app IDs, repo layout, and release-flow notes are captured in the `Current Update (2026-04-03)` section near the end of this file.
 
 ## Overview
 
@@ -77,8 +77,8 @@ The main app lives on a shared network drive and stores its database alongside t
 
 | Role    | Font    | Stack                                                   |
 |---------|---------|---------------------------------------------------------|
-| Display | Manrope | `'Manrope', 'Segoe UI', 'SF Pro Display', sans-serif`  |
-| Body    | Inter   | `'Inter', 'Segoe UI', 'SF Pro Text', sans-serif`       |
+| Display | Rubik | `'Rubik', 'Segoe UI', 'SF Pro Display', sans-serif`  |
+| Body    | Source Sans 3   | `'Source Sans 3', 'Segoe UI', 'SF Pro Text', sans-serif`       |
 
 ### Type Scale
 | Element              | Font    | Size  | Weight |
@@ -187,7 +187,7 @@ Muted tones for sidebar/user avatars:
 | IDs           | `uuid` v4                     |
 | Excel import  | `exceljs` (main app only)     |
 | Build         | `electron-builder`            |
-| Fonts         | Google Fonts (Inter + Manrope)|
+| Fonts         | Google Fonts (Rubik + Source Sans 3)|
 
 ### Process Model
 Both apps use Electron's standard architecture:
@@ -208,15 +208,15 @@ Renderer  â”€â”€(ipcRenderer.invoke)â”€â”€>  Main Process  �
 
 ## 8. Database Schema
 
-Both apps share the same base schema (9 migration versions). The companion adds one local-only table.
+Both apps share the same base schema (11 migration versions). The companion adds one local-only table.
 
 ### Shared Tables (synced via events)
 
 | Table               | Purpose                          | Key Columns                                         |
 |---------------------|----------------------------------|-----------------------------------------------------|
-| `users`             | Team members                     | `id`, `username`, `display_name`, `role` (partner/staff/bootstrap), `avatar_color`, `business_role_id`, `is_admin` |
+| `users`             | Team members                     | `id`, `username`, `display_name`, `role` (partner/staff/bootstrap), `avatar_color`, `business_role_id`, `is_admin`, `can_self_assign` |
 | `tasks`             | Assigned work items              | `id`, `project_id`, `assigned_to`, `created_by`, `title`, `notes`, `priority`, `priority_label`, `due_date`, `completed`, `confirmed`, `partner_id`, `category` (current/last_week), `sort_order` |
-| `sub_tasks`         | Checklist items on tasks         | `id`, `task_id`, `title`, `completed`, `assigned_to` |
+| `sub_tasks`         | Action Items on tasks            | `id`, `task_id`, `title`, `completed`, `assigned_to` |
 | `comments`          | Discussion on tasks              | `id`, `task_id`, `author_id`, `body`, `created_at`  |
 | `projects`          | Client projects (from Excel)     | `id`, `client`, `name`, `notes`, `status`, `category` (current/future), `partner_id`, `partner_ids`, `partner_initials` |
 | `project_notes`     | Partner-authored notes (v6)      | `id`, `project_id`, `notes`, `updated_by`, `updated_at` |
@@ -235,7 +235,7 @@ Both apps share the same base schema (9 migration versions). The companion adds 
 | Table       | Purpose             |
 |-------------|---------------------|
 | `meta`      | Schema version, last rollover week |
-| `sync_meta` | Last sync timestamp  |
+| `sync_meta` | Legacy sync cursor plus processed sync filenames |
 
 ---
 
@@ -245,10 +245,12 @@ Both apps use the same file-based sync mechanism over a shared network drive.
 
 ### How it Works
 1. Each app has its own local SQLite database (no shared DB, no lock conflicts)
-2. Mutations push JSON event files to `<sharedDrivePath>/events/<username>_<timestamp>.json`
-3. A 5-second polling loop reads new event files and applies them to the local DB
-4. After applying events, the main process sends `data-updated` to the renderer
-5. Events are idempotent â€” replaying them produces the same result
+2. Mutations push JSON event files to `<sharedDrivePath>/events/<timestamp>_<username>_<type>_<uuid>.json`
+3. Event files are written atomically through a temp-file rename
+4. A 5-second polling loop validates and applies new event files to the local DB
+5. Processed filenames are tracked locally so delayed or previously failed files are not silently skipped
+6. After applying events, the main process sends `data-updated` to the renderer
+7. Events are idempotent â€” replaying them produces the same result
 
 ### Event Types
 `user-created`, `user-updated`, `user-deleted`, `task-created`, `task-updated`, `task-deleted`, `subtask-created`, `subtask-updated`, `subtask-toggled`, `subtask-deleted`, `comment-added`, `project-created`, `project-updated`, `project-notes-updated`, `pto-set`, `pto-cleared`, `setting-updated`, `business-role-created`, `custom-priority-created`, `weekly-rollover`, `task-confirmed`, and more.
@@ -266,9 +268,9 @@ Both apps use **username-based login** â€” no passwords, no Windows account
 
 1. Admin creates staff in the main app with first/last name
 2. A username is auto-generated: first initial + full last name, lowercase (e.g., "Nick Chiappetta" â†’ `nchiappetta`)
-3. Users sign in by typing their username on a login screen
+3. Users sign in by typing their username on a compact branded login screen
 4. The username is saved to `config.json` â€” users stay signed in across restarts
-5. A "Sign Out" button clears the saved username and returns to the login screen
+5. Signing out clears the saved username and returns to the login screen. In MyTasks, sign-out now lives in the settings gear menu.
 
 The main app also supports a bootstrap admin account for first-time setup. That account is hidden from normal staff/partner lists until it is explicitly converted into a real staff or partner user.
 
@@ -277,13 +279,13 @@ The main app also supports a bootstrap admin account for first-time setup. That 
 ## 11. SD Scheduling (Main App)
 
 ### Deployment
-The main app can be deployed either as a **portable application** or with an **interactive installer**. The portable option uses the `win-unpacked/` folder copied to a shared server location. The installer option allows the install location to be chosen and creates a desktop shortcut automatically. In both cases, database, config, and lock file live in a `data/` subfolder next to the executable.
+The main app can be deployed either as a **portable application** or with an **interactive installer**. The portable option uses the `win-unpacked/` folder copied to a shared server location. The installer option allows the install location to be chosen, defaults under `C:\SD Apps`, forces current-user scope, and creates a desktop shortcut automatically. In both cases, database, config, and lock file live in a `data/` subfolder next to the executable.
 
 ### Office-Wide Updates
-The Scheduling app can publish a **global update folder** in Settings. That path is stored as synced shared metadata, so every Companion install receives it through normal event sync. Both apps scan that folder for the newest matching installer (`SD Scheduling Dashboard Setup <version>.exe` or `SD Companion Setup <version>.exe`), compare it with the running app version, and can prompt the user to launch the newer installer.
+The Scheduling app can publish a **global update folder** in Settings. That path is stored as synced shared metadata, so every Companion install receives it through normal event sync. Both apps scan that folder for the newest matching installer (`StudioSync Setup <version>.exe` or `StudioSync MyTasks Setup <version>.exe`), compare it with the running app version, and can prompt the user to launch the newer installer.
 
 ### Lock File
-A `.lock` file in the `data/` folder prevents concurrent access. The first user to open the app acquires the lock; anyone else sees an "already in use" message. The lock auto-expires after 2 minutes if the app crashes without cleaning up.
+A lock file prevents concurrent dashboard access. Before the shared drive is configured, the app uses a local fallback `.lock`. Once the shared path is chosen, it switches to a shared `.dashboard.lock` that carries the app user, machine name, and a lock token. The lock auto-expires after 2 minutes if the app crashes without cleaning up.
 
 ### Layout
 ```
@@ -299,12 +301,13 @@ Three-panel layout with a draggable splitter between tasks and projects.
 ### Features
 - **Task Management** â€” Create, assign, prioritize, reorder (drag), confirm tasks
 - **Staff Sidebar** â€” Staff list with task counts, PTO badges, drag-drop assignment
-- **Project Panel** â€” Imported from Excel, draggable onto staff to create tasks
+- **Project Panel** â€” Imported from Excel, draggable onto staff to create tasks, with new-project defaults tied to the active Current/Future tab
 - **Excel Import** â€” Reads `.xlsx` and upserts projects with auto-refresh
+- **Faster Startup Paint** â€” Shows the window before longer sync and Excel initialization work completes
 - **PDF Export** â€” 11x17 tabloid format for printing
 - **HTML Export** â€” Auto-updating file on shared drive, staff can bookmark it
 - **Weekly Rollover** â€” Triggered Mondays: deletes completed tasks and their subtasks, moves incomplete tasks to "Last Week", clears PTO and priorities
-- **Admin Settings** â€” Manage users, business roles, custom priorities, export paths, and the global update folder
+- **Admin Settings** â€” Manage users, business roles, custom priorities, export paths, the global update folder, and MyTasks self-assign permissions
 - **Drag-and-Drop** â€” Projects to staff, tasks between staff, with ghost card insertion
 
 ### Admin-Only Features
@@ -321,80 +324,91 @@ Three-panel layout with a draggable splitter between tasks and projects.
 ## 12. SD Companion
 
 ### Deployment
-Installed on each user's desktop via an interactive NSIS installer. The installer allows the destination folder to be chosen and creates a desktop shortcut automatically. On first launch, the user selects the shared drive folder and signs in with their username. For packaged installs, local config and cache DB live in a `data/` folder next to that installed executable.
+Installed on each user's desktop via an interactive NSIS installer. The installer allows the destination folder to be chosen, defaults under `C:\SD Apps`, forces current-user scope, and creates a desktop shortcut automatically. On first launch, the user selects the shared drive folder and signs in with their username. For packaged installs, local config and cache DB live in a `data/` folder next to that installed executable.
 
 ### Layout
 ```
 +----------+-----------------------------+------------------+
 | Sidebar  |       Main Panel            |  Detail Panel    |
 | 220px    |  Task list + projects       |  Task details    |
-| collapsible                            |  subtasks, comments|
+| collapsible                            |  Action Items, comments|
 +----------+-----------------------------+------------------+
 ```
 
 Three-panel layout. Sidebar collapses to 40px. Detail panel shows on task selection.
 
 ### Views
-- **My Tasks** â€” Partner's private tasks (local-only) with add/edit/complete
+- **My Tasks** â€” Shared assigned work for the signed-in user, plus private partner tasks where applicable
 - **Staff Overview** â€” All staff members' task assignments (partner-only)
-- **My Projects** â€” Partner's active projects with project notes
+- **My Projects** â€” Partner workspace for active/future/inactive projects with project detail editing, assigned staff avatars, and context-menu actions
 
 ### Features
 - **Private Tasks** â€” Local-only tasks visible only to the partner, never synced
-- **Project Notes** â€” Partner-authored notes that persist with projects (synced separately from Excel notes)
-- **Subtasks** â€” View, toggle, add, edit, and delete subtasks
-- **Comments** â€” View and add comments on shared tasks
+- **Project Details + Notes** â€” Partners can edit project fields and notes from My Projects
+- **Project Creation** â€” Partners can add projects as current or future directly from MyTasks
+- **Action Items** â€” View, toggle, add, edit, and delete task Action Items (backed by `sub_tasks`) and share them across staff assigned to the same project-linked work
+- **Shared Assignees** â€” Project-linked task detail shows everyone assigned to that project
+- **Comments** â€” View and add shared comments on project-linked tasks
 - **Search** â€” Filter tasks by title and notes
 - **Stats Bar** â€” Pending / Completed / Overdue filter buttons
+- **Settings Gear** â€” Houses sign-out and low-frequency controls without crowding the top bar
+- **Sync Status Dot** â€” Shows sync activity beside the signed-in user badge
 - **Real-time Sync** â€” Receives updates from main app via shared drive events (5-second polling)
 - **Username Login** â€” Simple username entry, saved for future sessions
 - **Private Partner Workspace** â€” Private tasks remain local to that companion install and do not sync back to Scheduling
+- **Staff Self-Assign Option** â€” Selected staff can add project-linked tasks to their own MyTasks list, add Action Items to their own work, and adjust priority on those shared tasks
 - **Update Checks** â€” Reads the synced global update folder and can prompt to launch a newer installer
+- **Project Assignment Menu** â€” Partner project context menus support assign-to staff, duplicate, delete, and move-to-current flows
 
 ### Role-Based Visibility
 | Feature              | Partner | Staff |
 |----------------------|---------|-------|
-| My Tasks (private)   | Yes     | No    |
+| My Tasks             | Yes     | Yes   |
+| Private local tasks  | Yes     | No    |
 | Staff Overview       | Yes     | No    |
 | Staff Sidebar        | Yes     | No    |
 | My Projects          | Yes     | No    |
 | Add Private Task     | Yes     | No    |
+| Edit project details | Yes     | No    |
 | Project Notes        | Yes     | No    |
 | Assigned tasks       | Yes     | Yes   |
-| Subtasks             | Yes     | Yes   |
+| Action Items         | Yes     | Yes*  |
 | Comments on shared   | Yes     | Yes   |
+| Add task to own list | Yes     | Yes*  |
+
+\* Staff creation of shared tasks and Action Items depends on the `can_self_assign` permission managed in the Scheduling app.
 
 ---
 
 ## 13. Build & Distribution
 
-### SD Scheduling (Portable)
+### StudioSync
 ```bash
 cd sd-scheduling
 npm install
 npm run build
 # Output:
-#   dist/win-unpacked/                         (portable folder)
-#   dist/SD Scheduling Dashboard Setup <version>.exe
+#   dist/win-unpacked/
+#   dist/StudioSync Setup <version>.exe
 ```
 
-### SD Companion (Installer)
+### StudioSync MyTasks
 ```bash
 cd sd-companion
 npm install
 npm run build
 # Output:
-#   dist/SD Companion Setup <version>.exe
+#   dist/StudioSync MyTasks Setup <version>.exe
 #   dist/win-unpacked/
 ```
 
 ### Build Notes
 - `better-sqlite3` is a native module â€” `electron-rebuild` runs automatically via `postinstall`
-- Main app builds as a portable directory (`target: dir`) â€” no installer needed
-- Companion builds as an interactive NSIS installer with install-location selection and desktop shortcut creation
+- Both apps build interactive NSIS installers and also produce `win-unpacked/` folders
+- GitHub release tags currently publish the unsigned installers plus zipped `win-unpacked` packages
 - Main app data stored in `data/` folder next to the executable
 - Companion packaged-install data stored in `data/` next to the installed executable
-- No code signing configured (internal distribution only)
+- SignPath setup is documented for future use, but the current live release flow is unsigned
 
 ---
 
@@ -437,15 +451,19 @@ New tasks created after rollover default to `category = 'current'`.
 - Rely on Windows username detection for authentication
 - Store main app data in `%APPDATA%` (it must be portable)
 
-## Current Update (2026-03-31)
+## Current Update (2026-04-03)
 
 This section is the current source of truth for the app naming, repository shape, and release flow.
 
 - `StudioSync` is the main dashboard app.
 - `StudioSync MyTasks` is the companion app.
 - The current app IDs are `com.studiosync.dashboard` and `com.studiosync.mytasks`.
-- The current signed-release workflow lives in `.github/workflows/release-signpath.yml`.
-- The current SignPath setup guide lives in `docs/signpath-setup.md`.
-- The current build icons are `sd-scheduling/assets/studiosync-clean.ico` and `sd-companion/assets/studiosync-mytasks.ico`.
+- The current GitHub release workflow lives in `.github/workflows/release-signpath.yml`.
+- The current workflow publishes unsigned installers and `win-unpacked` zip packages to GitHub Releases.
+- The SignPath restoration guide lives in `docs/signpath-setup.md`.
+- The current build icons are `sd-scheduling/assets/studiosync-main.ico` and `sd-companion/assets/studiosync-mytasks.ico`.
+- The current brand masters are `sd-scheduling/assets/studiosync-main.svg` and `sd-companion/assets/studiosync-mytasks.svg`.
+- The current installers default under `C:\SD Apps` and force current-user install mode.
+- Both apps now open in compact branded sign-in windows before transitioning to the full shell.
 
 When older sections below mention `SD Scheduling` or `SD Companion`, read them as the current StudioSync names.

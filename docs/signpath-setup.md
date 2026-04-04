@@ -1,6 +1,13 @@
-# SignPath Open Source Setup
+# Optional SignPath Open Source Setup
 
-This repository is prepared for a GitHub Actions based SignPath signing flow.
+This repository is prepared for a future GitHub Actions based SignPath signing flow.
+
+Current status as of April 3, 2026:
+
+- The live GitHub release workflow currently bypasses SignPath.
+- Release tags publish unsigned installers and `win-unpacked` zip packages directly to GitHub Releases.
+- The installers themselves currently run as interactive current-user installs with default paths under `C:\SD Apps`.
+- The setup below is kept as the reference for restoring signed releases later.
 
 ## 1. Repository prerequisites
 
@@ -26,7 +33,7 @@ In SignPath:
 
 SignPath's GitHub integration expects workflow artifacts to arrive as ZIP archives, so the root element of each artifact configuration must be `<zip-file>`.
 
-### Suggested SignPath slugs
+Suggested SignPath slugs:
 
 - Project slug: `studiosync`
 - Signing policy slug: `release-signing`
@@ -35,7 +42,7 @@ SignPath's GitHub integration expects workflow artifacts to arrive as ZIP archiv
 
 ## 3. Example artifact configurations
 
-### StudioSync installer
+StudioSync installer:
 
 ```xml
 <?xml version="1.0" encoding="utf-8" ?>
@@ -51,7 +58,7 @@ SignPath's GitHub integration expects workflow artifacts to arrive as ZIP archiv
 </artifact-configuration>
 ```
 
-### StudioSync MyTasks installer
+StudioSync MyTasks installer:
 
 ```xml
 <?xml version="1.0" encoding="utf-8" ?>
@@ -83,23 +90,23 @@ Add this repository secret:
 
 The API token should belong to a SignPath user with submitter permissions for the chosen project and signing policy.
 
-## 5. Release flow
+## 5. Future signed release flow
 
 The workflow file is [`.github/workflows/release-signpath.yml`](../.github/workflows/release-signpath.yml).
 
-It:
+When SignPath steps are restored, the release flow should:
 
-1. builds both Electron installers on `windows-latest`
-2. uploads the unsigned installers as GitHub Actions artifacts
-3. submits both workflow artifacts to SignPath
-4. downloads the signed installers back into the workflow
-5. uploads the signed installers and win-unpacked zip packages to the GitHub release for tags like `v1.0.3`
+1. build both Electron installers on `windows-latest`
+2. upload the unsigned installers as GitHub Actions artifacts
+3. submit both workflow artifacts to SignPath
+4. download the signed installers back into the workflow
+5. upload the signed installers and `win-unpacked` zip packages to the GitHub release for version tags
 
-To publish a signed release:
+To publish a signed release after SignPath is re-enabled:
 
 ```powershell
-git tag v1.0.3
-git push origin v1.0.3
+git tag v1.0.4
+git push origin v1.0.4
 ```
 
 You can also run the workflow manually with `workflow_dispatch` to test the SignPath connection before tagging a release.

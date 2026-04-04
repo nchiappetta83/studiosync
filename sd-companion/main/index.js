@@ -15,6 +15,20 @@ let isQuitting = false;
 let hasShownTrayHint = false;
 let updateManager = null;
 
+const LOGIN_WINDOW_BOUNDS = {
+  width: 760,
+  height: 620,
+  minWidth: 700,
+  minHeight: 560,
+};
+
+const APP_WINDOW_BOUNDS = {
+  width: 1200,
+  height: 800,
+  minWidth: 800,
+  minHeight: 600,
+};
+
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
 
@@ -232,6 +246,29 @@ function getTrayIconPath() {
   return path.join(__dirname, '..', 'assets', 'studiosync-mytasks.ico');
 }
 
+function applyWindowBounds(bounds) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  }
+
+  mainWindow.setMinimumSize(bounds.minWidth, bounds.minHeight);
+  mainWindow.setSize(bounds.width, bounds.height, true);
+  mainWindow.center();
+  emitWindowState();
+}
+
+function setWindowMode(mode) {
+  if (mode === 'login') {
+    applyWindowBounds(LOGIN_WINDOW_BOUNDS);
+    return { mode: 'login' };
+  }
+
+  applyWindowBounds(APP_WINDOW_BOUNDS);
+  return { mode: 'app' };
+}
+
 function restoreMainWindow() {
   if (!mainWindow) {
     createWindow();
@@ -374,10 +411,10 @@ function createTray() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 800,
-    minHeight: 600,
+    width: LOGIN_WINDOW_BOUNDS.width,
+    height: LOGIN_WINDOW_BOUNDS.height,
+    minWidth: LOGIN_WINDOW_BOUNDS.minWidth,
+    minHeight: LOGIN_WINDOW_BOUNDS.minHeight,
     title: 'StudioSync MyTasks',
     autoHideMenuBar: true,
     icon: getTrayIconPath(),
@@ -550,8 +587,11 @@ function registerIPC() {
     const config = loadConfig() || {};
     delete config.loggedInUsername;
     saveConfig(config);
+    setWindowMode('login');
     return true;
   });
+
+  ipcMain.handle('set-window-mode', (_e, mode) => setWindowMode(mode));
 
   // Users
   ipcMain.handle('get-users', () => {
@@ -687,6 +727,14 @@ function registerIPC() {
     if (sync) sync.pushEvent('project-updated', project);
     notifyDataChanged();
     return project;
+  });
+
+  ipcMain.handle('delete-project', (_e, id) => {
+    if (!db) return null;
+    db.deleteProject(id);
+    if (sync) sync.pushEvent('project-deleted', { id });
+    notifyDataChanged();
+    return true;
   });
 
   // Project Notes (partner-authored, separate from Excel notes)

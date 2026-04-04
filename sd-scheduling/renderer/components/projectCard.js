@@ -149,6 +149,7 @@ const ProjectCard = {
   _showContextMenu(e, project) {
     const users = AppState.get('users') || [];
     const partners = users.filter(u => u.role === 'partner' && u.active !== 0);
+    const projectCategory = project.category || 'current';
 
     const items = [];
 
@@ -180,32 +181,53 @@ const ProjectCard = {
       }
     });
 
+    if (projectCategory === 'future') {
+      items.push({
+        label: 'Move To Current',
+        action: async () => {
+          await window.api.updateProject({ id: project.id, category: 'current' });
+          AppState.refresh();
+        }
+      });
+    }
+
     // Assign Partner
     if (partners.length > 0) {
       items.push({ divider: true });
       items.push({
-        label: 'No Partner',
-        action: async () => {
-          await window.api.updateProject({ id: project.id, partner_id: null, partner_ids: [], partner_initials: '' });
-          AppState.refresh();
-        }
+        label: 'Assign Partner',
+        submenu: [
+          {
+            label: project.partner_id ? 'No Partner' : '✓ No Partner',
+            action: async () => {
+              await window.api.updateProject({
+                id: project.id,
+                partner_id: null,
+                partner_ids: [],
+                partner_initials: ''
+              });
+              AppState.refresh();
+            }
+          },
+          ...partners.map((partner) => {
+            const initials = partner.display_name.trim().split(/\s+/).map(p => p[0]).join('').toUpperCase();
+            const isAssigned = project.partner_id === partner.id;
+            return {
+              label: `${isAssigned ? '✓ ' : ''}${partner.display_name} (${initials})`,
+              action: async () => {
+                if (isAssigned) return;
+                await window.api.updateProject({
+                  id: project.id,
+                  partner_id: partner.id,
+                  partner_ids: [partner.id],
+                  partner_initials: initials
+                });
+                AppState.refresh();
+              }
+            };
+          })
+        ]
       });
-      for (const partner of partners) {
-        const initials = partner.display_name.trim().split(/\s+/).map(p => p[0]).join('').toUpperCase();
-        const check = project.partner_id === partner.id ? '✓ ' : '';
-        items.push({
-          label: `${check}${partner.display_name} (${initials})`,
-          action: async () => {
-            await window.api.updateProject({
-              id: project.id,
-              partner_id: partner.id,
-              partner_ids: [partner.id],
-              partner_initials: initials
-            });
-            AppState.refresh();
-          }
-        });
-      }
     }
 
     items.push({ divider: true });

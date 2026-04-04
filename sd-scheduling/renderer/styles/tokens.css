@@ -50,15 +50,15 @@
 
   /* Special */
   --status-active:    #D4A017;
-  --pto-bg:           #FDF0E0;
-  --pto-text:         #D4883A;
+  --pto-bg:           #F7E0B8;
+  --pto-text:         #8C5817;
   --danger:           #D95F5F;
   --danger-hover:     #C74E4E;
   --success:          #2EAD7F;
 
   /* Typography */
-  --font-display:     'Manrope', 'Segoe UI', 'SF Pro Display', 'Helvetica Neue', sans-serif;
-  --font-body:        'Inter', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --font-display:     'Rubik', 'Segoe UI', 'SF Pro Display', 'Helvetica Neue', sans-serif;
+  --font-body:        'Source Sans 3', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', sans-serif;
 
   /* Spacing */
   --space-xs:   4px;
@@ -75,8 +75,8 @@
   --radius-pill: 100px;
 
   /* Shadows */
-  --shadow-card:      0 2px 8px rgba(42, 52, 57, 0.06), 0 4px 20px rgba(42, 52, 57, 0.04);
-  --shadow-card-lg:   0 4px 12px rgba(42, 52, 57, 0.08), 0 8px 28px rgba(42, 52, 57, 0.06);
+  --shadow-card:      0 1px 4px rgba(42, 52, 57, 0.05), 0 6px 14px rgba(42, 52, 57, 0.035);
+  --shadow-card-lg:   0 3px 10px rgba(42, 52, 57, 0.07), 0 8px 18px rgba(42, 52, 57, 0.045);
   --shadow-dropdown:  0 8px 32px rgba(42, 52, 57, 0.12);
   --shadow-dialog:    0 16px 48px rgba(42, 52, 57, 0.16);
 
@@ -218,6 +218,9 @@ input::placeholder, textarea::placeholder {
 .badge-pto {
   background: var(--pto-bg);
   color: var(--pto-text);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
 }
 
 .badge-status {

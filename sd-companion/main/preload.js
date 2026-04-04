@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('api', {
   getProjects:        ()          => ipcRenderer.invoke('get-projects'),
   createProject:      (data)      => ipcRenderer.invoke('create-project', data),
   updateProject:      (data)      => ipcRenderer.invoke('update-project', data),
+  deleteProject:      (id)        => ipcRenderer.invoke('delete-project', id),
 
   // Project Notes (partner-authored, separate from Excel notes)
   getProjectNotes:    (projectId) => ipcRenderer.invoke('get-project-notes', projectId),
@@ -57,6 +58,7 @@ contextBridge.exposeInMainWorld('api', {
   toggleMaximizeWindow: ()        => ipcRenderer.invoke('window-toggle-maximize'),
   closeWindow:        ()          => ipcRenderer.invoke('window-close'),
   getWindowState:     ()          => ipcRenderer.invoke('get-window-state'),
+  setWindowMode:      (mode)      => ipcRenderer.invoke('set-window-mode', mode),
   selectFolder:       ()          => ipcRenderer.invoke('select-folder'),
   initializeApp:      (path)      => ipcRenderer.invoke('initialize-app', path),
 

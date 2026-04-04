@@ -1,6 +1,6 @@
 {
   "name": "sd-companion",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "StudioSync MyTasks - Role-based task viewer",
   "main": "main/index.js",
   "scripts": {
@@ -33,6 +33,7 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
       "createDesktopShortcut": "always",
       "shortcutName": "StudioSync MyTasks"
     },

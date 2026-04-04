@@ -1,0 +1,77 @@
+<svg width="1024" height="1024" viewBox="0 0 680 680" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="bg2" x1="0.2" y1="0" x2="0.8" y2="1">
+<stop offset="0%" stop-color="#2E90ED"/>
+<stop offset="100%" stop-color="#0D47A1"/>
+</linearGradient>
+<linearGradient id="cardFill2" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#FFFFFF"/>
+<stop offset="100%" stop-color="#EDF2F7"/>
+</linearGradient>
+<linearGradient id="darkBandGrad2" x1="0.3" y1="0" x2="0.7" y2="1">
+<stop offset="0%" stop-color="#313A40"/>
+<stop offset="100%" stop-color="#232B30"/>
+</linearGradient>
+<linearGradient id="personFill" x1="0.2" y1="0" x2="0.8" y2="1">
+<stop offset="0%" stop-color="#9A80BC"/>
+<stop offset="100%" stop-color="#7E5FA6"/>
+</linearGradient>
+<clipPath id="clip2">
+<rect x="90" y="125" width="475" height="425" rx="30"/>
+</clipPath>
+<filter id="innerLayer2">
+<feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#0A2A5C" flood-opacity="0.35"/>
+</filter>
+<filter id="badgeLayer2">
+<feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#5E457D" flood-opacity="0.28"/>
+</filter>
+</defs>
+<g clip-path="url(#clip2)">
+
+<g filter="url(#innerLayer2)">
+<rect x="90" y="125" width="475" height="425" rx="30" fill="url(#cardFill2)"/>
+</g>
+
+<rect x="90" y="180" width="475" height="30" fill="#4880C8"/>
+
+<path d="M120,125 L535,125 Q565,125 565,155 L565,180 L90,180 L90,155 Q90,125 120,125 Z" fill="url(#darkBandGrad2)"/>
+
+<rect x="135" y="151" width="110" height="14" rx="7" fill="white" opacity="0.7"/>
+
+<circle cx="155" cy="258" r="16" fill="none" stroke="#2EAD7F" stroke-width="3"/>
+<polyline points="146,258 153,265 165,251" fill="none" stroke="#2EAD7F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="190" y="250" width="200" height="10" rx="5" fill="#B5C0C9" opacity="0.65"/>
+<rect x="190" y="268" width="130" height="8" rx="4" fill="#D8E0E6" opacity="0.55"/>
+
+<circle cx="155" cy="325" r="16" fill="none" stroke="#2EAD7F" stroke-width="3"/>
+<polyline points="146,325 153,332 165,318" fill="none" stroke="#2EAD7F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="190" y="317" width="170" height="10" rx="5" fill="#B5C0C9" opacity="0.65"/>
+<rect x="190" y="335" width="110" height="8" rx="4" fill="#D8E0E6" opacity="0.55"/>
+
+<circle cx="155" cy="392" r="16" fill="none" stroke="#D95F5F" stroke-width="3"/>
+<rect x="190" y="384" width="230" height="10" rx="5" fill="#2A3439"/>
+<rect x="190" y="402" width="150" height="8" rx="4" fill="#8A9AA6" opacity="0.6"/>
+<circle cx="440" cy="389" r="6" fill="#D95F5F"/>
+
+<circle cx="155" cy="459" r="16" fill="none" stroke="#B5C0C9" stroke-width="2.5"/>
+<rect x="190" y="451" width="190" height="10" rx="5" fill="#2A3439"/>
+<rect x="190" y="469" width="120" height="8" rx="4" fill="#8A9AA6" opacity="0.6"/>
+<circle cx="400" cy="456" r="6" fill="#4D4AD5"/>
+
+<circle cx="155" cy="526" r="16" fill="none" stroke="#B5C0C9" stroke-width="2.5"/>
+<rect x="190" y="518" width="160" height="10" rx="5" fill="#2A3439"/>
+<rect x="190" y="536" width="100" height="8" rx="4" fill="#8A9AA6" opacity="0.6"/>
+<circle cx="370" cy="523" r="6" fill="#D4883A"/>
+
+<line x1="130" y1="291" x2="550" y2="291" stroke="#E0E6ED" stroke-width="1"/>
+<line x1="130" y1="358" x2="550" y2="358" stroke="#E0E6ED" stroke-width="1"/>
+<line x1="130" y1="425" x2="550" y2="425" stroke="#E0E6ED" stroke-width="1"/>
+<line x1="130" y1="492" x2="550" y2="492" stroke="#E0E6ED" stroke-width="1"/>
+
+</g>
+<g filter="url(#badgeLayer2)">
+<circle cx="518" cy="511" r="76" fill="url(#personFill)"/>
+</g>
+<circle cx="518" cy="487" r="21" fill="white"/>
+<path d="M480,530 Q480,511 518,511 Q556,511 556,530 L556,539 Q556,544 551,544 L485,544 Q480,544 480,539 Z" fill="white"/>
+</svg>

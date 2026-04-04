@@ -65,6 +65,8 @@ const TaskCard = {
       if (cp) {
         priorityInlineStyle += `color:${cp.color};background:${cp.color}18;`;
       }
+    } else if (pClass === 'priority-numeric') {
+      priorityInlineStyle += this._numericPriorityStyle(priority);
     }
     const priorityBadge = `<span class="task-priority-pill ${pClass}" data-task-id="${task.id}" style="${priorityInlineStyle}">${pLabel}</span>`;
 
@@ -75,7 +77,7 @@ const TaskCard = {
       : (isPartner ? `<span class="task-due-label due-empty" data-task-id="${task.id}" style="${dueCursor}">Due</span>` : '');
 
     return `
-      <div class="task-card ${completedClass} ${lastWeekClass}" data-task-id="${task.id}">
+      <div class="task-card ${completedClass} ${lastWeekClass} ${isPartner ? 'task-card-draggable' : ''}" data-task-id="${task.id}">
         <div class="task-card-main">
           ${priorityBadge}
           <div class="task-title">${this._escapeHtml(task.title)}</div>
@@ -307,10 +309,8 @@ const TaskCard = {
       if (item.type === 'clear') btn.style.color = 'var(--text-tertiary)';
 
       // Color dot for numbered priorities
-      const colorMap = { 1: 'var(--priority-1)', 2: 'var(--priority-2)', 3: 'var(--priority-3)', 4: 'var(--priority-4)' };
-
       if (item.type === 'priority' && typeof item.value === 'number') {
-        const color = colorMap[item.value] || 'var(--text-tertiary)';
+        const color = this._numericPriorityTone(item.value).color;
         btn.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>${item.label}`;
       } else if (item.value === 'w') {
         btn.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--priority-w);flex-shrink:0;"></span>${item.label}`;
@@ -451,13 +451,12 @@ const TaskCard = {
     const staffTasks = allTasks.filter(t => t.assigned_to === task.assigned_to);
     const n = Math.max(staffTasks.length, 1);
     const customPriorities = AppState.get('customPriorities') || [];
-    const colorMap = { 1: 'var(--priority-1)', 2: 'var(--priority-2)', 3: 'var(--priority-3)', 4: 'var(--priority-4)' };
     const items = [];
 
     for (let i = 1; i <= n; i++) {
       items.push({
         label: String(i),
-        color: colorMap[i] || 'var(--text-tertiary)',
+        color: this._numericPriorityTone(i).color,
         action: async () => {
           await window.api.updateTask({ id: task.id, priority: i, priority_label: null });
           AppState.refresh();
@@ -624,13 +623,22 @@ const TaskCard = {
   _priorityClass(priority, isSet, task) {
     if (!isSet || priority === 0 || priority === null || priority === undefined) return 'priority-unset';
     const p = String(priority);
-    if (p === '1') return 'priority-1';
-    if (p === '2') return 'priority-2';
-    if (p === '3') return 'priority-3';
-    if (p === '4') return 'priority-4';
+    if (typeof priority === 'number' && priority >= 1) return 'priority-numeric';
     if (p === '-1') return 'priority-w';
     if (p === '-2' && task?.priority_label) return 'priority-custom';
     return 'priority-unset';
+  },
+
+  _numericPriorityTone(priority) {
+    if (priority <= 1) return { color: 'var(--priority-1)', background: 'var(--priority-bg-1)' };
+    if (priority === 2) return { color: 'var(--priority-2)', background: 'var(--priority-bg-2)' };
+    if (priority === 3) return { color: 'var(--priority-3)', background: 'var(--priority-bg-3)' };
+    return { color: 'var(--priority-4)', background: 'var(--priority-bg-4)' };
+  },
+
+  _numericPriorityStyle(priority) {
+    const tone = this._numericPriorityTone(priority);
+    return `color:${tone.color};background:${tone.background};`;
   },
 
   _formatDueDisplay(dateStr) {

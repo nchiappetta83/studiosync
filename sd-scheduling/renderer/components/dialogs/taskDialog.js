@@ -153,9 +153,11 @@ const TaskDialog = {
     document.addEventListener('keydown', onEsc);
   },
 
-  showProjectDialog(projectData = {}, isEdit = false) {
+  showProjectDialog(projectData = {}, isEdit = false, options = {}) {
     const users = AppState.get('users') || [];
     const partners = users.filter(u => u.role === 'partner');
+    const defaultCategory = options.defaultCategory || projectData.category || 'current';
+    const createAsFuture = defaultCategory === 'future';
 
     const title = isEdit ? 'Edit Project' : 'New Project';
     const submitLabel = isEdit ? 'Save Changes' : 'Create Project';
@@ -192,6 +194,15 @@ const TaskDialog = {
             <label>Notes</label>
             <textarea class="input" id="dialog-project-notes" rows="2" placeholder="Optional notes...">${this._esc(projectData.notes || '')}</textarea>
           </div>
+          ${!isEdit ? `
+            <label class="dialog-checkbox-row">
+              <input type="checkbox" id="dialog-project-future" ${createAsFuture ? 'checked' : ''}>
+              <span class="dialog-checkbox-copy">
+                <span class="dialog-checkbox-label">Add To Future Projects</span>
+                <span class="dialog-checkbox-help">Leave unchecked to add this project to the current list.</span>
+              </span>
+            </label>
+          ` : ''}
         </div>
         <div class="dialog-footer">
           ${isEdit ? '<button class="btn btn-danger" id="dialog-delete">Delete Project</button>' : ''}
@@ -249,6 +260,10 @@ const TaskDialog = {
         partner_id: document.getElementById('dialog-project-partner').value || null,
         notes: document.getElementById('dialog-project-notes').value.trim()
       };
+
+      if (!isEdit) {
+        data.category = document.getElementById('dialog-project-future')?.checked ? 'future' : 'current';
+      }
 
       const selectedPartnerId = data.partner_id;
       const existingPartnerIds = this._parsePartnerIds(projectData.partner_ids);

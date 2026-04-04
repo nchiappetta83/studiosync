@@ -26,7 +26,10 @@ const ProjectPanel = {
 
     // Add project
     this._addBtn.addEventListener('click', () => {
-      TaskDialog.showProjectDialog();
+      const activeTab = AppState.get('projectTab');
+      TaskDialog.showProjectDialog({}, false, {
+        defaultCategory: activeTab === 'future' ? 'future' : 'current'
+      });
     });
 
     // Excel import
@@ -134,7 +137,11 @@ const ProjectPanel = {
         projects = projects.filter(p => (p.category || 'current') === 'current');
       }
     } else if (tab === 'future') {
-      projects = projects.filter(p => (p.category || 'current') === 'future');
+      if (activeOnly) {
+        projects = projects.filter(p => (p.category || 'current') === 'future' && p.status === 'active');
+      } else {
+        projects = projects.filter(p => (p.category || 'current') === 'future');
+      }
     }
 
     // Search filter
