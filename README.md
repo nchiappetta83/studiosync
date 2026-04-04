@@ -30,7 +30,7 @@ Core capabilities:
 - Start in a compact branded sign-in window before expanding into the full dashboard
 - Install through a current-user installer flow that seeds the default path under `C:\SD Apps`
 
-![StudioSync dashboard mock screenshot](docs/images/studiosync-dashboard.svg)
+![StudioSync dashboard screenshot](docs/images/studiosync-dashboard.png)
 
 ### StudioSync MyTasks
 
@@ -53,7 +53,7 @@ Core capabilities:
 - Detect new installers from the shared update folder
 - Start in a compact branded sign-in window that mirrors the StudioSync auth flow
 
-![StudioSync MyTasks mock screenshot](docs/images/studiosync-mytasks.svg)
+![StudioSync MyTasks screenshot](docs/images/studiosync-mytasks.png)
 
 ## How the apps work together
 
@@ -120,4 +120,4 @@ Setup details for restoring signed releases later are documented in [`docs/signp
 
 ## Screenshot note
 
-The screenshots in this README use fully fictional mock projects, staff names, and comments created specifically for documentation. They do not contain live company data.
+The screenshots in this README are real captures from the current Windows builds running against a local development workspace.
