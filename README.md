@@ -120,4 +120,4 @@ Setup details for restoring signed releases later are documented in [`docs/signp
 
 ## Screenshot note
 
-The screenshots in this README are real captures from the current Windows builds running against a local development workspace.
+The screenshots in this README use fictional demo users, project names, and notes created specifically for documentation.
