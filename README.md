@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/studiosync-github-logo.png" alt="StudioSync logo" width="520">
+  <img src="docs/images/studiosync-github-logo.svg" alt="StudioSync logo" width="520">
 </p>
 
 # StudioSync

@@ -8,7 +8,10 @@
         font-weight: 900;
         letter-spacing: 0.03em;
         text-transform: uppercase;
-        fill: #2A3439;
+        fill: #D8E2EA;
+        stroke: rgba(42, 52, 57, 0.18);
+        stroke-width: 1.5px;
+        paint-order: stroke fill;
       }
     </style>
     <linearGradient id="cardFill" x1="0" y1="0" x2="0" y2="1">
