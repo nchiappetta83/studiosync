@@ -33,7 +33,7 @@ Core capabilities:
 - Install through a current-user installer flow that seeds the default path under `C:\SD Apps`
 
 <p align="center">
-  <img src="docs/images/studiosync-dashboard.png" alt="StudioSync Dashboard showing the office schedule with fictional demo staff, tasks, and projects." width="920"><br>
+  <img src="docs/images/studiosync-dashboard-main.png" alt="StudioSync Dashboard showing the office schedule with fictional demo staff, tasks, and projects." width="920"><br>
   <em>StudioSync Dashboard: office-wide task planning, staff workload, and project management with fictional demo data.</em>
 </p>
 
@@ -59,7 +59,7 @@ Core capabilities:
 - Start in a compact branded sign-in window that mirrors the StudioSync auth flow
 
 <p align="center">
-  <img src="docs/images/studiosync-mytasks.png" alt="StudioSync MyTasks showing a focused personal task list with fictional demo assignments and notes." width="920"><br>
+  <img src="docs/images/studiosync-mytasks-main.png" alt="StudioSync MyTasks showing a focused personal task list with fictional demo assignments and notes." width="920"><br>
   <em>StudioSync MyTasks: the focused daily workspace for assigned work, action items, and shared project context.</em>
 </p>
 
