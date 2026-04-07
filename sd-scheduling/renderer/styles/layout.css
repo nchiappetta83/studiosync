@@ -174,10 +174,6 @@ body.window-resizing .projects-panel {
   transition: none !important;
 }
 
-.toolbar * {
-  -webkit-app-region: no-drag;
-}
-
 .toolbar-left {
   width: 230px;
   flex-shrink: 0;
@@ -237,6 +233,17 @@ body.window-resizing .projects-panel {
   align-items: center;
   gap: 6px;
   padding-left: 10px;
+  -webkit-app-region: drag;
+}
+
+.search-wrapper,
+.search-input,
+.toolbar-btn,
+.toolbar-right,
+.window-controls,
+.window-controls *,
+.search-wrapper * {
+  -webkit-app-region: no-drag;
 }
 
 .search-wrapper {

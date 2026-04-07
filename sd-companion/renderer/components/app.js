@@ -81,6 +81,23 @@ function getInitials(user) {
   return ((f[0] || '') + (l[0] || '')).toUpperCase() || '??';
 }
 
+function getDefaultTabForCurrentUser() {
+  return isPartner() ? 'staff-view' : 'my-tasks';
+}
+
+function getSidebarStaffName(user) {
+  if (!user) return '';
+
+  const firstName = String(user.first_name || user.display_name?.split(' ')[0] || '').trim();
+  const lastName = String(user.last_name || user.display_name?.split(' ').slice(1).join(' ') || '').trim();
+
+  if (firstName && lastName) {
+    return `${firstName} ${lastName[0].toUpperCase()}`;
+  }
+
+  return String(user.display_name || '').trim();
+}
+
 function getUserById(id) {
   return USERS.find(u => u.id === id);
 }
@@ -593,6 +610,12 @@ async function refreshAfterTaskChange(taskId = null) {
     selectedTaskId = null;
     showDetailEmptyState();
   }
+}
+
+function clearSelectedTaskDetail() {
+  selectedTaskId = null;
+  document.querySelectorAll('.task-card').forEach((card) => card.classList.remove('selected'));
+  showDetailEmptyState();
 }
 
 function buildPriorityMenuItems(task) {
@@ -1149,6 +1172,7 @@ async function enterApp() {
   document.getElementById('app-shell').classList.remove('hidden');
 
   syncCurrentUserUI();
+  activeTab = getDefaultTabForCurrentUser();
 
   // Sidebar collapse toggle
   document.getElementById('sidebar-toggle').addEventListener('click', () => {
@@ -1177,6 +1201,7 @@ async function enterApp() {
   setupTabBar();
   setupSearch();
   setupSettingsMenu();
+  activateTab(activeTab);
 
   // Listen for sync updates
   window.api.onDataUpdated(async () => {
@@ -1199,6 +1224,12 @@ async function enterApp() {
 }
 
 function syncCurrentUserUI() {
+  const appShell = document.getElementById('app-shell');
+  if (appShell) {
+    appShell.classList.toggle('role-partner', isPartner());
+    appShell.classList.toggle('role-staff', !isPartner());
+  }
+
   const avatar = document.getElementById('user-avatar');
   if (avatar && currentUser) {
     avatar.style.background = currentUser.avatar_color;
@@ -1282,7 +1313,7 @@ function renderSidebar() {
     return `
       <div class="sidebar-staff-item ${selectedStaffFilter === user.id ? 'active' : ''}" data-user-id="${user.id}">
         <div class="avatar" style="background: ${user.avatar_color}">${getInitials(user)}</div>
-        <span class="staff-name">${user.display_name}${pto ? ' <span class="badge badge-pto" style="font-size:8px;padding:1px 5px;margin-left:4px">' + pto.label + '</span>' : ''}</span>
+        <span class="staff-name">${escapeHtml(getSidebarStaffName(user))}${pto ? ' <span class="badge badge-pto" style="font-size:8px;padding:1px 5px;margin-left:4px">' + pto.label + '</span>' : ''}</span>
         <span class="staff-count ${count === 0 ? 'zero' : ''}">${count}</span>
       </div>
     `;
@@ -1420,22 +1451,26 @@ function renderMyProjects() {
           <div class="empty-state" style="padding:24px 18px">
             <div class="empty-state-text">No ${title.toLowerCase()}.</div>
           </div>
-        ` : items.map(project => `
-          <div class="personal-project-card ${selectedProjectId === project.id ? 'selected' : ''}" data-project-id="${project.id}">
-            <div class="pp-card-info">
-              <div class="pp-card-top">
-                <div class="pp-card-title">${escapeHtml(getProjectDisplayTitle(project))}</div>
-                ${renderAssignedStaff(project)}
+        ` : `
+          <div class="project-group-list">
+            ${items.map(project => `
+              <div class="personal-project-card ${selectedProjectId === project.id ? 'selected' : ''}" data-project-id="${project.id}">
+                <div class="pp-card-info">
+                  <div class="pp-card-top">
+                    <div class="pp-card-title">${escapeHtml(getProjectDisplayTitle(project))}</div>
+                    ${renderAssignedStaff(project)}
+                  </div>
+                  <div class="pp-card-notes">
+                    <span class="pp-card-status">${getStatusLabel(project)}</span>
+                    ${project.notes
+                      ? `<span class="pp-card-note-text">${escapeHtml(project.notes)}</span>`
+                      : '<span class="pp-card-note-text pp-card-note-empty">No scheduling notes yet</span>'}
+                  </div>
+                </div>
               </div>
-              <div class="pp-card-notes">
-                <span class="pp-card-status">${getStatusLabel(project)}</span>
-                ${project.notes
-                  ? `<span class="pp-card-note-text">${escapeHtml(project.notes)}</span>`
-                  : '<span class="pp-card-note-text pp-card-note-empty">No scheduling notes yet</span>'}
-              </div>
-            </div>
+            `).join('')}
           </div>
-        `).join('')}
+        `}
       </div>
     </div>
   `;
@@ -1955,7 +1990,16 @@ function renderStaffOverview() {
   container.querySelectorAll('[data-staff-toggle]').forEach((button) => {
     button.addEventListener('click', () => {
       const staffId = button.dataset.staffToggle;
-      STAFF_SECTION_COLLAPSE[staffId] = !(STAFF_SECTION_COLLAPSE[staffId] ?? true);
+      const nextCollapsed = !(STAFF_SECTION_COLLAPSE[staffId] ?? true);
+      STAFF_SECTION_COLLAPSE[staffId] = nextCollapsed;
+
+      if (nextCollapsed && selectedTaskId) {
+        const selectedTask = getSharedTaskById(selectedTaskId);
+        if (String(selectedTask?.assigned_to || '') === String(staffId)) {
+          clearSelectedTaskDetail();
+        }
+      }
+
       renderStaffOverview();
     });
   });
@@ -2151,7 +2195,6 @@ async function openDetailPanel(taskId) {
   const due = formatDate(task.due_date);
   const projectNotes = project ? (PROJECT_NOTES_CACHE[project.id] || '') : '';
   const canManageThisTask = canCurrentUserAddActionItems(task);
-  const canEditProjectNotes = Boolean(project && canPartnerManageTask(task));
 
   const priority = getPriorityPresentation(task);
   const priorityHTML = `<span class="task-priority ${priority.className}" style="font-size:11px;padding:3px 10px;${priority.inlineStyle}">${priority.label}</span>`;
@@ -2179,17 +2222,11 @@ async function openDetailPanel(taskId) {
     </div>
 
     ${project ? `
-    <div class="detail-field">
-      <div class="detail-field-label">Project Notes</div>
-      ${canEditProjectNotes
-        ? `
-          <textarea class="dialog-textarea" id="task-project-notes" rows="5" placeholder="Shared notes that staff can see on this project.">${escapeHtml(projectNotes)}</textarea>
-          <div class="detail-actions" style="margin-top:10px">
-            <button class="btn btn-primary btn-sm" id="save-task-project-notes">Save Project Notes</button>
-          </div>
-        `
-        : `<div class="detail-field-value">${projectNotes ? escapeHtml(projectNotes).replace(/\n/g, '<br>') : '<span style="color:var(--text-tertiary)">No project notes yet</span>'}</div>`}
-    </div>
+    <button class="project-notes-btn" id="open-project-notes" data-project-id="${project.id}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Project Notes
+      ${projectNotes ? `<span class="notes-preview">${projectNotes.substring(0, 50)}${projectNotes.length > 50 ? '...' : ''}</span>` : ''}
+    </button>
     ` : ''}
 
     ${(assignees.length > 0 || partnerLabel) ? `
@@ -2301,17 +2338,8 @@ async function openDetailPanel(taskId) {
     this.style.height = Math.min(this.scrollHeight, 100) + 'px';
   });
 
-  document.getElementById('save-task-project-notes')?.addEventListener('click', async () => {
-    const notes = document.getElementById('task-project-notes').value.trim();
-    await window.api.updateProjectNotes({
-      project_id: project.id,
-      notes,
-      updated_by: currentUser?.id || null,
-    });
-    PROJECT_NOTES_CACHE[project.id] = notes;
-    await loadAllData();
-    await openDetailPanel(taskId);
-    await refreshAll();
+  document.getElementById('open-project-notes')?.addEventListener('click', () => {
+    openProjectNotesDialog(project);
   });
 
   document.getElementById('add-subtask-btn')?.addEventListener('click', () => {

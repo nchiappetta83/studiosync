@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, Notification, Tray } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, Notification, Tray, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Database = require('./database');
@@ -14,6 +14,8 @@ let tray = null;
 let isQuitting = false;
 let hasShownTrayHint = false;
 let updateManager = null;
+let currentWindowMode = 'login';
+let saveWindowBoundsTimer = null;
 
 const LOGIN_WINDOW_BOUNDS = {
   width: 760,
@@ -22,10 +24,17 @@ const LOGIN_WINDOW_BOUNDS = {
   minHeight: 560,
 };
 
-const APP_WINDOW_BOUNDS = {
-  width: 1200,
+const PARTNER_APP_WINDOW_BOUNDS = {
+  width: 1000,
   height: 800,
-  minWidth: 800,
+  minWidth: 900,
+  minHeight: 600,
+};
+
+const STAFF_APP_WINDOW_BOUNDS = {
+  width: 700,
+  height: 800,
+  minWidth: 700,
   minHeight: 600,
 };
 
@@ -246,6 +255,67 @@ function getTrayIconPath() {
   return path.join(__dirname, '..', 'assets', 'studiosync-mytasks.ico');
 }
 
+function getCurrentAppWindowRole() {
+  const currentUser = auth?.getCurrentUser?.() || null;
+  return currentUser?.role === 'staff' ? 'staff' : 'partner';
+}
+
+function getSavedAppWindowBounds(role, defaults) {
+  const config = loadConfig() || {};
+  const savedBounds = config.appWindowBoundsByRole?.[role];
+  if (!savedBounds) return null;
+
+  const x = Math.round(Number(savedBounds.x));
+  const y = Math.round(Number(savedBounds.y));
+  const width = Math.max(defaults.minWidth, Math.round(Number(savedBounds.width)));
+  const height = Math.max(defaults.minHeight, Math.round(Number(savedBounds.height)));
+
+  if (![x, y, width, height].every(Number.isFinite)) return null;
+
+  const targetBounds = { x, y, width, height };
+  const display = screen.getDisplayMatching(targetBounds);
+  const workArea = display?.workArea;
+  if (!workArea) return null;
+
+  const visibleWidth = Math.min(x + width, workArea.x + workArea.width) - Math.max(x, workArea.x);
+  const visibleHeight = Math.min(y + height, workArea.y + workArea.height) - Math.max(y, workArea.y);
+  if (visibleWidth < 120 || visibleHeight < 120) return null;
+
+  return {
+    ...targetBounds,
+    minWidth: defaults.minWidth,
+    minHeight: defaults.minHeight,
+  };
+}
+
+function scheduleSaveCurrentAppWindowBounds() {
+  if (currentWindowMode !== 'app') return;
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || mainWindow.isFullScreen()) return;
+
+  clearTimeout(saveWindowBoundsTimer);
+  saveWindowBoundsTimer = setTimeout(() => {
+    saveWindowBoundsTimer = null;
+    saveCurrentAppWindowBounds();
+  }, 200);
+}
+
+function saveCurrentAppWindowBounds() {
+  if (currentWindowMode !== 'app') return;
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || mainWindow.isFullScreen()) return;
+
+  const role = getCurrentAppWindowRole();
+  const bounds = mainWindow.isMaximized() ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+  const config = loadConfig() || {};
+  config.appWindowBoundsByRole = config.appWindowBoundsByRole || {};
+  config.appWindowBoundsByRole[role] = {
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+  };
+  saveConfig(config);
+}
+
 function applyWindowBounds(bounds) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
@@ -254,18 +324,37 @@ function applyWindowBounds(bounds) {
   }
 
   mainWindow.setMinimumSize(bounds.minWidth, bounds.minHeight);
-  mainWindow.setSize(bounds.width, bounds.height, true);
-  mainWindow.center();
+  if (Number.isFinite(bounds.x) && Number.isFinite(bounds.y)) {
+    mainWindow.setBounds({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    }, true);
+  } else {
+    mainWindow.setSize(bounds.width, bounds.height, true);
+    mainWindow.center();
+  }
   emitWindowState();
+}
+
+function getAppWindowBounds() {
+  return getCurrentAppWindowRole() === 'staff'
+    ? STAFF_APP_WINDOW_BOUNDS
+    : PARTNER_APP_WINDOW_BOUNDS;
 }
 
 function setWindowMode(mode) {
   if (mode === 'login') {
+    currentWindowMode = 'login';
     applyWindowBounds(LOGIN_WINDOW_BOUNDS);
     return { mode: 'login' };
   }
 
-  applyWindowBounds(APP_WINDOW_BOUNDS);
+  currentWindowMode = 'app';
+  const defaults = getAppWindowBounds();
+  const role = getCurrentAppWindowRole();
+  applyWindowBounds(getSavedAppWindowBounds(role, defaults) || defaults);
   return { mode: 'app' };
 }
 
@@ -439,6 +528,8 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
+    clearTimeout(saveWindowBoundsTimer);
+    saveWindowBoundsTimer = null;
     mainWindow = null;
   });
 
@@ -446,6 +537,8 @@ function createWindow() {
   mainWindow.on('unmaximize', () => emitWindowState());
   mainWindow.on('enter-full-screen', () => emitWindowState());
   mainWindow.on('leave-full-screen', () => emitWindowState());
+  mainWindow.on('move', () => scheduleSaveCurrentAppWindowBounds());
+  mainWindow.on('resize', () => scheduleSaveCurrentAppWindowBounds());
 }
 
 // ── IPC Handlers ───────────────────────────────────────
