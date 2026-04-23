@@ -283,7 +283,14 @@
             <aside class="project-notes-sidebar">
               <div class="project-notes-sidebar-header">
                 <div class="project-notes-sidebar-title">Shared Notes</div>
-                <button class="btn btn-accent btn-sm" id="project-notes-add" type="button">+ New Note</button>
+                <button class="project-notes-add-btn" id="project-notes-add" type="button" aria-label="Add new note">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+                    <path d="M14 3v5h5"/>
+                    <path d="M12 12v5"/>
+                    <path d="M9.5 14.5h5"/>
+                  </svg>
+                </button>
               </div>
               <div class="project-notes-sidebar-list" id="project-notes-list"></div>
             </aside>
@@ -291,9 +298,7 @@
           </div>
         </div>
         <div class="dialog-footer">
-          <button class="btn btn-ghost" id="project-notes-cancel">Close</button>
-          <button class="btn btn-danger hidden" id="project-notes-delete" type="button">Delete Note</button>
-          <button class="btn btn-primary" id="project-notes-save" type="button">Save Note</button>
+          <button class="btn btn-primary" id="project-notes-save" type="button">Close</button>
         </div>
       </div>
     </div>

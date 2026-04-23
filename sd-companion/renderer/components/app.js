@@ -1494,6 +1494,52 @@ async function initApp() {
     errorEl.innerHTML = '';
   }
 
+  function bindReconnectButton(buttonId) {
+    document.getElementById(buttonId)?.addEventListener('click', async () => {
+      const folderPath = await window.api.selectFolder();
+      await initializeSelectedFolder(folderPath);
+    });
+  }
+
+  function renderConnectPrompt(subtitle, errorMessage = '') {
+    resetLoginState();
+    setLoginHeading('Connect', subtitle);
+    usersEl.innerHTML = `
+      <button class="btn btn-primary" id="setup-btn">Select Shared Drive Folder</button>
+    `;
+    bindReconnectButton('setup-btn');
+    if (errorMessage) {
+      errorEl.classList.remove('hidden');
+      errorEl.textContent = errorMessage;
+    }
+  }
+
+  function renderAuthEntryFromStatus(status) {
+    const authEntry = status?.authEntry;
+    if (!authEntry) return false;
+
+    if (authEntry.screen === 'connect') {
+      renderConnectPrompt(authEntry.subtitle || 'Select the StudioSync folder or its data folder to connect.', authEntry.error || '');
+      return true;
+    }
+
+    if (authEntry.screen !== 'login') {
+      return false;
+    }
+
+    resetLoginState();
+    setLoginHeading(authEntry.title || 'Sign In', authEntry.subtitle || 'Enter your username to continue.');
+    usersEl.innerHTML = `
+      <div class="login-form">
+        <input type="text" id="login-username" class="input" placeholder="e.g. JSmith" autocomplete="off" spellcheck="false">
+        <button class="btn btn-primary auth-submit-btn" id="login-submit">Sign In</button>
+      </div>
+    `;
+    helpEl?.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+    return true;
+  }
+
   const pendingUpdate = await window.api.getPendingUpdate();
   if (pendingUpdate) {
     showUpdatePrompt(pendingUpdate);
@@ -1544,47 +1590,10 @@ async function initApp() {
   }
 
   // Backend not initialized — check for config
-  const config = await window.api.getConfig();
-  if (!config || !config.sharedDrivePath) {
-    resetLoginState();
-    setLoginHeading('Connect', 'Select the StudioSync folder or its data folder to connect.');
-    usersEl.innerHTML = `
-      <button class="btn btn-primary" id="setup-btn">Select Shared Drive Folder</button>
-    `;
-    document.getElementById('setup-btn').addEventListener('click', async () => {
-      const folderPath = await window.api.selectFolder();
-      await initializeSelectedFolder(folderPath);
-    });
+  const runtimeStatus = await window.api.getRuntimeStatus();
+  if (renderAuthEntryFromStatus(runtimeStatus) && runtimeStatus?.authEntry?.screen !== 'login') {
     return;
   }
-
-  const existingUsers = await window.api.getUsers();
-  if (existingUsers.length === 0) {
-    resetLoginState();
-    setLoginHeading('Connect', 'Select the StudioSync folder or its data folder to connect.');
-    errorEl.classList.remove('hidden');
-    errorEl.textContent = 'No users were found in the configured shared folder yet.';
-    usersEl.innerHTML = `
-      <button class="btn btn-primary" id="setup-btn">Select Shared Drive Folder</button>
-    `;
-    document.getElementById('setup-btn').addEventListener('click', async () => {
-      const folderPath = await window.api.selectFolder();
-      await initializeSelectedFolder(folderPath);
-    });
-    return;
-  }
-
-  // Show username login form
-  resetLoginState();
-  setLoginHeading('Sign In', 'Enter your username to continue.');
-  usersEl.innerHTML = `
-    <div class="login-form">
-      <input type="text" id="login-username" class="input" placeholder="e.g. JSmith" autocomplete="off" spellcheck="false">
-      <button class="btn btn-primary auth-submit-btn" id="login-submit">Sign In</button>
-    </div>
-  `;
-  helpEl?.classList.remove('hidden');
-  errorEl.classList.add('hidden');
 
   const usernameInput = document.getElementById('login-username');
   const submitBtn = document.getElementById('login-submit');
@@ -1606,6 +1615,11 @@ async function initApp() {
       await window.api.setWindowMode('app');
       enterApp();
     } else {
+      const latestStatus = await window.api.getRuntimeStatus();
+      if (renderAuthEntryFromStatus(latestStatus) && latestStatus?.authEntry?.screen !== 'login') {
+        return;
+      }
+
       errorEl.classList.remove('hidden');
       errorEl.textContent = 'Username not found. Check with your administrator.';
       submitBtn.disabled = false;
@@ -3335,7 +3349,6 @@ async function openProjectNotesDialog(project) {
   const mainEl = document.getElementById('project-notes-main');
   const addBtn = document.getElementById('project-notes-add');
   const saveBtn = document.getElementById('project-notes-save');
-  const deleteBtn = document.getElementById('project-notes-delete');
 
   overlay.classList.remove('hidden');
   document.getElementById('project-notes-title').textContent = 'Project Notes';
@@ -3344,13 +3357,20 @@ async function openProjectNotesDialog(project) {
   const buildDrafts = () => {
     const drafts = new Map();
     for (const note of getProjectSharedNotes(project.id)) {
-      drafts.set(note.id, { ...note });
+      drafts.set(note.id, {
+        ...note,
+        _lastSavedTitle: note.title || 'Untitled Note',
+        _lastSavedNotes: note.notes || '',
+      });
     }
     return drafts;
   };
 
   let drafts = buildDrafts();
   let activeNoteId = getPrimaryProjectSharedNote(project.id)?.id || null;
+  let autosaveTimer = null;
+  let saveChain = Promise.resolve();
+  let isClosing = false;
 
   const orderedDrafts = () => [...drafts.values()].sort((left, right) => {
     const updatedDiff = Date.parse(right.updated_at || 0) - Date.parse(left.updated_at || 0);
@@ -3360,17 +3380,31 @@ async function openProjectNotesDialog(project) {
 
   const getActiveDraft = () => (activeNoteId ? drafts.get(activeNoteId) || null : null);
   const getAuthorName = (userId) => getUserById(userId)?.display_name || 'StudioSync';
+  const isUntouchedDraft = (draft) => draft?.isDraft
+    && String(draft.title || '').trim() === 'Untitled Note'
+    && !String(draft.notes || '').trim();
+  const hasPersistedChanges = (draft) => {
+    if (!draft) return false;
+    if (draft.isDraft) return !isUntouchedDraft(draft);
+    return String(draft.title || 'Untitled Note') !== String(draft._lastSavedTitle || 'Untitled Note')
+      || String(draft.notes || '') !== String(draft._lastSavedNotes || '');
+  };
 
   const syncDraftFromInputs = () => {
     const draft = getActiveDraft();
     if (!draft) return null;
 
-    const titleInput = document.getElementById('project-note-title-input');
     const bodyInput = document.getElementById('project-note-body-input');
-    if (titleInput) draft.title = titleInput.value;
     if (bodyInput) draft.notes = bodyInput.value;
     draft.updated_by = currentUser?.id || draft.updated_by || null;
     return draft;
+  };
+
+  const updateEditorMeta = (draft) => {
+    const updatedEl = document.getElementById('project-note-meta-updated');
+    const byEl = document.getElementById('project-note-meta-by');
+    if (updatedEl) updatedEl.textContent = `Updated ${formatProjectNoteTimestamp(draft?.updated_at)}`;
+    if (byEl) byEl.textContent = `by ${getAuthorName(draft?.updated_by || draft?.created_by)}`;
   };
 
   const refreshProjectNoteRelatedUI = async () => {
@@ -3382,18 +3416,146 @@ async function openProjectNotesDialog(project) {
     }
   };
 
+  const persistDraft = async (draftId) => {
+    const draft = draftId ? drafts.get(draftId) : null;
+    if (!draft || !hasPersistedChanges(draft)) return draft;
+
+    const title = String(draft.title || '').trim() || 'Untitled Note';
+    const notes = String(draft.notes || '');
+
+    if (draft.isDraft) {
+      const createdNote = await window.api.createProjectSharedNote({
+        project_id: project.id,
+        title,
+        notes,
+        created_by: currentUser?.id || null,
+        updated_by: currentUser?.id || null,
+      });
+
+      if (!createdNote?.id) return draft;
+
+      drafts.delete(draftId);
+      const persistedDraft = {
+        ...createdNote,
+        _lastSavedTitle: createdNote.title || title,
+        _lastSavedNotes: createdNote.notes || notes,
+      };
+      drafts.set(createdNote.id, persistedDraft);
+      if (activeNoteId === draftId) {
+        activeNoteId = createdNote.id;
+      }
+      renderDialog();
+      if (activeNoteId === createdNote.id) {
+        updateEditorMeta(persistedDraft);
+      }
+    } else {
+      const updatedNote = await window.api.updateProjectSharedNote({
+        id: draft.id,
+        title,
+        notes,
+        updated_by: currentUser?.id || null,
+      });
+
+      const persistedDraft = drafts.get(draft.id);
+      if (!persistedDraft) return draft;
+      persistedDraft.title = updatedNote?.title ?? title;
+      persistedDraft.notes = updatedNote?.notes ?? notes;
+      persistedDraft.updated_at = updatedNote?.updated_at || new Date().toISOString();
+      persistedDraft.updated_by = updatedNote?.updated_by ?? currentUser?.id ?? persistedDraft.updated_by;
+      persistedDraft._lastSavedTitle = persistedDraft.title || title;
+      persistedDraft._lastSavedNotes = persistedDraft.notes || notes;
+      if (activeNoteId === persistedDraft.id) {
+        updateEditorMeta(persistedDraft);
+      }
+    }
+
+    await refreshProjectNoteRelatedUI();
+    return drafts.get(activeNoteId) || null;
+  };
+
+  const queuePersistDraft = (draftId) => {
+    saveChain = saveChain
+      .catch(() => null)
+      .then(() => persistDraft(draftId));
+    return saveChain;
+  };
+
+  const scheduleAutosave = (draftId = activeNoteId, { immediate = false } = {}) => {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+    if (!draftId) return saveChain;
+
+    const run = () => {
+      autosaveTimer = null;
+      return queuePersistDraft(draftId);
+    };
+
+    if (immediate) {
+      return run();
+    }
+
+    autosaveTimer = setTimeout(run, 450);
+    return saveChain;
+  };
+
+  const openNoteActionsMenu = (event, noteId) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const note = drafts.get(noteId);
+    if (!note) return;
+
+    const menu = ContextMenu.create([
+      {
+        label: 'Rename Note',
+        action: () => {
+          const nextTitle = window.prompt('Rename note', note.title || 'Untitled Note');
+          if (nextTitle === null) return;
+          note.title = nextTitle.trim() || 'Untitled Note';
+          note.updated_by = currentUser?.id || note.updated_by || null;
+          renderDialog();
+          void scheduleAutosave(note.id, { immediate: true });
+        }
+      },
+      {
+        label: note.isDraft ? 'Discard Draft' : 'Delete Note',
+        danger: true,
+        action: async () => {
+          if (note.isDraft) {
+            drafts.delete(note.id);
+            if (activeNoteId === note.id) {
+              activeNoteId = orderedDrafts()[0]?.id || null;
+            }
+            renderDialog();
+            return;
+          }
+
+          const confirmed = window.confirm(`Delete "${note.title || 'this note'}"?`);
+          if (!confirmed) return;
+          await window.api.deleteProjectSharedNote(note.id);
+          await reloadFromStore();
+        }
+      }
+    ]);
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    positionMenu(menu, rect.right - 180, rect.bottom + 6);
+  };
+
   const renderDialog = () => {
     const notes = orderedDrafts();
     const activeDraft = getActiveDraft();
 
     listEl.innerHTML = notes.length ? notes.map((note) => {
-      const preview = String(note.notes || '').trim().replace(/\s+/g, ' ');
       return `
-        <button class="project-notes-item ${note.id === activeNoteId ? 'active' : ''}" data-note-id="${note.id}" type="button">
-          <span class="project-notes-item-title">${escapeHtml(note.title || 'Untitled Note')}</span>
-          <span class="project-notes-item-preview">${escapeHtml(preview || 'No details yet.')}</span>
-          <span class="project-notes-item-meta">${escapeHtml(formatProjectNoteTimestamp(note.updated_at))}</span>
-        </button>
+        <div class="project-notes-item ${note.id === activeNoteId ? 'active' : ''}" data-note-id="${note.id}">
+          <button class="project-notes-item-select" data-note-id="${note.id}" type="button">
+            <span class="project-notes-item-title">${escapeHtml(note.title || 'Untitled Note')}</span>
+          </button>
+          <button class="project-notes-item-menu" data-note-menu="${note.id}" type="button" aria-label="Note options">&#8942;</button>
+        </div>
       `;
     }).join('') : '<div class="project-notes-empty-sidebar">No shared notes yet.</div>';
 
@@ -3406,47 +3568,75 @@ async function openProjectNotesDialog(project) {
         </div>
       `;
       document.getElementById('project-notes-empty-add')?.addEventListener('click', () => addBtn.click());
-      deleteBtn.classList.add('hidden');
-      saveBtn.textContent = 'Save Note';
-      saveBtn.disabled = true;
+      saveBtn.textContent = 'Close';
+      saveBtn.disabled = false;
     } else {
       mainEl.innerHTML = `
         <div class="project-notes-editor">
-          <div class="detail-field">
-            <div class="detail-field-label">Note Name</div>
-            <input type="text" class="input" id="project-note-title-input" value="${escapeAttr(activeDraft.title || '')}" placeholder="e.g. Permit Notes">
+          <div class="project-notes-main-header">
+            <div class="project-notes-main-copy">
+              <div class="project-notes-main-title">${escapeHtml(activeDraft.title || 'Untitled Note')}</div>
+            </div>
           </div>
           <div class="detail-field">
             <div class="detail-field-label">Note Details</div>
             <textarea class="dialog-textarea project-note-body-input" id="project-note-body-input" rows="12" placeholder="Add the shared details everyone should see for this project...">${escapeHtml(activeDraft.notes || '')}</textarea>
           </div>
           <div class="project-notes-meta">
-            <span>Updated ${escapeHtml(formatProjectNoteTimestamp(activeDraft.updated_at))}</span>
-            <span>by ${escapeHtml(getAuthorName(activeDraft.updated_by || activeDraft.created_by))}</span>
+            <span id="project-note-meta-updated">Updated ${escapeHtml(formatProjectNoteTimestamp(activeDraft.updated_at))}</span>
+            <span id="project-note-meta-by">by ${escapeHtml(getAuthorName(activeDraft.updated_by || activeDraft.created_by))}</span>
           </div>
         </div>
       `;
-      document.getElementById('project-note-title-input')?.addEventListener('input', syncDraftFromInputs);
-      document.getElementById('project-note-body-input')?.addEventListener('input', syncDraftFromInputs);
-      document.getElementById('project-note-title-input')?.focus();
-      deleteBtn.classList.remove('hidden');
-      deleteBtn.textContent = activeDraft.isDraft ? 'Discard Draft' : 'Delete Note';
-      saveBtn.textContent = activeDraft.isDraft ? 'Create Note' : 'Save Note';
+      document.getElementById('project-note-body-input')?.addEventListener('input', () => {
+        syncDraftFromInputs();
+        void scheduleAutosave();
+      });
+      saveBtn.textContent = 'Close';
       saveBtn.disabled = false;
     }
 
-    listEl.querySelectorAll('[data-note-id]').forEach((button) => {
+    listEl.querySelectorAll('.project-notes-item-select[data-note-id]').forEach((button) => {
       button.addEventListener('click', () => {
+        const previousNoteId = activeNoteId;
         syncDraftFromInputs();
+        void scheduleAutosave(previousNoteId, { immediate: true });
         activeNoteId = button.dataset.noteId;
         renderDialog();
+      });
+    });
+
+    listEl.querySelectorAll('.project-notes-item-menu[data-note-menu]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        syncDraftFromInputs();
+        openNoteActionsMenu(event, button.dataset.noteMenu);
       });
     });
   };
 
   const close = () => {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
     document.removeEventListener('keydown', escHandler);
     overlay.classList.add('hidden');
+  };
+
+  const handleClose = async () => {
+    if (isClosing) return;
+    isClosing = true;
+    try {
+      syncDraftFromInputs();
+      if (activeNoteId) {
+        await scheduleAutosave(activeNoteId, { immediate: true });
+      } else {
+        await saveChain.catch(() => null);
+      }
+    } finally {
+      close();
+      isClosing = false;
+    }
   };
 
   const reloadFromStore = async (nextActiveId = null) => {
@@ -3464,7 +3654,7 @@ async function openProjectNotesDialog(project) {
     drafts.set(draftId, {
       id: draftId,
       project_id: project.id,
-      title: '',
+      title: 'Untitled Note',
       notes: '',
       created_by: currentUser?.id || null,
       updated_by: currentUser?.id || null,
@@ -3476,64 +3666,15 @@ async function openProjectNotesDialog(project) {
     renderDialog();
   };
 
-  document.getElementById('project-notes-close').onclick = close;
-  document.getElementById('project-notes-cancel').onclick = close;
-  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  document.getElementById('project-notes-close').onclick = () => { void handleClose(); };
+  overlay.onclick = (e) => { if (e.target === overlay) void handleClose(); };
 
-  saveBtn.onclick = async () => {
-    const draft = syncDraftFromInputs();
-    if (!draft) return;
-
-    const title = String(draft.title || '').trim();
-    const notes = String(draft.notes || '').trim();
-    if (!title) {
-      document.getElementById('project-note-title-input')?.focus();
-      return;
-    }
-
-    let result = null;
-    if (draft.isDraft) {
-      result = await window.api.createProjectSharedNote({
-        project_id: project.id,
-        title,
-        notes,
-        created_by: currentUser?.id || null,
-        updated_by: currentUser?.id || null,
-      });
-    } else {
-      result = await window.api.updateProjectSharedNote({
-        id: draft.id,
-        title,
-        notes,
-        updated_by: currentUser?.id || null,
-      });
-    }
-
-    await reloadFromStore(result?.id || null);
-  };
-
-  deleteBtn.onclick = async () => {
-    const draft = syncDraftFromInputs();
-    if (!draft) return;
-
-    if (draft.isDraft) {
-      drafts.delete(draft.id);
-      activeNoteId = orderedDrafts()[0]?.id || null;
-      renderDialog();
-      return;
-    }
-
-    const confirmed = window.confirm(`Delete "${draft.title || 'this note'}"?`);
-    if (!confirmed) return;
-
-    await window.api.deleteProjectSharedNote(draft.id);
-    await reloadFromStore();
-  };
+  saveBtn.onclick = () => { void handleClose(); };
 
   renderDialog();
 
   const escHandler = (e) => {
-    if (e.key === 'Escape') close();
+    if (e.key === 'Escape') void handleClose();
   };
   document.addEventListener('keydown', escHandler);
 }

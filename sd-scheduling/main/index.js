@@ -31,6 +31,7 @@ let runtimeStatus = {
   lastSyncAt: null,
   lastExcelWriteAt: null,
   lastExcelWriteError: null,
+  startupIssue: null,
 };
 
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
@@ -434,6 +435,9 @@ function closeRuntime() {
   excelSync = null;
   excelWriteQueue = Promise.resolve();
   auth = null;
+  runtimeStatus.lastSyncAt = null;
+  runtimeStatus.lastExcelWriteAt = null;
+  runtimeStatus.lastExcelWriteError = null;
 }
 
 function resetLocalCache() {
@@ -561,19 +565,79 @@ function setPriorityDisplayStyles(styles = {}) {
   return normalized;
 }
 
+function getAuthEntryState() {
+  const config = loadConfig() || {};
+  const sharedDrivePath = config.sharedDrivePath || null;
+
+  if (!sharedDrivePath) {
+    return {
+      screen: 'connect',
+      title: 'Connect',
+      subtitle: 'Connect to your team\'s shared drive to get started.',
+      error: '',
+      reason: 'missing-shared-path',
+    };
+  }
+
+  const inspection = inspectSharedDrivePath(sharedDrivePath, { allowEmpty: true });
+  if (!inspection.valid || runtimeStatus.startupIssue?.type === 'shared-drive-invalid') {
+    return {
+      screen: 'connect',
+      title: 'Connect',
+      subtitle: 'Connect to your team\'s shared drive to get started.',
+      error: runtimeStatus.startupIssue?.reason || inspection.reason || 'Could not connect to shared drive. Please re-select the folder.',
+      reason: 'shared-drive-invalid',
+    };
+  }
+
+  if (auth?.getCurrentUser?.()) {
+    return {
+      screen: 'app',
+      title: '',
+      subtitle: '',
+      error: '',
+      reason: 'user-signed-in',
+    };
+  }
+
+  const users = db ? db.getUsers() : [];
+  if (users.length === 0) {
+    return {
+      screen: 'register',
+      title: 'Welcome',
+      subtitle: 'You\'re not registered yet. Ask a partner to add your account, or set up as the first user.',
+      error: '',
+      reason: 'no-users',
+    };
+  }
+
+  return {
+    screen: 'login',
+    title: 'Sign In',
+    subtitle: 'Enter your username to continue.',
+    error: '',
+    reason: 'ready-for-login',
+  };
+}
+
 function getRuntimeStatus() {
   const config = loadConfig() || {};
   const sharedDrivePath = config.sharedDrivePath || null;
+  const inspection = sharedDrivePath
+    ? inspectSharedDrivePath(sharedDrivePath, { allowEmpty: true })
+    : { valid: false, resolvedPath: null };
   const excelPath = getExcelPath();
   const exportPath = config.exportPath || null;
   const updateFolderPath = db?.getUpdateFolderPath?.() || null;
   const pendingUpdate = updateManager?.getPendingPrompt?.() || null;
   const lastUpdateResult = updateManager?.getLastResult?.() || null;
+  const authEntry = getAuthEntryState();
 
   return {
     appVersion: app.getVersion(),
     sharedDrivePath,
-    sharedDriveReachable: sharedDrivePath ? fs.existsSync(sharedDrivePath) : false,
+    sharedDriveReachable: Boolean(sharedDrivePath && inspection.valid && fs.existsSync(inspection.resolvedPath || sharedDrivePath)),
+    sharedDriveValid: Boolean(sharedDrivePath && inspection.valid),
     excelPath,
     excelReachable: excelPath ? fs.existsSync(excelPath) : false,
     exportPath,
@@ -585,6 +649,8 @@ function getRuntimeStatus() {
     lastExcelWriteError: runtimeStatus.lastExcelWriteError,
     updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
     latestVersion: pendingUpdate?.latestVersion || lastUpdateResult?.latestVersion || null,
+    startupIssue: runtimeStatus.startupIssue || null,
+    authEntry,
   };
 }
 
@@ -867,11 +933,12 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
   const normalizedPath = normalizeFsPath(resolvedSharedPath);
 
   if (db && auth && sync && normalizeFsPath(sync.sharedDrivePath) === normalizedPath) {
+    runtimeStatus.startupIssue = null;
     if (runExcelRefresh) {
       const config = loadConfig() || {};
       await runStartupExcelRefresh(config);
     }
-    return { user: null };
+    return { user: auth.getCurrentUser() || null };
   }
 
   if (startupInitPromise && startupInitPath === normalizedPath) {
@@ -931,6 +998,7 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
       scheduleStartupUpdateCheck();
     }
 
+    runtimeStatus.startupIssue = null;
     emitRuntimeStatus();
 
     if (runExcelRefresh) {
@@ -1167,6 +1235,12 @@ function registerIPC() {
 
       return { success: true, user };
     } catch (err) {
+      closeRuntime();
+      runtimeStatus.startupIssue = {
+        type: 'shared-drive-invalid',
+        reason: err.message,
+      };
+      emitRuntimeStatus();
       return { success: false, error: err.message };
     }
   });
@@ -1187,6 +1261,12 @@ function registerIPC() {
       const { user } = await initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh: true });
       return { success: true, user };
     } catch (err) {
+      closeRuntime();
+      runtimeStatus.startupIssue = {
+        type: 'shared-drive-invalid',
+        reason: err.message,
+      };
+      emitRuntimeStatus();
       return { success: false, error: err.message };
     }
   });
@@ -1208,6 +1288,7 @@ function registerIPC() {
       config.loggedInUsername = username;
       saveConfig(config);
       refreshLockMetadata();
+      runtimeStatus.startupIssue = null;
       emitRuntimeStatus();
       return user;
     }
@@ -1221,6 +1302,7 @@ function registerIPC() {
     delete config.loggedInUsername;
     saveConfig(config);
     refreshLockMetadata();
+    runtimeStatus.startupIssue = null;
     emitRuntimeStatus();
     return true;
   });

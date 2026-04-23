@@ -20,6 +20,7 @@ let saveWindowBoundsTimer = null;
 let logger = null;
 let runtimeStatus = {
   lastSyncAt: null,
+  startupIssue: null,
 };
 
 const LOGIN_WINDOW_BOUNDS = {
@@ -282,6 +283,7 @@ function closeRuntime() {
     db = null;
   }
   auth = null;
+  runtimeStatus.lastSyncAt = null;
 }
 
 function resetLocalCache() {
@@ -300,6 +302,71 @@ function resetLocalCache() {
 
 function notifyDataChanged() {
   if (mainWindow) mainWindow.webContents.send('data-updated');
+}
+
+function getAuthEntryState() {
+  const config = loadConfig() || {};
+  const sharedDrivePath = config.sharedDrivePath || null;
+
+  if (!sharedDrivePath) {
+    return {
+      screen: 'connect',
+      title: 'Connect',
+      subtitle: 'Select the StudioSync folder or its data folder to connect.',
+      error: '',
+      reason: 'missing-shared-path',
+    };
+  }
+
+  const inspection = inspectSharedDrivePath(sharedDrivePath);
+  if (!inspection.valid || runtimeStatus.startupIssue?.type === 'shared-drive-invalid') {
+    return {
+      screen: 'connect',
+      title: 'Connect',
+      subtitle: 'Could not reconnect to the saved shared folder.',
+      error: runtimeStatus.startupIssue?.reason || inspection.reason || 'Saved shared drive is unavailable. Please re-select the StudioSync folder.',
+      reason: 'shared-drive-invalid',
+    };
+  }
+
+  if (runtimeStatus.startupIssue?.type === 'remembered-user-missing') {
+    return {
+      screen: 'connect',
+      title: 'Connect',
+      subtitle: 'Could not verify the saved MyTasks connection.',
+      error: `Saved user "${runtimeStatus.startupIssue.username}" was not found in the connected shared folder. Please re-select the StudioSync folder.`,
+      reason: 'remembered-user-missing',
+    };
+  }
+
+  if (auth?.getCurrentUser?.()) {
+    return {
+      screen: 'app',
+      title: '',
+      subtitle: '',
+      error: '',
+      reason: 'user-signed-in',
+    };
+  }
+
+  const users = db ? db.getUsers() : [];
+  if (users.length === 0) {
+    return {
+      screen: 'connect',
+      title: 'Connect',
+      subtitle: 'Select the StudioSync folder or its data folder to connect.',
+      error: 'No users were found in the configured shared folder yet.',
+      reason: 'no-users',
+    };
+  }
+
+  return {
+    screen: 'login',
+    title: 'Sign In',
+    subtitle: 'Enter your username to continue.',
+    error: '',
+    reason: 'ready-for-login',
+  };
 }
 
 function getPriorityDisplayStyles() {
@@ -333,17 +400,22 @@ function emitWindowState() {
 function getRuntimeStatus() {
   const config = loadConfig() || {};
   const sharedDrivePath = config.sharedDrivePath || null;
+  const inspection = sharedDrivePath ? inspectSharedDrivePath(sharedDrivePath) : { valid: false, resolvedPath: null, reason: null };
   const pendingUpdate = updateManager?.getPendingPrompt?.() || null;
   const lastUpdateResult = updateManager?.getLastResult?.() || null;
+  const authEntry = getAuthEntryState();
 
   return {
     appVersion: app.getVersion(),
     sharedDrivePath,
-    sharedDriveReachable: sharedDrivePath ? fs.existsSync(sharedDrivePath) : false,
+    sharedDriveReachable: Boolean(sharedDrivePath && inspection.valid && fs.existsSync(inspection.resolvedPath || sharedDrivePath)),
+    sharedDriveValid: Boolean(sharedDrivePath && inspection.valid),
     lastSyncAt: runtimeStatus.lastSyncAt,
     updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
     latestVersion: pendingUpdate?.latestVersion || lastUpdateResult?.latestVersion || null,
     launchOnStartup: getLaunchOnStartupState(),
+    startupIssue: runtimeStatus.startupIssue || null,
+    authEntry,
   };
 }
 
@@ -830,6 +902,7 @@ function registerIPC() {
         await updateManager.checkForUpdates({ promptIfAvailable: true });
       }
 
+      runtimeStatus.startupIssue = null;
       emitRuntimeStatus();
 
       return { success: true, user: null };
@@ -854,6 +927,7 @@ function registerIPC() {
       const config = loadConfig() || {};
       config.loggedInUsername = username;
       saveConfig(config);
+      runtimeStatus.startupIssue = null;
       emitRuntimeStatus();
       return user;
     }
@@ -866,6 +940,7 @@ function registerIPC() {
     const config = loadConfig() || {};
     delete config.loggedInUsername;
     saveConfig(config);
+    runtimeStatus.startupIssue = null;
     setWindowMode('login');
     emitRuntimeStatus();
     return true;
@@ -1145,10 +1220,17 @@ app.whenReady().then(async () => {
       if (config.loggedInUsername) {
         auth.setUsername(config.loggedInUsername);
         if (!auth.getCurrentUser()) {
-          delete config.loggedInUsername;
-          saveConfig(config);
+          runtimeStatus.startupIssue = {
+            type: 'remembered-user-missing',
+            username: config.loggedInUsername,
+          };
           auth.setUsername(null);
+          if (sync) sync.setUsername('unknown');
+        } else {
+          runtimeStatus.startupIssue = null;
         }
+      } else {
+        runtimeStatus.startupIssue = null;
       }
 
       sync = new SyncEngine(db, resolvedSharedPath, config.loggedInUsername || 'unknown', 'companion');
@@ -1169,6 +1251,12 @@ app.whenReady().then(async () => {
       }
       emitRuntimeStatus();
     } catch (err) {
+      closeRuntime();
+      runtimeStatus.startupIssue = {
+        type: 'shared-drive-invalid',
+        reason: err.message,
+      };
+      emitRuntimeStatus();
       console.error('Failed to initialize:', err.message);
     }
   }

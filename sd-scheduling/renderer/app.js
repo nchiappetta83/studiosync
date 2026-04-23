@@ -566,7 +566,7 @@ const App = {
     this._hideUpdatePrompt();
   },
 
-  _showSetup() {
+  _showSetup(options = {}) {
     window.api.setWindowMode('auth');
     document.getElementById('setup-screen').classList.remove('hidden');
     document.getElementById('app').classList.add('hidden');
@@ -576,6 +576,15 @@ const App = {
     const selectBtn = document.getElementById('setup-select-folder');
     const pathEl = document.getElementById('setup-path');
     const errorEl = document.getElementById('setup-error');
+    const subtitleEl = document.querySelector('#setup-screen .setup-subtitle');
+
+    if (subtitleEl) {
+      subtitleEl.textContent = options.subtitle || 'Connect to your team\'s shared drive to get started.';
+    }
+    pathEl.textContent = '';
+    errorEl.textContent = options.error || '';
+    selectBtn.textContent = 'Select Shared Folder';
+    selectBtn.disabled = false;
 
     selectBtn.onclick = async () => {
       const folderPath = await window.api.selectFolder();
@@ -592,12 +601,9 @@ const App = {
         if (result.user) {
           await this._launchApp();
         } else {
-          const users = await window.api.getUsers();
-          if (users.length === 0) {
-            this._showRegistration();
-          } else {
-            this._showLogin();
-          }
+          const status = await window.api.getRuntimeStatus();
+          if (this._renderAuthEntryFromStatus(status)) return;
+          this._showLogin();
         }
       } else {
         errorEl.textContent = result.error || 'Failed to connect.';
@@ -607,12 +613,19 @@ const App = {
     };
   },
 
-  _showRegistration() {
+  _showRegistration(options = {}) {
     window.api.setWindowMode('auth');
     document.getElementById('setup-screen').classList.add('hidden');
     document.getElementById('register-screen').classList.remove('hidden');
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app').classList.add('hidden');
+
+    const titleEl = document.querySelector('#register-screen .setup-title');
+    const subtitleEl = document.querySelector('#register-screen .setup-subtitle');
+    if (titleEl) titleEl.textContent = options.title || 'Welcome';
+    if (subtitleEl) {
+      subtitleEl.textContent = options.subtitle || 'You\'re not registered yet. Ask a partner to add your account, or set up as the first user.';
+    }
 
     // All users self-register — first user gets admin
     window.api.getUsers().then(users => {
@@ -684,24 +697,47 @@ const App = {
     if (errorEl) errorEl.textContent = '';
   },
 
+  _renderAuthEntryFromStatus(status) {
+    const authEntry = status?.authEntry;
+    if (!authEntry) return false;
+
+    if (authEntry.screen === 'connect') {
+      this._showSetup({
+        subtitle: authEntry.subtitle,
+        error: authEntry.error,
+      });
+      return true;
+    }
+
+    if (authEntry.screen === 'register') {
+      this._showRegistration({
+        title: authEntry.title,
+        subtitle: authEntry.subtitle,
+      });
+      return true;
+    }
+
+    if (authEntry.screen === 'app') {
+      return false;
+    }
+
+    this._showLogin();
+    return true;
+  },
+
   async _initializeWithConfig(sharedPath) {
     const result = await window.api.resumeApp(sharedPath);
 
     if (result.success && result.user) {
       await this._launchApp();
     } else if (result.success && !result.user) {
-      // Check if there are any users yet — if not, show registration; otherwise show login
-      const users = await window.api.getUsers();
-      if (users.length === 0) {
-        this._showRegistration();
-      } else {
-        this._showLogin();
-      }
+      const status = await window.api.getRuntimeStatus();
+      if (this._renderAuthEntryFromStatus(status)) return;
+      this._showLogin();
     } else {
-      // Config exists but can't connect — show setup with error
-      this._showSetup();
-      const errorEl = document.getElementById('setup-error');
-      errorEl.textContent = 'Could not connect to shared drive. Please re-select the folder.';
+      this._showSetup({
+        error: 'Could not connect to shared drive. Please re-select the folder.',
+      });
     }
   },
 
@@ -747,6 +783,10 @@ const App = {
         await App._nextFrame();
         await App._launchApp();
       } else {
+        const status = await window.api.getRuntimeStatus();
+        if (App._renderAuthEntryFromStatus(status) && status?.authEntry?.screen !== 'login') {
+          return;
+        }
         errorEl.textContent = 'Username not found. Check with your administrator.';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Sign In';

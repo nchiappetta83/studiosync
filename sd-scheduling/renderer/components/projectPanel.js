@@ -5,6 +5,7 @@
 
 const ProjectPanel = {
   _projectSearchQuery: '',
+  _pendingScrollAnchor: null,
 
   init() {
     this._container = document.getElementById('projects-container');
@@ -55,6 +56,11 @@ const ProjectPanel = {
     // Active Only toggle
     if (this._activeOnlyCheckbox) {
       this._activeOnlyCheckbox.addEventListener('change', () => {
+        const nextProjects = this._getFilteredProjects({
+          activeOnly: this._activeOnlyCheckbox.checked,
+        });
+        const allowedIds = new Set(nextProjects.map((project) => String(project.id)));
+        this._pendingScrollAnchor = this._captureScrollAnchor({ allowedIds });
         this.render();
       });
     }
@@ -123,9 +129,9 @@ const ProjectPanel = {
     });
   },
 
-  _getFilteredProjects() {
+  _getFilteredProjects(options = {}) {
     const tab = AppState.get('projectTab');
-    const activeOnly = this._activeOnlyCheckbox?.checked ?? true;
+    const activeOnly = options.activeOnly ?? (this._activeOnlyCheckbox?.checked ?? true);
     const query = this._projectSearchQuery.toLowerCase();
     let projects = AppState.get('projects') || [];
 
@@ -162,7 +168,8 @@ const ProjectPanel = {
   },
 
   render() {
-    const scrollAnchor = this._captureScrollAnchor();
+    const scrollAnchor = this._pendingScrollAnchor || this._captureScrollAnchor();
+    this._pendingScrollAnchor = null;
     const projects = this._getFilteredProjects();
 
     if (projects.length === 0) {
@@ -204,39 +211,125 @@ const ProjectPanel = {
     this._restoreScrollAnchor(scrollAnchor);
   },
 
-  _captureScrollAnchor() {
+  prepareAnchorNearProject(projectId, options = {}) {
+    if (!this._container || !this._scroller) return;
+
+    const cards = Array.from(this._container.querySelectorAll('.project-card'));
+    const index = cards.findIndex((card) => card.dataset.projectId === String(projectId));
+    if (index < 0) return;
+
+    let anchorCard = cards[index];
+    if (options.preferNeighbor === true) {
+      anchorCard = cards[index + 1] || cards[index - 1] || anchorCard;
+    }
+
+    const scrollerRect = this._scroller.getBoundingClientRect();
+    this._pendingScrollAnchor = this._buildAnchorForCard(anchorCard, cards, scrollerRect);
+  },
+
+  _buildAnchorForCard(card, cards, scrollerRect) {
+    const cardRect = card.getBoundingClientRect();
+    return {
+      id: card.dataset.projectId || null,
+      orderedIds: cards.map((item) => item.dataset.projectId).filter(Boolean),
+      index: cards.indexOf(card),
+      offset: cardRect.top - scrollerRect.top,
+      scrollTop: this._scroller.scrollTop,
+    };
+  },
+
+  _pickAnchorCard(cards, scrollerRect, options = {}) {
+    if (!Array.isArray(cards) || cards.length === 0) return null;
+
+    const allowedIds = options.allowedIds instanceof Set ? options.allowedIds : null;
+    const focusBandRatio = 0.4;
+    const focusY = scrollerRect.top + (scrollerRect.height * focusBandRatio);
+    const candidates = cards
+      .map((card) => {
+        const rect = card.getBoundingClientRect();
+        const visibleTop = Math.max(rect.top, scrollerRect.top);
+        const visibleBottom = Math.min(rect.bottom, scrollerRect.bottom);
+        const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+        const visibleRatio = rect.height > 0 ? visibleHeight / rect.height : 0;
+        const centerY = rect.top + (rect.height / 2);
+
+        return {
+          card,
+          rect,
+          centerY,
+          visibleHeight,
+          visibleRatio,
+          distanceToFocus: Math.abs(centerY - focusY),
+          allowed: !allowedIds || allowedIds.has(card.dataset.projectId),
+        };
+      })
+      .filter((item) => item.allowed && item.visibleHeight > 0);
+
+    if (candidates.length === 0) {
+      return cards[0] || null;
+    }
+
+    const nearestToFocus = candidates.reduce((best, item) => {
+      if (!best) return item;
+
+      if (item.distanceToFocus !== best.distanceToFocus) {
+        return item.distanceToFocus < best.distanceToFocus ? item : best;
+      }
+
+      if (item.visibleRatio !== best.visibleRatio) {
+        return item.visibleRatio > best.visibleRatio ? item : best;
+      }
+
+      return item.visibleHeight > best.visibleHeight ? item : best;
+    }, null);
+
+    return nearestToFocus?.card || candidates[0].card;
+  },
+
+  _captureScrollAnchor(options = {}) {
     if (!this._container || !this._scroller) return null;
 
     const cards = Array.from(this._container.querySelectorAll('.project-card'));
     if (cards.length === 0) {
       return {
         id: null,
+        orderedIds: [],
+        index: -1,
         offset: 0,
         scrollTop: this._scroller.scrollTop,
       };
     }
 
     const scrollerRect = this._scroller.getBoundingClientRect();
-    const firstVisible = cards.find((card) => {
-      const rect = card.getBoundingClientRect();
-      return rect.bottom >= scrollerRect.top + 8;
-    }) || cards[0];
-    const cardRect = firstVisible.getBoundingClientRect();
-
-    return {
-      id: firstVisible.dataset.projectId || null,
-      offset: cardRect.top - scrollerRect.top,
-      scrollTop: this._scroller.scrollTop,
-    };
+    const allowedIds = options.allowedIds instanceof Set ? options.allowedIds : null;
+    const anchorCard = this._pickAnchorCard(cards, scrollerRect, { allowedIds }) || cards[0];
+    return this._buildAnchorForCard(anchorCard, cards, scrollerRect);
   },
 
   _restoreScrollAnchor(anchor) {
     if (!anchor || !this._container || !this._scroller) return;
 
     requestAnimationFrame(() => {
-      const target = anchor.id
-        ? this._container.querySelector(`.project-card[data-project-id="${anchor.id}"]`)
-        : null;
+      const cards = Array.from(this._container.querySelectorAll('.project-card'));
+      const cardsById = new Map(cards.map((card) => [card.dataset.projectId, card]));
+      let target = anchor.id ? cardsById.get(anchor.id) : null;
+
+      if (!target && Array.isArray(anchor.orderedIds) && anchor.orderedIds.length > 0) {
+        const startIndex = Number.isInteger(anchor.index) ? anchor.index : anchor.orderedIds.indexOf(anchor.id);
+        const safeIndex = startIndex >= 0 ? startIndex : 0;
+
+        for (let i = safeIndex + 1; i < anchor.orderedIds.length; i += 1) {
+          target = cardsById.get(anchor.orderedIds[i]);
+          if (target) break;
+        }
+
+        if (!target) {
+          for (let i = Math.min(safeIndex - 1, anchor.orderedIds.length - 1); i >= 0; i -= 1) {
+            target = cardsById.get(anchor.orderedIds[i]);
+            if (target) break;
+          }
+        }
+      }
 
       if (target) {
         const nextScrollTop = target.offsetTop - (anchor.offset || 0);
