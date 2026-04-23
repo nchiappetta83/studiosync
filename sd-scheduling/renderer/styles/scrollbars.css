@@ -32,6 +32,10 @@
   width: 0;
 }
 
+.tasks-scroll::-webkit-scrollbar {
+  width: 0;
+}
+
 /* Hide scrollbar arrows */
 ::-webkit-scrollbar-button {
   display: none;

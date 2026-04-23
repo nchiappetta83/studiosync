@@ -14,27 +14,25 @@
   align-items: center;
   justify-content: center;
   height: 100vh;
-  background:
-    radial-gradient(circle at top, rgba(77, 74, 213, 0.08), transparent 38%),
-    linear-gradient(180deg, #FBFCFE 0%, var(--bg) 100%);
+  background: var(--bg-card);
   position: relative;
   -webkit-app-region: drag;
 }
 
 .setup-card {
-  background: var(--bg-card);
+  background: transparent;
   border-radius: var(--radius-lg);
-  padding: 48px;
-  border: 1px solid rgba(228, 234, 240, 0.92);
-  box-shadow: 0 18px 44px rgba(42, 52, 57, 0.10), 0 4px 16px rgba(42, 52, 57, 0.05);
+  padding: 18px 28px 28px;
+  border: none;
+  box-shadow: none;
   text-align: center;
-  max-width: 420px;
+  max-width: 340px;
   width: 100%;
   -webkit-app-region: no-drag;
 }
 
 .setup-card-auth {
-  padding-top: 24px;
+  padding-top: 12px;
 }
 
 .setup-icon {
@@ -43,7 +41,7 @@
 }
 
 .setup-card-auth .setup-icon {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .setup-logo {
@@ -62,18 +60,18 @@
 }
 
 .setup-logo-auth {
-  width: 160px;
-  height: 160px;
+  width: 120px;
+  height: 120px;
 }
 
 .setup-brand-group {
-  margin-top: -8px;
-  margin-bottom: 26px;
+  margin-top: -10px;
+  margin-bottom: 34px;
 }
 
 .setup-brand-name {
   font-family: var(--font-display);
-  font-size: 25px;
+  font-size: 21px;
   font-weight: 900;
   color: var(--text-primary);
   letter-spacing: 0.03em;
@@ -84,13 +82,13 @@
 }
 
 .setup-brand-product {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.32em;
+  letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--accent);
   line-height: 1.1;
-  margin-top: 3px;
+  margin-top: 5px;
 }
 
 .setup-title {
@@ -102,34 +100,45 @@
 }
 
 .setup-title-auth {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .setup-subtitle {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.5;
-  margin-bottom: 15px;
+  margin-bottom: 24px;
 }
 
 .setup-card-auth .input {
-  min-height: 46px;
-  border-radius: 14px;
-  border-color: rgba(77, 74, 213, 0.45);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  min-height: 42px;
+  border-radius: 999px;
+  border-color: rgba(216, 223, 233, 0.95);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  padding-left: 16px;
+  padding-right: 16px;
+  font-size: 13px;
+}
+
+.auth-form-shell {
+  width: 100%;
+}
+
+.auth-form-shell .form-group {
+  margin-bottom: 14px;
 }
 
 .auth-submit-btn {
-  width: 50%;
-  min-width: 170px;
-  min-height: 48px;
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 16px;
+  border-radius: 999px;
   font-weight: 800;
   letter-spacing: 0.01em;
   box-shadow: 0 10px 20px rgba(77, 74, 213, 0.20);
@@ -139,6 +148,40 @@
 .auth-submit-btn:hover {
   transform: translateY(-1px);
   box-shadow: 0 12px 24px rgba(77, 74, 213, 0.24);
+}
+
+.auth-loading-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 12px;
+}
+
+.auth-loading-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 3px solid rgba(77, 74, 213, 0.16);
+  border-top-color: rgba(77, 74, 213, 0.88);
+  animation: authSpinner 0.9s linear infinite;
+  box-shadow: 0 0 0 4px rgba(77, 74, 213, 0.06);
+}
+
+.auth-loading-copy {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
+
+@keyframes authSpinner {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .setup-path {
@@ -152,6 +195,13 @@
   font-size: 12px;
   color: var(--danger);
   margin-top: 12px;
+}
+
+.auth-help-text {
+  margin-top: 18px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.45;
 }
 
 /* ── Toolbar ───────────────────────────────────────────── */
@@ -482,6 +532,13 @@ body.window-resizing .projects-panel {
   cursor: default;
 }
 
+.sync-status-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sidebar-text-secondary);
+  white-space: nowrap;
+}
+
 .sync-dot {
   width: 8px;
   height: 8px;
@@ -621,16 +678,121 @@ body.window-resizing .projects-panel {
   color: var(--text-secondary);
 }
 
+.tasks-scroll-row {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
 .tasks-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 28px 20px;
+  padding: 14px 14px 20px 28px;
 }
 
 .tasks-container {
   display: flex;
   flex-direction: column;
   gap: 0;
+  min-width: 0;
+}
+
+.staff-jump-rail {
+  width: 34px;
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  padding: 6px 0;
+  border-left: 1px solid var(--border-light);
+  background: transparent;
+  overflow: hidden;
+}
+
+.staff-jump-rail-track {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.staff-jump-rail-btn {
+  width: 100%;
+  flex: 2;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: rgba(148, 163, 175, 0.92);
+  text-align: center;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: color var(--duration), background var(--duration);
+}
+
+.staff-jump-rail-btn.is-current {
+  color: var(--accent);
+}
+
+.staff-jump-rail-btn:hover,
+.staff-jump-rail-btn:focus-visible {
+  color: var(--accent);
+}
+
+.staff-jump-rail-dot {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.staff-jump-rail-dot::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(148, 163, 175, 0.78);
+}
+
+.staff-jump-scrollbar {
+  width: 3px;
+  flex-shrink: 0;
+  position: relative;
+  margin-right: 2px;
+}
+
+.staff-jump-scrollbar::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  background: rgba(228, 234, 240, 0.9);
+}
+
+.staff-jump-scrollbar-thumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  min-height: 18px;
+  border-radius: 999px;
+  background: rgba(148, 163, 175, 0.46);
+  box-shadow: none;
+  transition: opacity 140ms ease-out;
 }
 
 /* ── Staff Section Headers (in task list) ──────────────── */

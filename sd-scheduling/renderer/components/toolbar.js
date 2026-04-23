@@ -12,6 +12,7 @@ const Toolbar = {
     this._settingsBtn = document.getElementById('btn-settings');
     this._userBadge = document.getElementById('current-user-badge');
     this._syncIndicator = document.getElementById('sync-indicator');
+    this._syncStatusText = document.getElementById('sync-status-text');
 
     // Search with debounce
     let searchTimeout;
@@ -54,6 +55,7 @@ const Toolbar = {
     // Update user badge when current user changes
     AppState.on('currentUser', () => this._updateUserBadge());
     this._updateUserBadge();
+    this._bindRuntimeStatus();
   },
 
   _updateUserBadge() {
@@ -101,6 +103,47 @@ const Toolbar = {
       this._filterBadge.classList.add('hidden');
       this._filterBtn.classList.remove('filter-active');
     }
+  },
+
+  async _bindRuntimeStatus() {
+    const status = await window.api.getRuntimeStatus();
+    this._applyRuntimeStatus(status);
+
+    window.api.onRuntimeStatusChanged((nextStatus) => {
+      this._applyRuntimeStatus(nextStatus);
+    });
+  },
+
+  _applyRuntimeStatus(status) {
+    if (!this._syncIndicator || !this._syncStatusText) return;
+
+    const syncText = this._formatRuntimeTimestamp(status?.lastSyncAt, 'No recent sync');
+    this._syncStatusText.textContent = syncText;
+
+    const lines = [
+      syncText,
+      `Shared folder: ${status?.sharedDrivePath || 'Not configured'}`,
+      `Excel file: ${status?.excelPath || 'Not configured'}`,
+    ];
+
+    if (status?.lastExcelWriteAt) {
+      lines.push(`Excel updated: ${this._formatRuntimeTimestamp(status.lastExcelWriteAt, 'Never').replace('Synced ', '')}`);
+    } else {
+      lines.push('Excel updated: Never');
+    }
+
+    if (status?.updateAvailable && status?.latestVersion) {
+      lines.push(`Update available: ${status.latestVersion}`);
+    }
+
+    this._syncIndicator.title = lines.join('\n');
+  },
+
+  _formatRuntimeTimestamp(isoStr, fallback = 'Never') {
+    if (!isoStr) return fallback;
+    const date = new Date(isoStr);
+    if (Number.isNaN(date.getTime())) return fallback;
+    return `Synced ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   },
 
   showSyncing() {

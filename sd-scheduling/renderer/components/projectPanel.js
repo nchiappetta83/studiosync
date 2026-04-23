@@ -8,6 +8,7 @@ const ProjectPanel = {
 
   init() {
     this._container = document.getElementById('projects-container');
+    this._scroller = document.getElementById('projects-scroll');
     this._tabs = document.getElementById('projects-tabs');
     this._addBtn = document.getElementById('btn-add-project');
     this._importBtn = document.getElementById('btn-import-projects');
@@ -161,6 +162,7 @@ const ProjectPanel = {
   },
 
   render() {
+    const scrollAnchor = this._captureScrollAnchor();
     const projects = this._getFilteredProjects();
 
     if (projects.length === 0) {
@@ -185,6 +187,7 @@ const ProjectPanel = {
           <div class="empty-state-text">${emptyMsg}</div>
         </div>
       `;
+      this._restoreScrollAnchor(scrollAnchor);
       return;
     }
 
@@ -198,5 +201,51 @@ const ProjectPanel = {
 
     // Update alpha strip with current projects
     AlphaStrip.update(projects);
+    this._restoreScrollAnchor(scrollAnchor);
+  },
+
+  _captureScrollAnchor() {
+    if (!this._container || !this._scroller) return null;
+
+    const cards = Array.from(this._container.querySelectorAll('.project-card'));
+    if (cards.length === 0) {
+      return {
+        id: null,
+        offset: 0,
+        scrollTop: this._scroller.scrollTop,
+      };
+    }
+
+    const scrollerRect = this._scroller.getBoundingClientRect();
+    const firstVisible = cards.find((card) => {
+      const rect = card.getBoundingClientRect();
+      return rect.bottom >= scrollerRect.top + 8;
+    }) || cards[0];
+    const cardRect = firstVisible.getBoundingClientRect();
+
+    return {
+      id: firstVisible.dataset.projectId || null,
+      offset: cardRect.top - scrollerRect.top,
+      scrollTop: this._scroller.scrollTop,
+    };
+  },
+
+  _restoreScrollAnchor(anchor) {
+    if (!anchor || !this._container || !this._scroller) return;
+
+    requestAnimationFrame(() => {
+      const target = anchor.id
+        ? this._container.querySelector(`.project-card[data-project-id="${anchor.id}"]`)
+        : null;
+
+      if (target) {
+        const nextScrollTop = target.offsetTop - (anchor.offset || 0);
+        this._scroller.scrollTop = Math.max(0, nextScrollTop);
+        return;
+      }
+
+      const maxScroll = Math.max(0, this._scroller.scrollHeight - this._scroller.clientHeight);
+      this._scroller.scrollTop = Math.min(anchor.scrollTop || 0, maxScroll);
+    });
   }
 };

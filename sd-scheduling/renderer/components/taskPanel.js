@@ -8,11 +8,32 @@ const TaskPanel = {
     this._title = document.getElementById('tasks-title');
     this._subtitle = document.getElementById('tasks-subtitle');
     this._addBtn = document.getElementById('btn-add-task');
+    this._scroller = document.getElementById('tasks-scroll');
+    this._staffRail = document.getElementById('tasks-staff-rail');
 
     this._addBtn.addEventListener('click', () => {
       const selectedId = AppState.get('selectedStaffId');
       TaskDialog.show({ assigned_to: selectedId !== 'all' ? selectedId : null });
     });
+
+    this._staffRail?.addEventListener('click', (event) => {
+      const button = event.target.closest('.staff-jump-rail-btn');
+      if (!button) return;
+      this._jumpToStaff(button.dataset.userId);
+    });
+
+    if (this._scroller) {
+      this._scroller.addEventListener('scroll', () => {
+        if (this._scrollRafId) return;
+        this._scrollRafId = requestAnimationFrame(() => {
+          this._scrollRafId = null;
+          this._updateRailThumb();
+        });
+      }, { passive: true });
+    }
+
+    this._handleResize = this._handleResize || (() => this._updateRailThumb());
+    window.addEventListener('resize', this._handleResize);
 
     this._renderListener = this._renderListener || (() => this.render());
     AppState.on('tasks', this._renderListener);
@@ -22,11 +43,25 @@ const TaskPanel = {
     AppState.on('searchQuery', this._renderListener);
     AppState.on('pto', this._renderListener);
     AppState.on('filterPriority', this._renderListener);
+    AppState.on('customPriorities', this._renderListener);
+    AppState.on('priorityMenuOrder', this._renderListener);
+    AppState.on('priorityDisplayStyles', this._renderListener);
 
     this.render();
   },
 
   render() {
+    const activeElement = document.activeElement;
+    const activeNoteTaskId = activeElement?.classList?.contains('task-notes-input')
+      ? activeElement.dataset.taskId
+      : null;
+    const activeNoteSelection = activeNoteTaskId
+      ? {
+          start: activeElement.selectionStart,
+          end: activeElement.selectionEnd,
+        }
+      : null;
+
     const selectedId = AppState.get('selectedStaffId');
     const selectedPartnerId = AppState.get('selectedPartnerId');
     const users = AppState.get('users') || [];
@@ -144,9 +179,25 @@ const TaskPanel = {
 
     this._subtitle.textContent = `${dateStr} \u2014 ${totalTasks} tasks scheduled`;
     this._container.innerHTML = html;
+    this._renderStaffRail(sortedUsers);
+    requestAnimationFrame(() => this._updateRailThumb());
 
     // Bind task card events
     TaskCard.bindEvents(this._container);
+
+    if (activeNoteTaskId) {
+      const restoredInput = this._container.querySelector(`.task-notes-input[data-task-id="${activeNoteTaskId}"]`);
+      if (restoredInput) {
+        restoredInput.focus({ preventScroll: true });
+        if (
+          activeNoteSelection &&
+          typeof activeNoteSelection.start === 'number' &&
+          typeof activeNoteSelection.end === 'number'
+        ) {
+          restoredInput.setSelectionRange(activeNoteSelection.start, activeNoteSelection.end);
+        }
+      }
+    }
 
     // Bind staff section menu events
     this._container.querySelectorAll('.staff-section-menu').forEach(btn => {
@@ -155,6 +206,117 @@ const TaskPanel = {
         this._showStaffMenu(e, btn.dataset.userId);
       });
     });
+  },
+
+  _renderStaffRail(sortedUsers) {
+    if (!this._staffRail) return;
+
+    if (!Array.isArray(sortedUsers) || sortedUsers.length < 2) {
+      this._staffRail.classList.add('hidden');
+      this._staffRail.innerHTML = '';
+      return;
+    }
+
+    this._staffRail.classList.remove('hidden');
+    this._staffRail.innerHTML = `
+      <div class="staff-jump-rail-track">
+        ${sortedUsers.map((user, index) => {
+          const initials = this._getStaffInitials(user.display_name);
+          const button = `
+            <button
+              type="button"
+              class="staff-jump-rail-btn"
+              data-user-id="${user.id}"
+              data-index="${index}"
+              title="${this._esc(user.display_name)}"
+              aria-label="Jump to ${this._esc(user.display_name)}"
+            >
+              ${this._esc(initials)}
+            </button>
+          `;
+          const dot = index < sortedUsers.length - 1
+            ? `<div class="staff-jump-rail-dot" data-after-index="${index}" aria-hidden="true"></div>`
+            : '';
+          return `${button}${dot}`;
+        }).join('')}
+      </div>
+      <div class="staff-jump-scrollbar" aria-hidden="true">
+        <div class="staff-jump-scrollbar-thumb"></div>
+      </div>
+    `;
+  },
+
+  _updateRailThumb() {
+    if (!this._staffRail || this._staffRail.classList.contains('hidden') || !this._scroller) return;
+
+    const scrollbar = this._staffRail.querySelector('.staff-jump-scrollbar');
+    const thumb = this._staffRail.querySelector('.staff-jump-scrollbar-thumb');
+    const buttons = Array.from(this._staffRail.querySelectorAll('.staff-jump-rail-btn'));
+    const sections = Array.from(this._container.querySelectorAll('.staff-section'));
+    if (!scrollbar || !thumb || !buttons.length || !sections.length) return;
+
+    buttons.forEach((button) => button.classList.remove('is-current'));
+
+    const viewTop = this._scroller.scrollTop;
+    const viewHeight = this._scroller.clientHeight;
+    const contentHeight = this._scroller.scrollHeight;
+    const maxScrollTop = Math.max(0, contentHeight - viewHeight);
+    const currentSection = sections.find((section) => section.offsetTop + section.offsetHeight > viewTop) || sections[sections.length - 1];
+
+    if (!currentSection) {
+      thumb.style.opacity = '0';
+      return;
+    }
+
+    thumb.style.opacity = '1';
+    const currentUserId = currentSection.dataset.userId;
+    const currentButton = buttons.find((button) => button.dataset.userId === currentUserId);
+    currentButton?.classList.add('is-current');
+
+    const trackHeight = scrollbar.clientHeight;
+    if (!trackHeight || contentHeight <= viewHeight) {
+      thumb.style.top = '0px';
+      thumb.style.height = `${trackHeight}px`;
+      return;
+    }
+
+    const thumbHeight = Math.max(18, trackHeight * (viewHeight / contentHeight));
+    const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+    const thumbTop = maxScrollTop > 0 ? (viewTop / maxScrollTop) * maxThumbTop : 0;
+
+    thumb.style.top = `${thumbTop}px`;
+    thumb.style.height = `${thumbHeight}px`;
+  },
+
+  _jumpToStaff(userId) {
+    const target = this._container.querySelector(`.staff-section[data-user-id="${userId}"]`);
+    if (!target || !this._scroller) return;
+
+    const scrollerRect = this._scroller.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const nextScrollTop = this._scroller.scrollTop + (targetRect.top - scrollerRect.top) - 8;
+    this._scroller.scrollTo({ top: Math.max(0, nextScrollTop), behavior: 'smooth' });
+  },
+
+  _esc(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  },
+
+  _getStaffInitials(name) {
+    const parts = String(name || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (parts.length === 0) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+    return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
   },
 
   _showStaffMenu(e, userId) {

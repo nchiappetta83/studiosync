@@ -16,6 +16,8 @@
  */
 
 const TaskCard = {
+  _noteDrafts: new Map(),
+
   render(task) {
     const isPartner = AppState.isPartner();
     const canEditNotes = isPartner;
@@ -24,27 +26,41 @@ const TaskCard = {
     // Priority â€” V4 style: null/0 = unset, 1-4 = numeric, 'w' = wait
     const priority = task.priority;
     const prioritySet = priority !== null && priority !== undefined && priority !== '' && priority !== 0;
-    const pLabel = this._priorityLabel(priority, prioritySet, task);
-    const pClass = this._priorityClass(priority, prioritySet, task);
+    const priorityPresentation = this._getPriorityPresentation(task, priority, prioritySet);
 
     // Due date
     const dueVal = task.due_date || '';
     const dueDisplay = dueVal ? this._formatDueDisplay(dueVal) : '';
-    const dueColor = dueVal ? this._dueColorClass(dueVal) : 'due-empty';
+    const dueColor = dueVal ? this._dueColorClass(dueVal) : 'due-none';
 
     // Notes
-    const notesVal = task.notes || '';
+    const notesVal = this._noteDrafts.has(task.id)
+      ? this._noteDrafts.get(task.id)
+      : (task.notes || '');
 
     // Confirmed / Last Week status (V4 weekly rollover)
     const isConfirmed = task.confirmed !== 0;
     const lastWeekClass = isConfirmed ? '' : 'task-last-week';
-    const lastWeekBadge = isConfirmed ? '' :
-      `<span class="badge badge-last-week">Last Week</span>`;
+    const lastWeekOverlay = (!isConfirmed && isPartner)
+      ? '<span class="task-last-week-overlay">Last Week</span>'
+      : '';
     const keepBtn = (!isConfirmed && isPartner) ?
       `<button class="task-keep-btn" data-task-id="${task.id}" title="Confirm task for this week">Keep</button>` : '';
+    const carryDeleteBtn = (!isConfirmed && isPartner)
+      ? `<button class="task-carry-delete-btn" data-task-id="${task.id}" title="Delete carry-over task">Delete</button>`
+      : '';
+    const rolloverActions = (!isConfirmed && isPartner) ? `
+      <div class="task-rollover-actions">
+        ${keepBtn}
+        ${carryDeleteBtn}
+      </div>
+    ` : '';
+    const completeBtn = (isPartner && task.completed)
+      ? `<button class="task-complete-btn task-complete-btn-active" data-task-id="${task.id}" title="Mark task incomplete">Undo</button>`
+      : '';
 
     // Partner initials badge
-    const partnerHtml = this._renderPartnerBadge(task, isPartner);
+    const partnerHtml = this._renderPartnerBadge(task);
 
     // Delete button (visible on hover for partners)
     const deleteBtn = isPartner
@@ -58,31 +74,25 @@ const TaskCard = {
 
     // Priority badge â€” custom priorities get inline color from their definition
     const priorityCursor = isPartner ? 'cursor:pointer;' : '';
-    let priorityInlineStyle = priorityCursor;
-    if (pClass === 'priority-custom' && task.priority_label) {
-      const cpLabel = task.priority_label.replace(/^cp:/, '');
-      const cp = (AppState.get('customPriorities') || []).find(p => p.label === cpLabel);
-      if (cp) {
-        priorityInlineStyle += `color:${cp.color};background:${cp.color}18;`;
-      }
-    } else if (pClass === 'priority-numeric') {
-      priorityInlineStyle += this._numericPriorityStyle(priority);
-    }
-    const priorityBadge = `<span class="task-priority-pill ${pClass}" data-task-id="${task.id}" style="${priorityInlineStyle}">${pLabel}</span>`;
+    const priorityInlineStyle = `${priorityPresentation.inlineStyle || ''}${priorityCursor}`;
+    const priorityBadge = `<span class="task-priority-pill ${priorityPresentation.className}" data-task-id="${task.id}" style="${priorityInlineStyle}">${this._escapeHtml(priorityPresentation.label)}</span>`;
 
     // Due date display (click opens calendar picker)
     const dueCursor = isPartner ? 'cursor:pointer;' : '';
     const dueHtml = dueDisplay
       ? `<span class="task-due-label ${dueColor}" data-task-id="${task.id}" style="${dueCursor}">${this._escapeHtml(dueDisplay)}</span>`
-      : (isPartner ? `<span class="task-due-label due-empty" data-task-id="${task.id}" style="${dueCursor}">Due</span>` : '');
+      : (isPartner ? `<span class="task-due-label due-none" data-task-id="${task.id}" style="${dueCursor}">No due date</span>` : '');
 
     return `
       <div class="task-card ${completedClass} ${lastWeekClass} ${isPartner ? 'task-card-draggable' : ''}" data-task-id="${task.id}">
+        ${rolloverActions}
+        ${lastWeekOverlay}
         <div class="task-card-main">
           ${priorityBadge}
-          <div class="task-title">${this._escapeHtml(task.title)}</div>
-          ${lastWeekBadge}
-          ${keepBtn}
+          <div class="task-title-group">
+            <div class="task-title">${this._escapeHtml(task.title)}</div>
+            ${isConfirmed ? completeBtn : ''}
+          </div>
           ${dueHtml}
           ${calIcon}
           ${deleteBtn}
@@ -107,6 +117,36 @@ const TaskCard = {
           const taskId = btn.dataset.taskId;
           await window.api.confirmTask(taskId);
           AppState.refresh();
+        });
+      });
+    }
+
+    if (isPartner) {
+      container.querySelectorAll('.task-complete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const taskId = btn.dataset.taskId;
+          const task = AppState.get('tasks').find(t => t.id === taskId);
+          if (!task) return;
+
+          await window.api.updateTask({ id: taskId, completed: task.completed ? 0 : 1 });
+          AppState.refresh();
+        });
+      });
+    }
+
+    if (isPartner) {
+      container.querySelectorAll('.task-carry-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const taskId = btn.dataset.taskId;
+          const task = AppState.get('tasks').find(t => t.id === taskId);
+          if (!task) return;
+
+          if (confirm(`Delete '${task.title}' from carry-over?`)) {
+            await window.api.deleteTask(taskId);
+            AppState.refresh();
+          }
         });
       });
     }
@@ -148,6 +188,8 @@ const TaskCard = {
           if (e.target.tagName === 'INPUT' || e.target.closest('.task-priority-pill') ||
               e.target.closest('.task-cal-icon') || e.target.closest('.task-delete-btn') ||
               e.target.closest('.task-partner-badge') || e.target.closest('.task-keep-btn') ||
+              e.target.closest('.task-carry-delete-btn') ||
+              e.target.closest('.task-complete-btn') ||
               e.target.closest('.task-due-label')) return;
           const taskId = card.dataset.taskId;
           const task = AppState.get('tasks').find(t => t.id === taskId);
@@ -177,6 +219,8 @@ const TaskCard = {
         card.addEventListener('mousedown', (e) => {
           if (e.target.tagName === 'INPUT' || e.target.closest('.task-priority-pill') ||
               e.target.closest('.task-cal-icon') || e.target.closest('.task-delete-btn') ||
+              e.target.closest('.task-keep-btn') || e.target.closest('.task-carry-delete-btn') ||
+              e.target.closest('.task-complete-btn') ||
               e.button !== 0) return;
 
           startX = e.clientX;
@@ -208,10 +252,31 @@ const TaskCard = {
       });
     }
 
-    // â”€â”€ Notes: click to edit, blur/enter to save â”€â”€
+    // â”€â”€ Notes: click to edit, debounce/blur to save â”€â”€
     container.querySelectorAll('.task-notes-input').forEach(input => {
       const taskId = input.dataset.taskId;
       let original = input.value;
+      let saveTimer = null;
+      let saveQueue = Promise.resolve();
+
+      const queueSave = (nextValue) => {
+        saveQueue = saveQueue.then(async () => {
+          const trimmedValue = nextValue.trim();
+          if (trimmedValue === original) return;
+
+          await window.api.updateTask({ id: taskId, notes: trimmedValue });
+          original = trimmedValue;
+
+          const currentDraft = this._noteDrafts.get(taskId);
+          if (currentDraft !== undefined && currentDraft.trim() === trimmedValue) {
+            this._noteDrafts.delete(taskId);
+          }
+        }).catch((err) => {
+          console.error('Task note save failed:', err);
+        });
+
+        return saveQueue;
+      };
 
       input.addEventListener('mousedown', (e) => {
         e.stopPropagation();
@@ -225,18 +290,38 @@ const TaskCard = {
         input.readOnly = true;
       }
 
-      input.addEventListener('blur', async () => {
+      if (isPartner) {
+        input.addEventListener('input', () => {
+          this._noteDrafts.set(taskId, input.value);
+          clearTimeout(saveTimer);
+          saveTimer = setTimeout(() => {
+            queueSave(input.value);
+          }, 450);
+        });
+      }
+
+      input.addEventListener('blur', () => {
+        clearTimeout(saveTimer);
         const val = input.value.trim();
         if (!val) input.value = '';
-        if (val !== original) {
-          await window.api.updateTask({ id: taskId, notes: val });
-          original = val;
+        if (isPartner) {
+          if (val) {
+            this._noteDrafts.set(taskId, val);
+          } else {
+            this._noteDrafts.delete(taskId);
+          }
+          void queueSave(val);
         }
       });
 
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') input.blur();
-        if (e.key === 'Escape') { input.value = original; input.blur(); }
+        if (e.key === 'Escape') {
+          clearTimeout(saveTimer);
+          this._noteDrafts.delete(taskId);
+          input.value = original;
+          input.blur();
+        }
       });
     });
 
@@ -259,33 +344,7 @@ const TaskCard = {
   // â”€â”€ Priority Menu (V4 style) â”€â”€
 
   _showPriorityMenu(badge, task) {
-    const allTasks = AppState.get('tasks') || [];
-    const staffTasks = allTasks.filter(t => t.assigned_to === task.assigned_to);
-    const n = Math.max(staffTasks.length, 1);
-    const customPriorities = AppState.get('customPriorities') || [];
-
-    const items = [];
-
-    // Number priorities 1..N
-    for (let i = 1; i <= n; i++) {
-      items.push({ label: String(i), value: i, type: 'priority' });
-    }
-    items.push({ type: 'divider' });
-
-    // W (Wait)
-    items.push({ label: 'W (Wait)', value: 'w', type: 'priority' });
-
-    // Custom priorities
-    if (customPriorities.length > 0) {
-      items.push({ type: 'divider' });
-      for (const cp of customPriorities) {
-        items.push({ label: cp.label, value: `cp:${cp.label}`, type: 'custom', color: cp.color });
-      }
-    }
-
-    items.push({ type: 'divider' });
-    items.push({ label: '\u2014 Clear', value: null, type: 'clear' });
-
+    const items = this._buildPriorityMenuEntries(task);
     this._showPriorityPopup(badge, items, task);
   },
 
@@ -323,19 +382,7 @@ const TaskCard = {
       btn.addEventListener('click', async () => {
         menu.remove();
         document.removeEventListener('click', dismiss);
-
-        if (item.value === null) {
-          // Clear
-          await window.api.updateTask({ id: task.id, priority: 0, priority_label: null });
-        } else if (item.value === 'w') {
-          await window.api.updateTask({ id: task.id, priority: -1, priority_label: null });
-        } else if (typeof item.value === 'string' && item.value.startsWith('cp:')) {
-          // Custom priority: store -2 in priority column, label in priority_label
-          await window.api.updateTask({ id: task.id, priority: -2, priority_label: item.value });
-        } else {
-          await window.api.updateTask({ id: task.id, priority: item.value, priority_label: null });
-        }
-
+        await this._applyPriorityMenuValue(task.id, item.value);
         AppState.refresh();
       });
 
@@ -372,7 +419,9 @@ const TaskCard = {
 
   _showTaskContextMenu(e, task) {
     const users = AppState.get('users') || [];
-    const staffUsers = users.filter(u => u.role === 'staff' && u.active !== 0 && u.id !== task.assigned_to);
+    const staffUsers = users
+      .filter(u => u.role === 'staff' && u.active !== 0 && u.id !== task.assigned_to)
+      .sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''), undefined, { sensitivity: 'base' }));
     const items = [
       {
         label: 'Edit Task...',
@@ -447,57 +496,125 @@ const TaskCard = {
   },
 
   _buildPriorityContextItems(task) {
+    return this._buildPriorityMenuEntries(task).map((item) => {
+      if (item.type === 'divider') return { divider: true };
+
+      return {
+        label: item.label,
+        color: this._priorityMenuItemColor(item),
+        action: async () => {
+          await this._applyPriorityMenuValue(task.id, item.value);
+          AppState.refresh();
+        }
+      };
+    });
+  },
+
+  _buildPriorityMenuEntries(task) {
     const allTasks = AppState.get('tasks') || [];
     const staffTasks = allTasks.filter(t => t.assigned_to === task.assigned_to);
     const n = Math.max(staffTasks.length, 1);
     const customPriorities = AppState.get('customPriorities') || [];
-    const items = [];
+    const tokens = this._priorityMenuTokens(customPriorities);
+    const groups = [];
 
-    for (let i = 1; i <= n; i++) {
-      items.push({
-        label: String(i),
-        color: this._numericPriorityTone(i).color,
-        action: async () => {
-          await window.api.updateTask({ id: task.id, priority: i, priority_label: null });
-          AppState.refresh();
+    for (const token of tokens) {
+      if (token === 'numbered') {
+        groups.push(Array.from({ length: n }, (_unused, index) => ({
+          label: String(index + 1),
+          value: index + 1,
+          type: 'priority'
+        })));
+        continue;
+      }
+
+      if (token === 'wait') {
+        groups.push([{ label: 'W (Wait)', value: 'w', type: 'priority' }]);
+        continue;
+      }
+
+      if (token === 'clear') {
+        groups.push([{ label: '\u2014 Clear', value: null, type: 'clear' }]);
+        continue;
+      }
+
+      if (token.startsWith('custom:')) {
+        const customPriority = customPriorities.find((item) => item.id === token.slice('custom:'.length));
+        if (customPriority) {
+          groups.push([{
+            label: customPriority.label,
+            value: `cp:${customPriority.label}`,
+            type: 'custom',
+            color: customPriority.color
+          }]);
         }
-      });
-    }
-
-    items.push({ divider: true });
-    items.push({
-      label: 'W (Wait)',
-      color: 'var(--priority-w)',
-      action: async () => {
-        await window.api.updateTask({ id: task.id, priority: -1, priority_label: null });
-        AppState.refresh();
-      }
-    });
-
-    if (customPriorities.length > 0) {
-      items.push({ divider: true });
-      for (const cp of customPriorities) {
-        items.push({
-          label: cp.label,
-          color: cp.color,
-          action: async () => {
-            await window.api.updateTask({ id: task.id, priority: -2, priority_label: `cp:${cp.label}` });
-            AppState.refresh();
-          }
-        });
       }
     }
 
-    items.push({ divider: true });
-    items.push({
-      label: '— Clear',
-      action: async () => {
-        await window.api.updateTask({ id: task.id, priority: 0, priority_label: null });
-        AppState.refresh();
+    const items = [];
+    groups.forEach((group, index) => {
+      items.push(...group);
+      if (index < groups.length - 1) {
+        items.push({ type: 'divider' });
       }
     });
 
     return items;
+  },
+
+  _priorityMenuTokens(customPriorities) {
+    const validTokens = [
+      'numbered',
+      ...customPriorities.map((item) => `custom:${item.id}`),
+      'wait',
+      'clear',
+    ];
+    const savedTokens = Array.isArray(AppState.get('priorityMenuOrder'))
+      ? AppState.get('priorityMenuOrder')
+      : [];
+    const ordered = [];
+
+    for (const token of savedTokens) {
+      if (!validTokens.includes(token) || ordered.includes(token)) continue;
+      ordered.push(token);
+    }
+
+    for (const token of validTokens) {
+      if (!ordered.includes(token)) {
+        ordered.push(token);
+      }
+    }
+
+    return ordered;
+  },
+
+  _priorityMenuItemColor(item) {
+    if (item.type === 'custom') return item.color;
+    if (item.value === 'w') return this._priorityStyleForToken('wait').color;
+    if (item.type === 'priority' && typeof item.value === 'number') {
+      return this._priorityStyleForToken('numbered').color;
+    }
+    if (item.type === 'clear') return this._priorityStyleForToken('clear').color;
+    return null;
+  },
+
+  async _applyPriorityMenuValue(taskId, value) {
+    if (value === null) {
+      await window.api.updateTask({ id: taskId, priority: 0, priority_label: null });
+      return;
+    }
+
+    if (value === 'w') {
+      await window.api.updateTask({ id: taskId, priority: -1, priority_label: null });
+      return;
+    }
+
+    if (typeof value === 'string' && value.startsWith('cp:')) {
+      await window.api.updateTask({ id: taskId, priority: -2, priority_label: value });
+      return;
+    }
+
+    await window.api.updateTask({ id: taskId, priority: value, priority_label: null });
   },
 
   // â”€â”€ Date Picker Popup (V4 style) â”€â”€
@@ -617,6 +734,7 @@ const TaskCard = {
       // Custom priority â€” extract label from "cp:OG" format
       return task.priority_label.replace(/^cp:/, '');
     }
+    if (p === -2) return 'Custom';
     return String(p).toUpperCase();
   },
 
@@ -625,20 +743,88 @@ const TaskCard = {
     const p = String(priority);
     if (typeof priority === 'number' && priority >= 1) return 'priority-numeric';
     if (p === '-1') return 'priority-w';
-    if (p === '-2' && task?.priority_label) return 'priority-custom';
+    if (p === '-2') return 'priority-custom';
     return 'priority-unset';
   },
 
+  _getPriorityPresentation(task, priority, isSet) {
+    return {
+      label: this._priorityLabel(priority, isSet, task),
+      className: this._priorityClass(priority, isSet, task),
+      inlineStyle: this._priorityInlineStyle(task, priority, isSet),
+    };
+  },
+
   _numericPriorityTone(priority) {
-    if (priority <= 1) return { color: 'var(--priority-1)', background: 'var(--priority-bg-1)' };
-    if (priority === 2) return { color: 'var(--priority-2)', background: 'var(--priority-bg-2)' };
-    if (priority === 3) return { color: 'var(--priority-3)', background: 'var(--priority-bg-3)' };
-    return { color: 'var(--priority-4)', background: 'var(--priority-bg-4)' };
+    return this._priorityStyleForToken('numbered');
   },
 
   _numericPriorityStyle(priority) {
     const tone = this._numericPriorityTone(priority);
     return `color:${tone.color};background:${tone.background};`;
+  },
+
+  _priorityInlineStyle(task, priority, isSet) {
+    const styles = this._priorityDisplayStyles();
+    if (!isSet || priority === 0 || priority === null || priority === undefined) {
+      const clearTone = this._priorityStyleForToken('clear');
+      return `color:${clearTone.color};background:${clearTone.background};border:1px solid ${clearTone.border};`;
+    }
+
+    if (priority === -1) {
+      const waitTone = this._priorityStyleForToken('wait');
+      return `color:${waitTone.color};background:${waitTone.background};border:1px solid ${waitTone.border};`;
+    }
+
+    if (priority === -2) {
+      const customLabel = String(task?.priority_label || '').replace(/^cp:/, '');
+      const customPriority = (AppState.get('customPriorities') || []).find((item) => item.label === customLabel);
+      const customColor = customPriority?.color || styles.customDefault?.color || '#5C6B75';
+      const background = this._withAlpha(customColor, 0.14, '#EEF1F4');
+      const border = this._withAlpha(customColor, 0.18, '#E4EAF0');
+      return `color:${customColor};background:${background};border:1px solid ${border};`;
+    }
+
+    if (typeof priority === 'number' && priority >= 1) {
+      const numericTone = this._priorityStyleForToken('numbered');
+      return `color:${numericTone.color};background:${numericTone.background};border:1px solid ${numericTone.border};`;
+    }
+
+    return '';
+  },
+
+  _priorityDisplayStyles() {
+    const saved = AppState.get('priorityDisplayStyles');
+    return {
+      numbered: { color: '#4D4AD5', ...(saved?.numbered || {}) },
+      wait: { color: '#6E7680', ...(saved?.wait || {}) },
+      clear: { color: '#9CA6B4', ...(saved?.clear || {}) },
+      customDefault: { color: '#5C6B75', ...(saved?.customDefault || {}) },
+    };
+  },
+
+  _priorityStyleForToken(token) {
+    const styles = this._priorityDisplayStyles();
+    const color = styles[token]?.color || '#5C6B75';
+    return {
+      color,
+      background: this._withAlpha(color, token === 'clear' ? 0.08 : 0.14, '#EEF1F4'),
+      border: this._withAlpha(color, token === 'clear' ? 0.12 : 0.18, '#E4EAF0'),
+    };
+  },
+
+  _withAlpha(color, alpha, fallback) {
+    const value = String(color || '').trim();
+    const hexMatch = value.match(/^#([0-9a-f]{6}|[0-9a-f]{3})$/i);
+    if (!hexMatch) return fallback;
+
+    const hex = hexMatch[1].length === 3
+      ? hexMatch[1].split('').map((char) => char + char).join('')
+      : hexMatch[1];
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   },
 
   _formatDueDisplay(dateStr) {
@@ -650,12 +836,13 @@ const TaskCard = {
     const today = new Date();
     today.setHours(0,0,0,0);
 
-    // Show weekday names for dates in the current Sunday-Saturday week.
+    // Show weekday names for dates in the current Monday-Sunday week.
     const dayOfWeek = today.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
     const weekStart = new Date(today);
-    weekStart.setDate(today.getDate() - dayOfWeek); // Sunday
+    weekStart.setDate(today.getDate() + mondayOffset);
     const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6); // Saturday
+    weekEnd.setDate(weekStart.getDate() + 6); // Sunday
 
     if (date >= weekStart && date <= weekEnd) {
       // This week: show day name
@@ -667,59 +854,23 @@ const TaskCard = {
     return `${date.getMonth()+1}/${date.getDate()}/${date.getFullYear()}`;
   },
 
-  _parseDueInput(val) {
-    if (!val) return null;
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    const lv = val.toLowerCase().trim();
-
-    // Day names
-    const dayMap = { 'sun':0, 'sunday':0, 'mon':1, 'monday':1, 'tue':2, 'tuesday':2, 'wed':3, 'wednesday':3, 'thu':4, 'thursday':4, 'fri':5, 'friday':5, 'sat':6, 'saturday':6 };
-    if (dayMap[lv] !== undefined) {
-      const target = dayMap[lv];
-      let diff = (target - today.getDay() + 7) % 7;
-      if (diff === 0) diff = 7;
-      const d = new Date(today);
-      d.setDate(d.getDate() + diff);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    }
-
-    // M/D or M/D/YYYY
-    const slashMatch = val.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
-    if (slashMatch) {
-      const m = parseInt(slashMatch[1]);
-      const d = parseInt(slashMatch[2]);
-      let y = slashMatch[3] ? parseInt(slashMatch[3]) : today.getFullYear();
-      if (y < 100) y += 2000;
-      return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    }
-
-    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
-
-    const parsed = new Date(val);
-    if (!isNaN(parsed.getTime())) {
-      return `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,'0')}-${String(parsed.getDate()).padStart(2,'0')}`;
-    }
-
-    return null;
-  },
-
   _dueColorClass(dateStr) {
-    if (!dateStr) return 'due-empty';
+    if (!dateStr) return 'due-none';
     const parts = dateStr.split('-');
     if (parts.length !== 3) return 'due-normal';
     const due = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
     const today = new Date();
     today.setHours(0,0,0,0);
     const days = Math.floor((due - today) / 86400000);
-    if (days <= 0) return 'due-overdue';
-    if (days <= 3) return 'due-soon';
+    if (days <= 0) return 'due-urgent';
+    if (days <= 3) return 'due-warn';
+    if (days <= 14) return 'due-future';
     return 'due-normal';
   },
 
   // â”€â”€ Partner Badge on Task Card â”€â”€
 
-  _renderPartnerBadge(task, isPartner) {
+  _renderPartnerBadge(task) {
     const partnerLabel = this._getTaskPartnerLabel(task);
     if (!partnerLabel) return '';
     return `<span class="task-partner-badge" data-task-id="${task.id}" title="${this._escapeAttr(partnerLabel)}">${this._escapeHtml(partnerLabel)}</span>`;
@@ -742,44 +893,6 @@ const TaskCard = {
     const partnerId = task.partner_id || project?.partner_id;
     const partner = partnerId ? users.find(u => u.id === partnerId) : null;
     return partner ? this._getInitials(partner.display_name) : '';
-  },
-
-  _showPartnerMenu(anchor, task) {
-    const users = AppState.get('users') || [];
-    const partners = users.filter(u => u.role === 'partner' && u.active !== 0);
-
-    const items = [];
-    for (const p of partners) {
-      const initials = this._getInitials(p.display_name);
-      items.push({
-        label: `${initials} â€” ${p.display_name}`,
-        action: async () => {
-          await window.api.updateTask({ id: task.id, partner_id: p.id });
-          AppState.refresh();
-        }
-      });
-    }
-    if (task.partner_id) {
-      items.push({ divider: true });
-      items.push({
-        label: 'Clear Partner',
-        action: async () => {
-          await window.api.updateTask({ id: task.id, partner_id: null });
-          AppState.refresh();
-        }
-      });
-    }
-
-    const menu = ContextMenu.create(items);
-    const rect = anchor.getBoundingClientRect();
-    menu.style.top = (rect.bottom + 4) + 'px';
-    menu.style.left = rect.left + 'px';
-
-    requestAnimationFrame(() => {
-      const menuRect = menu.getBoundingClientRect();
-      if (menuRect.bottom > window.innerHeight - 8) menu.style.top = (rect.top - menuRect.height - 4) + 'px';
-      if (menuRect.right > window.innerWidth - 8) menu.style.left = (window.innerWidth - menuRect.width - 8) + 'px';
-    });
   },
 
   _escapeHtml(str) {

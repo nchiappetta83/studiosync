@@ -12,6 +12,7 @@ Thumbs.db
 # Local tooling and scratch space
 **/.claude/
 tmp/
+Archive/
 
 # Office packaging/output folders kept outside the source repo
 office-guides/
@@ -25,3 +26,8 @@ office-unpacked-zips/
 Office Deployment Checklist.html
 SD_Schedule.xlsx
 scheduling_icon.ico
+
+# Generated local doc/reference exports
+docs/partner-feature-package.html
+docs/partner-package-previews/
+docs/pdf-reference-pages/

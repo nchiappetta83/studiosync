@@ -148,7 +148,9 @@ const ProjectCard = {
 
   _showContextMenu(e, project) {
     const users = AppState.get('users') || [];
-    const partners = users.filter(u => u.role === 'partner' && u.active !== 0);
+    const partners = users
+      .filter(u => u.role === 'partner' && u.active !== 0)
+      .sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''), undefined, { sensitivity: 'base' }));
     const projectCategory = project.category || 'current';
 
     const items = [];
@@ -193,12 +195,13 @@ const ProjectCard = {
 
     // Assign Partner
     if (partners.length > 0) {
+      const assignedPartnerIds = this._getProjectPartnerIds(project);
       items.push({ divider: true });
       items.push({
-        label: 'Assign Partner',
+        label: 'Partners',
         submenu: [
           {
-            label: project.partner_id ? 'No Partner' : '✓ No Partner',
+            label: assignedPartnerIds.length === 0 ? '✓ No Partner' : 'No Partner',
             action: async () => {
               await window.api.updateProject({
                 id: project.id,
@@ -210,17 +213,21 @@ const ProjectCard = {
             }
           },
           ...partners.map((partner) => {
-            const initials = partner.display_name.trim().split(/\s+/).map(p => p[0]).join('').toUpperCase();
-            const isAssigned = project.partner_id === partner.id;
+            const initials = this._getInitials(partner.display_name);
+            const isAssigned = assignedPartnerIds.includes(partner.id);
             return {
               label: `${isAssigned ? '✓ ' : ''}${partner.display_name} (${initials})`,
               action: async () => {
-                if (isAssigned) return;
+                const nextPartnerIds = isAssigned
+                  ? assignedPartnerIds.filter((id) => id !== partner.id)
+                  : [...assignedPartnerIds, partner.id];
+
+                const nextPartners = partners.filter((item) => nextPartnerIds.includes(item.id));
                 await window.api.updateProject({
                   id: project.id,
-                  partner_id: partner.id,
-                  partner_ids: [partner.id],
-                  partner_initials: initials
+                  partner_id: nextPartnerIds[0] || null,
+                  partner_ids: nextPartnerIds,
+                  partner_initials: nextPartners.map((item) => this._getInitials(item.display_name)).join('/')
                 });
                 AppState.refresh();
               }
@@ -260,6 +267,16 @@ const ProjectCard = {
     if (project.partner_initials) return project.partner_initials;
     const partner = project.partner_id ? AppState.getUserById(project.partner_id) : null;
     return partner ? this._getInitials(partner.display_name) : '';
+  },
+
+  _getProjectPartnerIds(project) {
+    try {
+      const parsed = JSON.parse(project?.partner_ids || '[]');
+      const partnerIds = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+      if (partnerIds.length > 0) return partnerIds;
+    } catch (_) {}
+
+    return project?.partner_id ? [project.partner_id] : [];
   },
 
   _getInitials(name) {

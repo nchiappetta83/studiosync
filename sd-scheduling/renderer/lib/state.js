@@ -8,6 +8,8 @@ const AppState = {
   _batchDepth: 0,
   _pendingKeys: new Set(),
   _tasksByStaffCache: null,
+  _refreshPromise: null,
+  _refreshQueued: false,
   _data: {
     currentUser: null,
     users: [],
@@ -16,6 +18,8 @@ const AppState = {
     pto: [],
     businessRoles: [],
     customPriorities: [],
+    priorityMenuOrder: [],
+    priorityDisplayStyles: {},
     selectedStaffId: 'all',  // 'all', a user ID, or an array of user IDs
     selectedPartnerId: null, // null or a partner user ID (filters projects)
     projectTab: 'active',    // 'active', 'inactive', 'all'
@@ -100,7 +104,7 @@ const AppState = {
   },
 
   _invalidateCaches(key) {
-    if (['users', 'tasks', 'projects', 'selectedStaffId', 'selectedPartnerId'].includes(key)) {
+    if (['users', 'tasks', 'projects', 'customPriorities', 'priorityMenuOrder', 'selectedStaffId', 'selectedPartnerId'].includes(key)) {
       this._tasksByStaffCache = null;
     }
   },
@@ -109,34 +113,65 @@ const AppState = {
    * Reload all data from the backend
    */
   async refresh() {
-    const [users, tasks, projects, pto, currentUser, businessRoles, customPriorities] = await Promise.all([
-      window.api.getUsers(),
-      window.api.getTasks({}),
-      window.api.getProjects(),
-      window.api.getPTO(),
-      window.api.getCurrentUser(),
-      window.api.getBusinessRoles(),
-      window.api.getCustomPriorities()
-    ]);
+    if (this._refreshPromise) {
+      this._refreshQueued = true;
+      await this._refreshPromise;
+      if (this._refreshQueued) {
+        this._refreshQueued = false;
+        return this.refresh();
+      }
+      return;
+    }
 
-    this.batch(() => {
-      this._data.users = users;
-      this._data.tasks = tasks;
-      this._data.projects = projects;
-      this._data.pto = pto;
-      this._data.currentUser = currentUser;
-      this._data.businessRoles = businessRoles;
-      this._data.customPriorities = customPriorities;
-      this._tasksByStaffCache = null;
+    this._refreshPromise = (async () => {
+      const [users, tasks, projects, pto, currentUser, businessRoles, customPriorities, priorityMenuOrder, priorityDisplayStyles] = await Promise.all([
+        window.api.getUsers(),
+        window.api.getTasks({}),
+        window.api.getProjects(),
+        window.api.getPTO(),
+        window.api.getCurrentUser(),
+        window.api.getBusinessRoles(),
+        window.api.getCustomPriorities(),
+        window.api.getPriorityMenuOrder(),
+        window.api.getPriorityDisplayStyles()
+      ]);
 
-      this._notify('users');
-      this._notify('tasks');
-      this._notify('projects');
-      this._notify('pto');
-      this._notify('currentUser');
-      this._notify('businessRoles');
-      this._notify('customPriorities');
-    });
+      this.batch(() => {
+        this._data.users = users;
+        this._data.tasks = tasks;
+        this._data.projects = projects;
+        this._data.pto = pto;
+        this._data.currentUser = currentUser;
+        this._data.businessRoles = businessRoles;
+        this._data.customPriorities = customPriorities;
+        this._data.priorityMenuOrder = Array.isArray(priorityMenuOrder) ? priorityMenuOrder : [];
+        this._data.priorityDisplayStyles = priorityDisplayStyles && typeof priorityDisplayStyles === 'object'
+          ? priorityDisplayStyles
+          : {};
+        this._tasksByStaffCache = null;
+
+        this._notify('users');
+        this._notify('tasks');
+        this._notify('projects');
+        this._notify('pto');
+        this._notify('currentUser');
+        this._notify('businessRoles');
+        this._notify('customPriorities');
+        this._notify('priorityMenuOrder');
+        this._notify('priorityDisplayStyles');
+      });
+    })();
+
+    try {
+      await this._refreshPromise;
+    } finally {
+      this._refreshPromise = null;
+    }
+
+    if (this._refreshQueued) {
+      this._refreshQueued = false;
+      return this.refresh();
+    }
   },
 
   // ── Helpers ──────────────────────────────────────────
@@ -184,8 +219,8 @@ const AppState = {
             const ac = a.confirmed ?? 1, bc = b.confirmed ?? 1;
             if (ac !== bc) return bc - ac;
             // Then by priority: 1-4 first (ascending), 0 (unset) after, -1 (W) last
-            const ap = this._prioritySortKey(a.priority);
-            const bp = this._prioritySortKey(b.priority);
+            const ap = this._prioritySortKey(a);
+            const bp = this._prioritySortKey(b);
             if (ap !== bp) return ap - bp;
             return a.sort_order - b.sort_order;
           })
@@ -271,13 +306,49 @@ const AppState = {
     return this._data.businessRoles.find(r => r.id === id);
   },
 
-  // Numbered priorities sort ascending, then custom (-2), then unset (0), then W (-1) always last.
-  _prioritySortKey(p) {
-    if (typeof p === 'number' && p >= 1) return p;
-    if (p === -2) return 500;
-    if (p === 0 || p === null || p === undefined) return 100; // unset after custom
-    if (p === -1) return 1000;            // W always last
-    return 150;
+  _prioritySortKey(task) {
+    const p = task?.priority;
+    const customPriorities = this._data.customPriorities || [];
+    const validTokens = [
+      'numbered',
+      ...customPriorities.map((item) => `custom:${item.id}`),
+      'wait',
+      'clear',
+    ];
+    const savedTokens = Array.isArray(this._data.priorityMenuOrder)
+      ? this._data.priorityMenuOrder
+      : [];
+    const orderedTokens = [];
+
+    for (const token of savedTokens) {
+      if (validTokens.includes(token) && !orderedTokens.includes(token)) {
+        orderedTokens.push(token);
+      }
+    }
+
+    for (const token of validTokens) {
+      if (!orderedTokens.includes(token)) {
+        orderedTokens.push(token);
+      }
+    }
+
+    let token = 'clear';
+    let offset = 0;
+
+    if (typeof p === 'number' && p >= 1) {
+      token = 'numbered';
+      offset = p;
+    } else if (p === -1) {
+      token = 'wait';
+    } else if (p === -2) {
+      const label = String(task?.priority_label || '').replace(/^cp:/, '');
+      const customPriority = customPriorities.find((item) => item.label === label);
+      token = customPriority ? `custom:${customPriority.id}` : 'clear';
+    }
+
+    const index = orderedTokens.indexOf(token);
+    const base = (index >= 0 ? index : orderedTokens.length) * 100;
+    return base + offset;
   },
 
   _matchesSelectedPartner(task, selectedPartnerId) {

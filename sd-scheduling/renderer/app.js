@@ -3,8 +3,98 @@
  * Handles setup flow, initialization, and component wiring.
  */
 
+const RendererLog = {
+  _bound: false,
+
+  bind() {
+    if (this._bound || !window.api?.writeLog) return;
+    this._bound = true;
+
+    const originals = {
+      error: console.error.bind(console),
+      warn: console.warn.bind(console),
+      log: console.log.bind(console),
+    };
+
+    const forward = (level, args) => {
+      const message = args.map((arg) => {
+        if (arg instanceof Error) return arg.stack || arg.message;
+        if (typeof arg === 'string') return arg;
+        try {
+          return JSON.stringify(arg);
+        } catch (_) {
+          return String(arg);
+        }
+      }).join(' ');
+
+      window.api.writeLog({
+        level,
+        message,
+        meta: { scope: 'renderer' },
+      }).catch(() => {});
+    };
+
+    console.error = (...args) => {
+      forward('error', args);
+      originals.error(...args);
+    };
+
+    console.warn = (...args) => {
+      forward('warn', args);
+      originals.warn(...args);
+    };
+
+    window.addEventListener('error', (event) => {
+      window.api.writeLog({
+        level: 'error',
+        message: 'renderer-window-error',
+        meta: {
+          scope: 'renderer',
+          message: event.message,
+          filename: event.filename,
+          lineno: event.lineno,
+          colno: event.colno,
+          error: event.error instanceof Error ? {
+            name: event.error.name,
+            message: event.error.message,
+            stack: event.error.stack,
+          } : event.error,
+        },
+      }).catch(() => {});
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      const reason = event.reason instanceof Error
+        ? {
+            name: event.reason.name,
+            message: event.reason.message,
+            stack: event.reason.stack,
+          }
+        : event.reason;
+
+      window.api.writeLog({
+        level: 'error',
+        message: 'renderer-unhandled-rejection',
+        meta: {
+          scope: 'renderer',
+          reason,
+        },
+      }).catch(() => {});
+    });
+
+    originals.log('Renderer logging initialized');
+  },
+};
+
+RendererLog.bind();
+
 const App = {
   _resizeClassTimer: null,
+  _backgroundRefreshTimer: null,
+  _backgroundRefreshPending: false,
+  _backgroundRefreshInFlight: false,
+  _backgroundRefreshReason: null,
+  _focusAttemptTimer: null,
 
   _nextFrame() {
     return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -14,7 +104,11 @@ const App = {
     await this._ensureApiBridge();
     this._initWindowChrome();
     this._bindResizePerfMode();
+    this._bindBackgroundRefreshGuards();
+    this._bindInputDiagnostics();
     this._initUpdatePrompt();
+    this._showAuthLoading();
+    await this._nextFrame();
 
     // Check if we have a saved config
     const config = await window.api.getConfig();
@@ -28,8 +122,13 @@ const App = {
     }
 
     // Listen for sync updates
-    window.api.onDataUpdated(() => {
-      AppState.refresh();
+    window.api.onDataUpdated((payload) => {
+      this._logDiagnostics('renderer-data-updated', {
+        reason: payload?.reason || 'unknown',
+        eventCount: payload?.eventCount || 0,
+        eventTypes: payload?.eventTypes || [],
+      });
+      this._queueBackgroundRefresh({ reason: payload?.reason || 'unknown' });
     });
 
     // Panel resizer
@@ -176,6 +275,221 @@ const App = {
     };
 
     window.addEventListener('resize', markResizing, { passive: true });
+  },
+
+  _bindBackgroundRefreshGuards() {
+    if (document.body.dataset.backgroundRefreshBound === 'true') return;
+    document.body.dataset.backgroundRefreshBound = 'true';
+
+    const tryFlush = () => {
+      if (!this._backgroundRefreshPending || this._shouldDeferBackgroundRefresh()) return;
+      this._queueBackgroundRefresh({ force: true });
+    };
+
+    document.addEventListener('focusout', () => {
+      setTimeout(tryFlush, 0);
+    }, true);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        tryFlush();
+      }
+    });
+
+    window.addEventListener('focus', tryFlush);
+  },
+
+  _bindInputDiagnostics() {
+    if (document.body.dataset.inputDiagnosticsBound === 'true') return;
+    document.body.dataset.inputDiagnosticsBound = 'true';
+
+    document.addEventListener('focusin', (event) => {
+      if (!this._isEditableElement(event.target)) return;
+      this._logDiagnostics('editable-focusin', this._captureInteractionContext({
+        target: this._describeElement(event.target),
+      }));
+    }, true);
+
+    document.addEventListener('focusout', (event) => {
+      if (!this._isEditableElement(event.target)) return;
+      this._logDiagnostics('editable-focusout', this._captureInteractionContext({
+        target: this._describeElement(event.target),
+      }));
+    }, true);
+
+    document.addEventListener('pointerdown', (event) => {
+      const editable = this._getEditableTarget(event.target);
+      if (!editable) return;
+
+      const targetSummary = this._describeElement(editable);
+      const point = { x: event.clientX, y: event.clientY };
+      this._logDiagnostics('editable-pointerdown', this._captureInteractionContext({
+        target: targetSummary,
+        point,
+      }));
+
+      if (this._isTextEntryElement(editable) && document.activeElement !== editable) {
+        requestAnimationFrame(() => {
+          if (!document.contains(editable) || document.activeElement === editable) return;
+          editable.focus({ preventScroll: true });
+          this._logDiagnostics('editable-focus-assisted', this._captureInteractionContext({
+            target: targetSummary,
+            point,
+          }));
+        });
+      }
+
+      clearTimeout(this._focusAttemptTimer);
+      this._focusAttemptTimer = setTimeout(() => {
+        const active = document.activeElement;
+        if (active === editable) return;
+
+        const topAtPoint = typeof document.elementFromPoint === 'function'
+          ? document.elementFromPoint(point.x, point.y)
+          : null;
+
+        this._logDiagnostics('editable-focus-missed', this._captureInteractionContext({
+          target: targetSummary,
+          point,
+          activeElement: this._describeElement(active),
+          topAtPoint: this._describeElement(topAtPoint),
+        }));
+      }, 180);
+    }, true);
+  },
+
+  _getEditableTarget(target) {
+    if (!(target instanceof Element)) return null;
+    const editable = target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable]');
+    return this._isEditableElement(editable) ? editable : null;
+  },
+
+  _isTextEntryElement(element) {
+    if (!element || !(element instanceof HTMLElement)) return false;
+    if (element.isContentEditable) return true;
+    if (element.tagName === 'TEXTAREA') return true;
+    if (element.tagName !== 'INPUT') return false;
+
+    const type = (element.getAttribute('type') || 'text').toLowerCase();
+    return !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file', 'date'].includes(type);
+  },
+
+  _isEditableElement(element) {
+    if (!element || !(element instanceof HTMLElement)) return false;
+    if (element.isContentEditable) return true;
+
+    const tag = element.tagName;
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (tag !== 'INPUT') return false;
+
+    const type = (element.getAttribute('type') || 'text').toLowerCase();
+    return !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'].includes(type);
+  },
+
+  _shouldDeferBackgroundRefresh() {
+    const active = document.activeElement;
+    return this._isEditableElement(active);
+  },
+
+  _armBackgroundRefreshRetry() {
+    clearTimeout(this._backgroundRefreshTimer);
+    this._backgroundRefreshTimer = setTimeout(() => {
+      if (this._backgroundRefreshPending) {
+        this._queueBackgroundRefresh({ reason: this._backgroundRefreshReason || 'retry' });
+      }
+    }, 900);
+  },
+
+  async _runBackgroundRefresh(reason = 'unknown') {
+    this._backgroundRefreshInFlight = true;
+    this._logDiagnostics('refresh-start', this._captureInteractionContext({ reason }));
+    try {
+      await AppState.refresh();
+    } finally {
+      this._backgroundRefreshInFlight = false;
+      this._logDiagnostics('refresh-complete', this._captureInteractionContext({ reason }));
+    }
+
+    if (this._backgroundRefreshPending) {
+      this._queueBackgroundRefresh({ reason: this._backgroundRefreshReason || 'pending-follow-up' });
+    }
+  },
+
+  _queueBackgroundRefresh(options = {}) {
+    const force = options.force === true;
+    const reason = options.reason || this._backgroundRefreshReason || 'unknown';
+    this._backgroundRefreshPending = true;
+    this._backgroundRefreshReason = reason;
+
+    if (!force && this._shouldDeferBackgroundRefresh()) {
+      this._logDiagnostics('refresh-deferred', this._captureInteractionContext({ reason }));
+      this._armBackgroundRefreshRetry();
+      return;
+    }
+
+    clearTimeout(this._backgroundRefreshTimer);
+
+    if (this._backgroundRefreshInFlight) {
+      this._logDiagnostics('refresh-queued-while-inflight', this._captureInteractionContext({ reason }));
+      return;
+    }
+
+    this._backgroundRefreshPending = false;
+    const nextReason = this._backgroundRefreshReason || reason;
+    this._backgroundRefreshReason = null;
+    this._runBackgroundRefresh(nextReason);
+  },
+
+  _captureInteractionContext(extra = {}) {
+    const visibleOverlays = Array.from(document.querySelectorAll('.dialog-overlay'))
+      .filter((overlay) => !overlay.classList.contains('hidden'))
+      .map((overlay) => overlay.id || overlay.className || 'dialog-overlay');
+
+    return {
+      activeElement: this._describeElement(document.activeElement),
+      editableActive: this._isEditableElement(document.activeElement),
+      documentHasFocus: typeof document.hasFocus === 'function' ? document.hasFocus() : true,
+      visibleOverlays,
+      pendingRefresh: this._backgroundRefreshPending,
+      refreshInFlight: this._backgroundRefreshInFlight,
+      ...extra,
+    };
+  },
+
+  _describeElement(element) {
+    if (!element || !(element instanceof Element)) return 'none';
+
+    const parts = [element.tagName.toLowerCase()];
+    if (element.id) parts.push(`#${element.id}`);
+
+    const classNames = typeof element.className === 'string'
+      ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 3)
+      : [];
+    if (classNames.length > 0) {
+      parts.push(`.${classNames.join('.')}`);
+    }
+
+    const type = element.getAttribute?.('type');
+    if (type) parts.push(`[type=${type}]`);
+    const role = element.getAttribute?.('role');
+    if (role) parts.push(`[role=${role}]`);
+    const dataId = element.getAttribute?.('data-task-id') || element.getAttribute?.('data-project-id');
+    if (dataId) parts.push(`[data=${dataId}]`);
+
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+      if (element.readOnly) parts.push('[readonly]');
+      if (element.disabled) parts.push('[disabled]');
+    }
+
+    return parts.join('');
+  },
+
+  _logDiagnostics(type, detail = {}) {
+    if (!window.api?.logDiagnostics) return;
+    window.api.logDiagnostics({
+      type,
+      ...detail,
+    }).catch(() => {});
   },
 
   _applyWindowState(state) {
@@ -338,8 +652,40 @@ const App = {
     });
   },
 
+  _showAuthLoading() {
+    window.api.setWindowMode('auth');
+    document.getElementById('setup-screen').classList.add('hidden');
+    document.getElementById('register-screen').classList.add('hidden');
+    document.getElementById('login-screen').classList.remove('hidden');
+    document.getElementById('app').classList.add('hidden');
+
+    const titleEl = document.getElementById('login-title');
+    const subtitleEl = document.getElementById('login-subtitle');
+    const loadingEl = document.getElementById('login-loading');
+    const formShell = document.getElementById('login-form-shell');
+    const helpEl = document.getElementById('login-help');
+    const usernameInput = document.getElementById('login-username');
+    const submitBtn = document.getElementById('login-submit');
+    const errorEl = document.getElementById('login-error');
+
+    if (titleEl) titleEl.textContent = 'Starting Dashboard';
+    if (subtitleEl) subtitleEl.textContent = 'Connecting to your shared workspace...';
+    if (loadingEl) loadingEl.classList.remove('hidden');
+    if (formShell) formShell.classList.add('hidden');
+    if (helpEl) helpEl.classList.add('hidden');
+    if (usernameInput) {
+      usernameInput.value = '';
+      usernameInput.disabled = true;
+    }
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Connecting...';
+    }
+    if (errorEl) errorEl.textContent = '';
+  },
+
   async _initializeWithConfig(sharedPath) {
-    const result = await window.api.initializeApp(sharedPath);
+    const result = await window.api.resumeApp(sharedPath);
 
     if (result.success && result.user) {
       await this._launchApp();
@@ -366,9 +712,26 @@ const App = {
     document.getElementById('login-screen').classList.remove('hidden');
     document.getElementById('app').classList.add('hidden');
 
+    const titleEl = document.getElementById('login-title');
+    const subtitleEl = document.getElementById('login-subtitle');
+    const loadingEl = document.getElementById('login-loading');
+    const formShell = document.getElementById('login-form-shell');
+    const helpEl = document.getElementById('login-help');
     const usernameInput = document.getElementById('login-username');
     const submitBtn = document.getElementById('login-submit');
     const errorEl = document.getElementById('login-error');
+
+    if (titleEl) titleEl.textContent = 'Sign In';
+    if (subtitleEl) subtitleEl.textContent = 'Enter your username to continue.';
+    if (loadingEl) loadingEl.classList.add('hidden');
+    if (formShell) formShell.classList.remove('hidden');
+    if (helpEl) helpEl.classList.remove('hidden');
+    usernameInput.disabled = false;
+    usernameInput.value = '';
+    usernameInput.placeholder = 'e.g. JSmith';
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Sign In';
+    errorEl.textContent = '';
 
     async function attemptLogin() {
       const username = usernameInput.value.trim().toLowerCase();
@@ -423,21 +786,17 @@ const App = {
   },
 
   async _checkWeeklyRollover() {
-    // Initialize rollover week tracking if first time
-    await window.api.initRolloverWeek();
+    const startupRollover = await window.api.consumeRolloverNotice();
+    if (startupRollover?.applied) {
+      Toast.show('Weekly rollover complete', 'success');
+      return;
+    }
 
     const result = await window.api.checkRollover();
-    if (result.needed && AppState.isAdmin()) {
-      const doRollover = confirm(
-        'A new week has started.\n\n' +
-        'This will mark all current tasks as "Last Week" (unconfirmed), clear PTO, and reset priorities.\n\n' +
-        'Proceed with weekly rollover?'
-      );
-      if (doRollover) {
-        await window.api.performRollover();
-        await AppState.refresh();
-        Toast.show('Weekly rollover complete', 'success');
-      }
+    if (result.needed) {
+      await window.api.performRollover();
+      await AppState.refresh();
+      Toast.show('Weekly rollover complete', 'success');
     }
   },
 

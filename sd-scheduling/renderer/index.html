@@ -3,10 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self';">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self';">
   <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="styles/layout.css">
   <link rel="stylesheet" href="styles/sidebar.css">
@@ -74,7 +71,7 @@
   </div>
 
   <!-- Login Screen -->
-  <div id="login-screen" class="setup-screen hidden">
+  <div id="login-screen" class="setup-screen">
     <div class="window-controls window-controls-floating" aria-label="Window Controls">
       <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
         <span class="window-control-icon minimize"></span>
@@ -95,12 +92,19 @@
         <div class="setup-brand-name">STUDIOSYNC</div>
         <div class="setup-brand-product">DASHBOARD</div>
       </div>
-      <h1 class="setup-title setup-title-auth">Sign In</h1>
-      <p class="setup-subtitle">Enter your username to continue.</p>
-      <div class="form-group">
-        <input type="text" id="login-username" class="input" placeholder="e.g. nchiappetta" autocomplete="off" spellcheck="false">
+      <h1 class="setup-title setup-title-auth" id="login-title">Starting Dashboard</h1>
+      <p class="setup-subtitle" id="login-subtitle">Connecting to your shared workspace...</p>
+      <div id="login-loading" class="auth-loading-indicator">
+        <div class="auth-loading-spinner" aria-hidden="true"></div>
+        <div class="auth-loading-copy">Loading your workspace…</div>
       </div>
-      <button id="login-submit" class="btn btn-primary auth-submit-btn">Sign In</button>
+      <div id="login-form-shell" class="auth-form-shell hidden">
+        <div class="form-group">
+          <input type="text" id="login-username" class="input" placeholder="e.g. JSmith" autocomplete="off" spellcheck="false" disabled>
+        </div>
+        <button id="login-submit" class="btn btn-primary auth-submit-btn" disabled>Connecting...</button>
+      </div>
+      <p id="login-help" class="auth-help-text hidden">Having trouble? Contact your office admin.</p>
       <p id="login-error" class="setup-error"></p>
     </div>
   </div>
@@ -168,6 +172,7 @@
         <div id="sync-indicator" class="sync-indicator" title="Synced">
           <div class="sync-dot"></div>
         </div>
+        <span id="sync-status-text" class="sync-status-text">Sync ready</span>
       </div>
       <div class="window-controls" aria-label="Window Controls">
         <button class="window-control-btn" data-window-action="minimize" title="Minimize" aria-label="Minimize">
@@ -219,9 +224,14 @@
               <button id="btn-add-task" class="btn btn-primary btn-sm partner-only">+ Add Task</button>
             </div>
           </div>
-          <div class="tasks-scroll" id="tasks-scroll">
-            <div class="tasks-container" id="tasks-container">
-              <!-- Task cards rendered by JS -->
+          <div class="tasks-scroll-row">
+            <div class="tasks-scroll" id="tasks-scroll">
+              <div class="tasks-container" id="tasks-container">
+                <!-- Task cards rendered by JS -->
+              </div>
+            </div>
+            <div class="staff-jump-rail hidden" id="tasks-staff-rail" aria-label="Jump to staff section">
+              <!-- Rendered by JS -->
             </div>
           </div>
         </div>

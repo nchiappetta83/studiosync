@@ -652,6 +652,37 @@
   flex-shrink: 0;
 }
 
+.settings-priority-line {
+  width: 22px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.settings-priority-line-numbered {
+  background: linear-gradient(90deg, var(--priority-1) 0%, var(--priority-2) 34%, var(--priority-3) 68%, var(--priority-4) 100%);
+  opacity: 0.88;
+}
+
+.settings-priority-clear {
+  width: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.settings-priority-built-in {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 .settings-path-group {
   margin-bottom: 20px;
 }
@@ -689,6 +720,86 @@
   flex: 1;
 }
 
+.dialog-checklist-shell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.dialog-checklist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px 10px;
+  border-bottom: 1px solid rgba(221, 227, 233, 0.95);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dialog-checklist-count {
+  color: var(--text-tertiary);
+}
+
+.dialog-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  max-height: 216px;
+  overflow-y: auto;
+}
+
+.dialog-checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(223, 229, 235, 0.96);
+  transition: border-color var(--duration), box-shadow var(--duration), transform var(--duration), background var(--duration);
+}
+
+.dialog-checklist-item:hover {
+  border-color: rgba(83, 74, 183, 0.22);
+  box-shadow: 0 10px 22px rgba(25, 35, 52, 0.06);
+  transform: translateY(-1px);
+}
+
+.dialog-checklist-item input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.dialog-checklist-copy {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.dialog-checklist-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dialog-checklist-empty {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding: 8px 2px;
+}
+
 .settings-about {
   padding: 24px 0;
 }
@@ -711,6 +822,96 @@
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.5;
+}
+
+.settings-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-status-card {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+}
+
+.settings-status-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.settings-status-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.settings-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+}
+
+.settings-status-row-warning {
+  border-color: rgba(212, 136, 58, 0.22);
+}
+
+.settings-status-row-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.settings-status-row-path {
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
+  line-height: 1.45;
+}
+
+.settings-status-pill {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-status-pill.success {
+  background: var(--priority-bg-3);
+  color: var(--priority-3);
+}
+
+.settings-status-pill.warning {
+  background: var(--priority-bg-2);
+  color: var(--priority-2);
+}
+
+.settings-status-pill.muted {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
 }
 
 .user-list-role.admin {

@@ -10,6 +10,7 @@ const ExportEngine = require('./export');
 const ExcelImport = require('./excelImport');
 const ExcelSync = require('./excelSync');
 const UpdateManager = require('./updateManager');
+const { createLogger } = require('./logger');
 
 let mainWindow = null;
 let db = null;
@@ -22,12 +23,21 @@ let lockToken = null;
 let updateManager = null;
 let excelSync = null;
 let excelWriteQueue = Promise.resolve();
+let startupInitPromise = null;
+let startupInitPath = null;
+let pendingStartupRolloverNotice = null;
+let logger = null;
+let runtimeStatus = {
+  lastSyncAt: null,
+  lastExcelWriteAt: null,
+  lastExcelWriteError: null,
+};
 
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
 
 const WINDOW_MODES = {
-  auth: { width: 760, height: 620, minWidth: 700, minHeight: 560 },
+  auth: { width: 500, height: 600, minWidth: 500, minHeight: 560 },
   main: { width: 1400, height: 900, minWidth: 1100, minHeight: 700 }
 };
 
@@ -156,6 +166,32 @@ function ensureAppDataDir() {
 }
 
 const APP_DATA_DIR = ensureAppDataDir();
+logger = createLogger({ appDataDir: APP_DATA_DIR, appName: 'sd-scheduling' });
+logger.attachConsole();
+logger.attachProcessHandlers();
+const DIAGNOSTICS_DIR = path.join(APP_DATA_DIR, 'diagnostics');
+const INPUT_DIAGNOSTICS_PATH = path.join(DIAGNOSTICS_DIR, 'dashboard-input-diagnostics.log');
+
+function getInputDiagnosticsPath() {
+  fs.mkdirSync(DIAGNOSTICS_DIR, { recursive: true });
+  return INPUT_DIAGNOSTICS_PATH;
+}
+
+function appendInputDiagnostics(entry = {}) {
+  try {
+    const targetPath = getInputDiagnosticsPath();
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 2 * 1024 * 1024) {
+      fs.writeFileSync(targetPath, '');
+    }
+
+    const payload = {
+      timestamp: new Date().toISOString(),
+      ...entry,
+    };
+
+    fs.appendFileSync(targetPath, `${JSON.stringify(payload)}\n`, 'utf-8');
+  } catch (_) {}
+}
 
 // ── Lock File ────────────────────────────────────────────
 // Prevents two people from opening the main app simultaneously.
@@ -304,6 +340,15 @@ function releaseLock() {
   lockFilePath = null;
 }
 
+function normalizeFsPath(targetPath) {
+  if (!targetPath) return '';
+  try {
+    return path.resolve(targetPath).replace(/\//g, '\\').toLowerCase();
+  } catch (_) {
+    return String(targetPath).replace(/\//g, '\\').toLowerCase();
+  }
+}
+
 // ── Config ───────────────────────────────────────────────
 
 function getConfigPath() {
@@ -429,9 +474,129 @@ function scheduleAutoExport() {
 /**
  * Notify the renderer that data changed and trigger auto-export.
  */
-function notifyDataChanged() {
-  if (mainWindow) mainWindow.webContents.send('data-updated');
+function notifyDataChanged(reason = 'unknown', meta = {}) {
+  appendInputDiagnostics({
+    scope: 'main',
+    type: 'data-updated',
+    reason,
+    ...meta,
+  });
+
+  if (mainWindow) {
+    mainWindow.webContents.send('data-updated', {
+      reason,
+      at: Date.now(),
+      ...meta,
+    });
+  }
   scheduleAutoExport();
+}
+
+function isNoteOnlyTaskUpdate(taskData = {}) {
+  const changedFields = [
+    'project_id',
+    'assigned_to',
+    'title',
+    'notes',
+    'priority',
+    'priority_label',
+    'due_date',
+    'completed',
+    'sort_order',
+    'confirmed',
+    'partner_id',
+    'category',
+  ].filter((key) => taskData[key] !== undefined);
+
+  return changedFields.length === 1 && changedFields[0] === 'notes';
+}
+
+function getPriorityMenuOrder() {
+  if (!db) return [];
+
+  const rawValue = db.getGlobalSetting('priority_menu_order');
+  if (!rawValue) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string' && item.trim()) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function setPriorityMenuOrder(order = []) {
+  if (!db) return [];
+
+  const normalized = Array.isArray(order)
+    ? order.filter((item) => typeof item === 'string' && item.trim())
+    : [];
+
+  db.setGlobalSetting('priority_menu_order', JSON.stringify(normalized));
+  return normalized;
+}
+
+function getPriorityDisplayStyles() {
+  if (!db) return {};
+
+  const rawValue = db.getGlobalSetting('priority_display_styles');
+  if (!rawValue) return {};
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function setPriorityDisplayStyles(styles = {}) {
+  if (!db) return {};
+
+  const normalized = styles && typeof styles === 'object' && !Array.isArray(styles)
+    ? styles
+    : {};
+
+  db.setGlobalSetting('priority_display_styles', JSON.stringify(normalized));
+  return normalized;
+}
+
+function getRuntimeStatus() {
+  const config = loadConfig() || {};
+  const sharedDrivePath = config.sharedDrivePath || null;
+  const excelPath = getExcelPath();
+  const exportPath = config.exportPath || null;
+  const updateFolderPath = db?.getUpdateFolderPath?.() || null;
+  const pendingUpdate = updateManager?.getPendingPrompt?.() || null;
+  const lastUpdateResult = updateManager?.getLastResult?.() || null;
+
+  return {
+    appVersion: app.getVersion(),
+    sharedDrivePath,
+    sharedDriveReachable: sharedDrivePath ? fs.existsSync(sharedDrivePath) : false,
+    excelPath,
+    excelReachable: excelPath ? fs.existsSync(excelPath) : false,
+    exportPath,
+    exportReachable: exportPath ? fs.existsSync(exportPath) : false,
+    updateFolderPath,
+    updateFolderReachable: updateFolderPath ? fs.existsSync(updateFolderPath) : false,
+    lastSyncAt: runtimeStatus.lastSyncAt,
+    lastExcelWriteAt: runtimeStatus.lastExcelWriteAt,
+    lastExcelWriteError: runtimeStatus.lastExcelWriteError,
+    updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
+    latestVersion: pendingUpdate?.latestVersion || lastUpdateResult?.latestVersion || null,
+  };
+}
+
+function emitRuntimeStatus() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('runtime-status-changed', getRuntimeStatus());
+  }
+}
+
+function markSyncActivity() {
+  runtimeStatus.lastSyncAt = new Date().toISOString();
+  emitRuntimeStatus();
 }
 
 function getExcelPath() {
@@ -471,6 +636,124 @@ function getExcelPath() {
   return null;
 }
 
+function getCurrentWeekStartString(date = new Date()) {
+  const current = new Date(date);
+  current.setHours(0, 0, 0, 0);
+
+  const day = current.getDay();
+  const diff = current.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(current.getFullYear(), current.getMonth(), diff);
+  const year = monday.getFullYear();
+  const month = String(monday.getMonth() + 1).padStart(2, '0');
+  const dayOfMonth = String(monday.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dayOfMonth}`;
+}
+
+function getPreviousWeekStartString(weekStr = getCurrentWeekStartString()) {
+  const currentWeek = new Date(`${weekStr}T00:00:00`);
+  currentWeek.setDate(currentWeek.getDate() - 7);
+  return getCurrentWeekStartString(currentWeek);
+}
+
+function hasSharedWeeklyRolloverEvent(weekStr) {
+  if (!sync?.eventsDir || !weekStr || !fs.existsSync(sync.eventsDir)) {
+    return false;
+  }
+
+  try {
+    const files = fs.readdirSync(sync.eventsDir)
+      .filter((file) => file.endsWith('.json') && file.includes('_weekly-rollover_'))
+      .sort()
+      .reverse();
+
+    for (const file of files) {
+      const filePath = path.join(sync.eventsDir, file);
+      const event = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      if (event?.type === 'weekly-rollover' && event?.data?.week === weekStr) {
+        return true;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to inspect weekly rollover events:', err.message);
+  }
+
+  return false;
+}
+
+function getWeeklyRolloverState() {
+  if (!db) {
+    return {
+      needed: false,
+      currentWeek: null,
+      lastWeek: null,
+      initialized: false,
+      inferredFromExistingTasks: false,
+      recoveryNeeded: false,
+    };
+  }
+
+  const currentWeek = getCurrentWeekStartString();
+  let lastWeek = db.getLastRolloverWeek();
+  let initialized = false;
+  let inferredFromExistingTasks = false;
+
+  if (!lastWeek) {
+    initialized = true;
+    inferredFromExistingTasks = db.getTaskCount() > 0;
+    lastWeek = inferredFromExistingTasks ? getPreviousWeekStartString(currentWeek) : currentWeek;
+    db.setLastRolloverWeek(lastWeek);
+  }
+
+  const sharedRolloverRecorded = hasSharedWeeklyRolloverEvent(currentWeek);
+  const recoveryNeeded = (
+    lastWeek === currentWeek
+    && !sharedRolloverRecorded
+    && db.hasTasksOlderThanWeek(currentWeek)
+  );
+
+  return {
+    needed: lastWeek !== currentWeek || recoveryNeeded,
+    currentWeek,
+    lastWeek,
+    initialized,
+    inferredFromExistingTasks,
+    recoveryNeeded,
+  };
+}
+
+function performWeeklyRollover({ force = false, source = 'manual' } = {}) {
+  const state = getWeeklyRolloverState();
+  if (!db) return { applied: false, source, ...state };
+  if (!force && !state.needed) return { applied: false, source, ...state };
+
+  db.performWeeklyRollover(state.currentWeek);
+  db.setLastRolloverWeek(state.currentWeek);
+  db.optimizeStorage({ vacuum: true });
+
+  if (sync) {
+    sync.pushEvent('weekly-rollover', { week: state.currentWeek });
+    sync.pushEvent('setting-updated', {
+      key: 'rollover_week',
+      value: state.currentWeek,
+    });
+  }
+
+  const result = {
+    applied: true,
+    source,
+    currentWeek: state.currentWeek,
+    previousWeek: state.lastWeek,
+    initialized: state.initialized,
+    inferredFromExistingTasks: state.inferredFromExistingTasks,
+  };
+
+  if (source === 'startup') {
+    pendingStartupRolloverNotice = result;
+  }
+
+  return result;
+}
+
 async function applyProjectEventsToExcel(events = []) {
   const excelPath = getExcelPath();
   if (!excelSync || !excelPath || !fs.existsSync(excelPath)) return false;
@@ -483,15 +766,45 @@ async function applyProjectEventsToExcel(events = []) {
   const runWrite = async () => {
     try {
       await excelSync.applyEvents(excelPath, relevantEvents);
+      runtimeStatus.lastExcelWriteAt = new Date().toISOString();
+      runtimeStatus.lastExcelWriteError = null;
+      emitRuntimeStatus();
       return true;
     } catch (err) {
       console.error('Excel write-back failed:', err.message);
+      runtimeStatus.lastExcelWriteError = err.message;
+      emitRuntimeStatus();
       return false;
     }
   };
 
   excelWriteQueue = excelWriteQueue.then(runWrite, runWrite);
   return excelWriteQueue;
+}
+
+async function handlePulledSyncEvents(events = [], options = {}) {
+  if (!Array.isArray(events) || events.length === 0) return [];
+  const {
+    skipProjectExcelSync = false,
+    skipUpdateSyncHandling = false,
+  } = options;
+
+  markSyncActivity();
+  if (!skipProjectExcelSync) {
+    await applyProjectEventsToExcel(events);
+  }
+  if (updateManager && !skipUpdateSyncHandling) {
+    try {
+      await updateManager.handleSyncEvents(events);
+    } catch (err) {
+      console.error('Update sync handling failed:', err.message);
+    }
+  }
+  notifyDataChanged('sync-pull', {
+    eventCount: events.length,
+    eventTypes: [...new Set(events.map((event) => event?.type).filter(Boolean))],
+  });
+  return events;
 }
 
 function emitUpdatePrompt(result) {
@@ -521,6 +834,119 @@ function applyWindowMode(modeName = 'main') {
   mainWindow.center();
   emitWindowState();
   return true;
+}
+
+function scheduleStartupUpdateCheck() {
+  if (!updateManager) return;
+  setTimeout(() => {
+    updateManager.checkForUpdates({ promptIfAvailable: true }).catch((err) => {
+      console.error('Startup update check failed:', err.message);
+    });
+  }, 0);
+}
+
+async function runStartupExcelRefresh(config) {
+  if (!config?.excelPath || !fs.existsSync(config.excelPath) || !db) return;
+
+  try {
+    const importer = new ExcelImport(db);
+    const result = await importer.import(config.excelPath);
+    if (result.imported > 0 || result.updated > 0) {
+      console.log(`Excel auto-refresh: ${result.imported} new, ${result.updated} updated`);
+      notifyDataChanged('startup-excel-refresh', {
+        imported: result.imported || 0,
+        updated: result.updated || 0,
+      });
+    }
+  } catch (excelErr) {
+    console.error('Excel auto-refresh failed:', excelErr.message);
+  }
+}
+
+async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = false } = {}) {
+  const normalizedPath = normalizeFsPath(resolvedSharedPath);
+
+  if (db && auth && sync && normalizeFsPath(sync.sharedDrivePath) === normalizedPath) {
+    if (runExcelRefresh) {
+      const config = loadConfig() || {};
+      await runStartupExcelRefresh(config);
+    }
+    return { user: null };
+  }
+
+  if (startupInitPromise && startupInitPath === normalizedPath) {
+    return startupInitPromise;
+  }
+
+  startupInitPath = normalizedPath;
+  startupInitPromise = (async () => {
+    pendingStartupRolloverNotice = null;
+
+    if (!switchToSharedLock(resolvedSharedPath)) {
+      throw new Error('StudioSync is already open for this shared folder on another machine.');
+    }
+
+    if (sync) sync.stopPolling();
+    if (db) {
+      try {
+        db.close();
+      } catch (_) {}
+    }
+
+    const localDbPath = getLocalDbPath();
+    db = new Database(localDbPath);
+    db.initialize();
+    excelSync = new ExcelSync(db);
+    auth = new Auth(db);
+
+    sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'scheduling');
+    const originalPushEvent = sync.pushEvent.bind(sync);
+    sync.pushEvent = (type, data) => {
+      const result = originalPushEvent(type, data);
+      markSyncActivity();
+      return result;
+    };
+    const initialEvents = sync.initialize();
+    markSyncActivity();
+    await handlePulledSyncEvents(initialEvents, {
+      skipProjectExcelSync: true,
+      skipUpdateSyncHandling: true,
+    });
+
+    const rolloverResult = performWeeklyRollover({ source: 'startup' });
+    if (rolloverResult.applied) {
+      notifyDataChanged('startup-rollover', { source: 'startup' });
+    }
+
+    sync.startPolling(async (events) => {
+      if (!events.length) {
+        markSyncActivity();
+        return;
+      }
+      await handlePulledSyncEvents(events);
+    });
+
+    if (updateManager) {
+      updateManager.start();
+      scheduleStartupUpdateCheck();
+    }
+
+    emitRuntimeStatus();
+
+    if (runExcelRefresh) {
+      const config = loadConfig() || {};
+      await runStartupExcelRefresh(config);
+    }
+
+    return { user: null };
+  })();
+
+  try {
+    return await startupInitPromise;
+  } finally {
+    startupInitPromise = null;
+    startupInitPath = null;
+  }
 }
 
 function createWindow() {
@@ -553,6 +979,23 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logger?.error('renderer-process-gone', details);
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    logger?.error('renderer-did-fail-load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    });
+  });
+
+  mainWindow.on('unresponsive', () => {
+    logger?.warn('window-unresponsive');
+  });
+
   mainWindow.webContents.once('dom-ready', () => {
     showWindow();
   });
@@ -578,6 +1021,28 @@ function createWindow() {
 // ── IPC Handlers ──────────────────────────────────────────
 
 function registerIPC() {
+  ipcMain.handle('get-log-paths', () => logger?.getLogPaths() || null);
+  ipcMain.handle('write-log', (_e, entry) => {
+    const level = String(entry?.level || 'info').toLowerCase();
+    const message = entry?.message || entry?.type || 'renderer-log';
+    const meta = entry?.meta || entry;
+
+    if (level === 'error') logger?.error(message, meta);
+    else if (level === 'warn') logger?.warn(message, meta);
+    else if (level === 'debug') logger?.debug(message, meta);
+    else logger?.info(message, meta);
+    return true;
+  });
+
+  ipcMain.handle('get-diagnostics-path', () => getInputDiagnosticsPath());
+  ipcMain.handle('log-diagnostics', (_e, entry) => {
+    appendInputDiagnostics({
+      scope: 'renderer',
+      ...(entry && typeof entry === 'object' ? entry : { message: String(entry || '') }),
+    });
+    return true;
+  });
+
   // Config
   ipcMain.handle('get-config', () => loadConfig());
   ipcMain.handle('save-config', (_e, config) => {
@@ -607,6 +1072,7 @@ function registerIPC() {
       await updateManager.checkForUpdates({ promptIfAvailable: true, forcePrompt: true });
     }
     notifyDataChanged();
+    emitRuntimeStatus();
     return savedPath;
   });
 
@@ -672,6 +1138,8 @@ function registerIPC() {
     return { isMaximized: mainWindow.isMaximized() };
   });
 
+  ipcMain.handle('get-runtime-status', () => getRuntimeStatus());
+
   ipcMain.handle('set-window-mode', (_e, modeName) => {
     return applyWindowMode(modeName);
   });
@@ -695,40 +1163,28 @@ function registerIPC() {
       const config = { ...existingConfig, sharedDrivePath: resolvedSharedPath };
       saveConfig(config);
 
-      if (!switchToSharedLock(resolvedSharedPath)) {
-        return { success: false, error: 'StudioSync is already open for this shared folder on another machine.' };
+      const { user } = await initializeSharedRuntime(resolvedSharedPath);
+
+      return { success: true, user };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('resume-app', async (_e, sharedPath) => {
+    try {
+      const inspection = inspectSharedDrivePath(sharedPath, { allowEmpty: true });
+      if (!inspection.valid) {
+        return { success: false, error: inspection.reason };
       }
 
-      // Initialize database
-      const localDbPath = getLocalDbPath();
-      db = new Database(localDbPath);
-      db.initialize();
-      excelSync = new ExcelSync(db);
-
-      // Initialize auth
-      auth = new Auth(db);
-      const user = null;
-
-      // Initialize sync
-      sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'scheduling');
-      sync.initialize();
-
-      // Start polling
-      sync.startPolling(async (events) => {
-        await applyProjectEventsToExcel(events);
-        if (updateManager) {
-          updateManager.handleSyncEvents(events).catch((err) => {
-            console.error('Update sync handling failed:', err.message);
-          });
-        }
-        notifyDataChanged();
-      });
-
-      if (updateManager) {
-        updateManager.start();
-        await updateManager.checkForUpdates({ promptIfAvailable: true });
+      const resolvedSharedPath = inspection.resolvedPath;
+      const existingConfig = loadConfig() || {};
+      if (existingConfig.sharedDrivePath !== resolvedSharedPath) {
+        saveConfig({ ...existingConfig, sharedDrivePath: resolvedSharedPath });
       }
 
+      const { user } = await initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh: true });
       return { success: true, user };
     } catch (err) {
       return { success: false, error: err.message };
@@ -752,6 +1208,7 @@ function registerIPC() {
       config.loggedInUsername = username;
       saveConfig(config);
       refreshLockMetadata();
+      emitRuntimeStatus();
       return user;
     }
     return null;
@@ -764,6 +1221,7 @@ function registerIPC() {
     delete config.loggedInUsername;
     saveConfig(config);
     refreshLockMetadata();
+    emitRuntimeStatus();
     return true;
   });
 
@@ -851,6 +1309,33 @@ function registerIPC() {
     return db.getCustomPriorities();
   });
 
+  ipcMain.handle('get-priority-menu-order', () => getPriorityMenuOrder());
+  ipcMain.handle('get-priority-display-styles', () => getPriorityDisplayStyles());
+
+  ipcMain.handle('set-priority-menu-order', (_e, order) => {
+    const nextOrder = setPriorityMenuOrder(order);
+    if (sync) {
+      sync.pushEvent('setting-updated', {
+        key: 'priority_menu_order',
+        value: JSON.stringify(nextOrder),
+      });
+    }
+    notifyDataChanged();
+    return nextOrder;
+  });
+
+  ipcMain.handle('set-priority-display-styles', (_e, styles) => {
+    const nextStyles = setPriorityDisplayStyles(styles);
+    if (sync) {
+      sync.pushEvent('setting-updated', {
+        key: 'priority_display_styles',
+        value: JSON.stringify(nextStyles),
+      });
+    }
+    notifyDataChanged('priority-display-styles-updated');
+    return nextStyles;
+  });
+
   ipcMain.handle('create-custom-priority', (_e, data) => {
     if (!db) return null;
     const priority = db.createCustomPriority(data);
@@ -891,17 +1376,34 @@ function registerIPC() {
 
   ipcMain.handle('create-task', (_e, taskData) => {
     if (!db) return null;
-    const task = db.createTask(taskData);
+    const normalizedTaskData = { ...taskData };
+    if (normalizedTaskData.completed !== undefined && normalizedTaskData.status === undefined) {
+      normalizedTaskData.status = normalizedTaskData.completed ? 'complete' : 'not_started';
+    }
+    const task = db.createTask(normalizedTaskData);
     if (sync) sync.pushEvent('task-created', task);
-    notifyDataChanged();
+    notifyDataChanged('task-created', { taskId: task.id });
     return task;
   });
 
   ipcMain.handle('update-task', (_e, taskData) => {
     if (!db) return null;
-    const task = db.updateTask(taskData);
+    const normalizedTaskData = { ...taskData };
+    if (normalizedTaskData.completed !== undefined && normalizedTaskData.status === undefined) {
+      normalizedTaskData.status = normalizedTaskData.completed ? 'complete' : 'not_started';
+    }
+    const task = db.updateTask(normalizedTaskData);
     if (sync) sync.pushEvent('task-updated', task);
-    notifyDataChanged();
+    if (isNoteOnlyTaskUpdate(normalizedTaskData)) {
+      appendInputDiagnostics({
+        scope: 'main',
+        type: 'task-note-save',
+        taskId: task.id,
+      });
+      scheduleAutoExport();
+    } else {
+      notifyDataChanged('task-updated', { taskId: task.id });
+    }
     return task;
   });
 
@@ -909,7 +1411,7 @@ function registerIPC() {
     if (!db) return false;
     db.deleteTask(taskId);
     if (sync) sync.pushEvent('task-deleted', { id: taskId });
-    notifyDataChanged();
+    notifyDataChanged('task-deleted', { taskId });
     return true;
   });
 
@@ -991,7 +1493,7 @@ function registerIPC() {
     const project = db.createProject(data);
     if (sync) sync.pushEvent('project-created', project);
     await applyProjectEventsToExcel([{ type: 'project-created', data: project }]);
-    notifyDataChanged();
+    notifyDataChanged('project-created', { projectId: project.id });
     return project;
   });
 
@@ -1009,7 +1511,10 @@ function registerIPC() {
         }
       : project;
     await applyProjectEventsToExcel([{ type: 'project-updated', data: excelPayload }]);
-    notifyDataChanged();
+    notifyDataChanged('project-updated', {
+      projectId: project.id,
+      fields: Object.keys(data).filter((key) => key !== 'id'),
+    });
     return project;
   });
 
@@ -1022,7 +1527,7 @@ function registerIPC() {
       : { id: projectId };
     if (sync) sync.pushEvent('project-deleted', payload);
     await applyProjectEventsToExcel([{ type: 'project-deleted', data: payload }]);
-    notifyDataChanged();
+    notifyDataChanged('project-deleted', { projectId });
     return true;
   });
 
@@ -1041,7 +1546,7 @@ function registerIPC() {
     if (!db) return null;
     const result = db.upsertProjectNotes(data);
     if (sync) sync.pushEvent('project-notes-updated', data);
-    notifyDataChanged();
+    notifyDataChanged('project-notes-updated', { projectId: data.project_id });
     return result;
   });
 
@@ -1169,7 +1674,10 @@ function registerIPC() {
         }
       }
 
-      notifyDataChanged();
+      notifyDataChanged('manual-excel-refresh', {
+        imported: result.imported || 0,
+        updated: result.updated || 0,
+      });
       return result;
     } catch (err) {
       return { error: err.message };
@@ -1192,6 +1700,7 @@ function registerIPC() {
     saveConfig(config);
     // Trigger an immediate export if path was set
     if (exportPath) scheduleAutoExport();
+    emitRuntimeStatus();
     return true;
   });
 
@@ -1211,57 +1720,41 @@ function registerIPC() {
 
   // Weekly rollover
   ipcMain.handle('check-rollover', () => {
-    if (!db) return { needed: false };
-    const now = new Date();
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
-    const monday = new Date(now.getFullYear(), now.getMonth(), diff);
-    const weekStr = monday.toISOString().split('T')[0];
-    const lastRollover = db.getLastRolloverWeek();
-    return { needed: lastRollover !== null && lastRollover !== weekStr, currentWeek: weekStr, lastWeek: lastRollover };
+    return getWeeklyRolloverState();
   });
 
   ipcMain.handle('perform-rollover', () => {
     if (!db) return false;
-    const now = new Date();
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(now.getFullYear(), now.getMonth(), diff);
-    const weekStr = monday.toISOString().split('T')[0];
-
-    db.performWeeklyRollover();
-    db.setLastRolloverWeek(weekStr);
-    db.optimizeStorage({ vacuum: true });
-
-    if (sync) sync.pushEvent('weekly-rollover', { week: weekStr });
-    notifyDataChanged();
-    return true;
+    const result = performWeeklyRollover({ force: true, source: 'manual' });
+    notifyDataChanged('manual-rollover', { source: 'manual' });
+    return result.applied;
   });
 
   ipcMain.handle('init-rollover-week', () => {
     if (!db) return false;
-    const lastWeek = db.getLastRolloverWeek();
-    if (lastWeek) return false; // Already initialized
-    const now = new Date();
-    const day = now.getDay();
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(now.getFullYear(), now.getMonth(), diff);
-    const weekStr = monday.toISOString().split('T')[0];
-    db.setLastRolloverWeek(weekStr);
-    return true;
+    return getWeeklyRolloverState().initialized;
+  });
+
+  ipcMain.handle('consume-rollover-notice', () => {
+    const notice = pendingStartupRolloverNotice;
+    pendingStartupRolloverNotice = null;
+    return notice;
   });
 
   ipcMain.handle('confirm-task', (_e, taskId) => {
     if (!db) return null;
     const task = db.confirmTask(taskId);
     if (sync) sync.pushEvent('task-confirmed', { id: taskId });
-    notifyDataChanged();
+    notifyDataChanged('task-confirmed', { taskId });
     return task;
   });
 
   // Manual sync trigger
-  ipcMain.handle('force-sync', () => {
-    if (sync) sync.pull();
+  ipcMain.handle('force-sync', async () => {
+    if (!sync) return true;
+    const events = sync.pull();
+    markSyncActivity();
+    await handlePulledSyncEvents(events);
     return true;
   });
 }
@@ -1269,6 +1762,7 @@ function registerIPC() {
 // ── App Lifecycle ─────────────────────────────��───────────
 
 app.whenReady().then(async () => {
+  logger?.info('app-ready', { pid: process.pid });
   // Acquire lock before doing anything else
   if (!acquireLock()) return;
 
@@ -1288,69 +1782,10 @@ app.whenReady().then(async () => {
     onPrompt: (result) => emitUpdatePrompt(result),
   });
 
-  // Defer heavier auto-init work so the auth/setup window can paint immediately.
-  setTimeout(async () => {
-    const config = loadConfig();
-    if (!config || !config.sharedDrivePath) return;
-
-    try {
-      const inspection = inspectSharedDrivePath(config.sharedDrivePath, { allowEmpty: true });
-      if (!inspection.valid) throw new Error(inspection.reason);
-
-      const localDbPath = getLocalDbPath();
-      db = new Database(localDbPath);
-      db.initialize();
-      excelSync = new ExcelSync(db);
-      auth = new Auth(db);
-      if (config.loggedInUsername) {
-        auth.setUsername(config.loggedInUsername);
-        if (!auth.getCurrentUser()) {
-          delete config.loggedInUsername;
-          saveConfig(config);
-          auth.setUsername(null);
-        }
-      }
-      const resolvedSharedPath = inspection.resolvedPath;
-      if (resolvedSharedPath !== config.sharedDrivePath) {
-        config.sharedDrivePath = resolvedSharedPath;
-        saveConfig(config);
-      }
-
-      sync = new SyncEngine(db, resolvedSharedPath, config.loggedInUsername || 'unknown', 'scheduling');
-      sync.initialize();
-      sync.startPolling(async (events) => {
-        await applyProjectEventsToExcel(events);
-        if (updateManager) {
-          updateManager.handleSyncEvents(events).catch((err) => {
-            console.error('Update sync handling failed:', err.message);
-          });
-        }
-        notifyDataChanged();
-      });
-      if (updateManager) {
-        updateManager.start();
-        await updateManager.checkForUpdates({ promptIfAvailable: true });
-      }
-
-      // Auto-refresh projects from Excel if path is saved
-      if (config.excelPath && fs.existsSync(config.excelPath)) {
-        try {
-          const importer = new ExcelImport(db);
-          const result = await importer.import(config.excelPath);
-          if (result.imported > 0 || result.updated > 0) {
-            console.log(`Excel auto-refresh: ${result.imported} new, ${result.updated} updated`);
-          }
-        } catch (excelErr) {
-          console.error('Excel auto-refresh failed:', excelErr.message);
-        }
-      }
-    } catch (err) {
-      console.error('Auto-init failed:', err.message);
-    }
-  }, 0);
 });
 
 app.on('window-all-closed', () => {
+  logger?.info('window-all-closed');
   if (updateManager) updateManager.stop();
   if (sync) sync.stopPolling();
   if (db) db.close();
@@ -1359,6 +1794,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  logger?.info('before-quit');
   releaseLock();
 });
 

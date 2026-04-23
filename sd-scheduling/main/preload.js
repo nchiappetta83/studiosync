@@ -16,9 +16,11 @@ contextBridge.exposeInMainWorld('api', {
   closeWindow:      ()          => ipcRenderer.invoke('window-close'),
   focusWindow:      ()          => ipcRenderer.invoke('window-focus'),
   getWindowState:   ()          => ipcRenderer.invoke('get-window-state'),
+  getRuntimeStatus: ()          => ipcRenderer.invoke('get-runtime-status'),
   setWindowMode:    (mode)      => ipcRenderer.invoke('set-window-mode', mode),
   selectFolder:     ()          => ipcRenderer.invoke('select-folder'),
   initializeApp:    (path)      => ipcRenderer.invoke('initialize-app', path),
+  resumeApp:        (path)      => ipcRenderer.invoke('resume-app', path),
 
   // Auth
   getCurrentUser:   ()          => ipcRenderer.invoke('get-current-user'),
@@ -44,6 +46,10 @@ contextBridge.exposeInMainWorld('api', {
   updateCustomPriority:   (data)  => ipcRenderer.invoke('update-custom-priority', data),
   deleteCustomPriority:   (id)    => ipcRenderer.invoke('delete-custom-priority', id),
   reorderCustomPriorities: (orders) => ipcRenderer.invoke('reorder-custom-priorities', orders),
+  getPriorityMenuOrder:   ()      => ipcRenderer.invoke('get-priority-menu-order'),
+  setPriorityMenuOrder:   (order) => ipcRenderer.invoke('set-priority-menu-order', order),
+  getPriorityDisplayStyles: ()    => ipcRenderer.invoke('get-priority-display-styles'),
+  setPriorityDisplayStyles: (styles) => ipcRenderer.invoke('set-priority-display-styles', styles),
 
   // Tasks
   getTasks:         (filters)   => ipcRenderer.invoke('get-tasks', filters),
@@ -97,15 +103,21 @@ contextBridge.exposeInMainWorld('api', {
   checkRollover:    ()          => ipcRenderer.invoke('check-rollover'),
   performRollover:  ()          => ipcRenderer.invoke('perform-rollover'),
   initRolloverWeek: ()          => ipcRenderer.invoke('init-rollover-week'),
+  consumeRolloverNotice: ()     => ipcRenderer.invoke('consume-rollover-notice'),
   confirmTask:      (id)        => ipcRenderer.invoke('confirm-task', id),
 
   // Sync
   forceSync:        ()          => ipcRenderer.invoke('force-sync'),
+  getLogPaths:      ()          => ipcRenderer.invoke('get-log-paths'),
+  writeLog:         (entry)     => ipcRenderer.invoke('write-log', entry),
+  getDiagnosticsPath: ()        => ipcRenderer.invoke('get-diagnostics-path'),
+  logDiagnostics:   (entry)     => ipcRenderer.invoke('log-diagnostics', entry),
 
   // Event listeners
   onDataUpdated:    (callback)  => {
-    ipcRenderer.on('data-updated', callback);
-    return () => ipcRenderer.removeListener('data-updated', callback);
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('data-updated', handler);
+    return () => ipcRenderer.removeListener('data-updated', handler);
   },
   onUpdateAvailable: (callback) => {
     const handler = (_event, payload) => callback(payload);
@@ -116,5 +128,10 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('window-state-changed', handler);
     return () => ipcRenderer.removeListener('window-state-changed', handler);
+  },
+  onRuntimeStatusChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('runtime-status-changed', handler);
+    return () => ipcRenderer.removeListener('runtime-status-changed', handler);
   }
 });

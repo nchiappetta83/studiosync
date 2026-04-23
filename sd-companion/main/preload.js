@@ -42,14 +42,22 @@ contextBridge.exposeInMainWorld('api', {
   getProjectNotes:    (projectId) => ipcRenderer.invoke('get-project-notes', projectId),
   getAllProjectNotes:  ()          => ipcRenderer.invoke('get-all-project-notes'),
   updateProjectNotes: (data)      => ipcRenderer.invoke('update-project-notes', data),
+  getProjectSharedNotes: (projectId) => ipcRenderer.invoke('get-project-shared-notes', projectId),
+  getAllProjectSharedNotes: ()       => ipcRenderer.invoke('get-all-project-shared-notes'),
+  createProjectSharedNote: (data)    => ipcRenderer.invoke('create-project-shared-note', data),
+  updateProjectSharedNote: (data)    => ipcRenderer.invoke('update-project-shared-note', data),
+  deleteProjectSharedNote: (id)      => ipcRenderer.invoke('delete-project-shared-note', id),
 
   // PTO
   getPTO:             ()          => ipcRenderer.invoke('get-pto'),
   getCustomPriorities: ()         => ipcRenderer.invoke('get-custom-priorities'),
+  getPriorityDisplayStyles: ()    => ipcRenderer.invoke('get-priority-display-styles'),
 
   // Config & setup
   getConfig:          ()          => ipcRenderer.invoke('get-config'),
   saveConfig:         (config)    => ipcRenderer.invoke('save-config', config),
+  getLaunchOnStartup: ()          => ipcRenderer.invoke('get-launch-on-startup'),
+  setLaunchOnStartup: (enabled)   => ipcRenderer.invoke('set-launch-on-startup', enabled),
   checkForUpdates:    ()          => ipcRenderer.invoke('check-for-updates'),
   getPendingUpdate:   ()          => ipcRenderer.invoke('get-pending-update'),
   dismissUpdate:      (version)   => ipcRenderer.invoke('dismiss-update', version),
@@ -58,12 +66,16 @@ contextBridge.exposeInMainWorld('api', {
   toggleMaximizeWindow: ()        => ipcRenderer.invoke('window-toggle-maximize'),
   closeWindow:        ()          => ipcRenderer.invoke('window-close'),
   getWindowState:     ()          => ipcRenderer.invoke('get-window-state'),
+  getRuntimeStatus:   ()          => ipcRenderer.invoke('get-runtime-status'),
+  openLink:           (value)     => ipcRenderer.invoke('open-link', value),
   setWindowMode:      (mode)      => ipcRenderer.invoke('set-window-mode', mode),
   selectFolder:       ()          => ipcRenderer.invoke('select-folder'),
   initializeApp:      (path)      => ipcRenderer.invoke('initialize-app', path),
 
   // Sync
   forceSync:          ()          => ipcRenderer.invoke('force-sync'),
+  getLogPaths:        ()          => ipcRenderer.invoke('get-log-paths'),
+  writeLog:           (entry)     => ipcRenderer.invoke('write-log', entry),
 
   // Data change listener
   onDataUpdated: (callback) => {
@@ -79,5 +91,10 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('window-state-changed', handler);
     return () => ipcRenderer.removeListener('window-state-changed', handler);
+  },
+  onRuntimeStatusChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('runtime-status-changed', handler);
+    return () => ipcRenderer.removeListener('runtime-status-changed', handler);
   },
 });

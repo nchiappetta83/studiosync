@@ -270,22 +270,33 @@
 
     <!-- Project Notes Dialog -->
     <div class="dialog-overlay hidden" id="project-notes-overlay">
-      <div class="dialog-card">
+      <div class="dialog-card project-notes-dialog-card">
         <div class="dialog-header">
-          <h3 class="dialog-title" id="project-notes-title">Project Notes</h3>
+          <div>
+            <h3 class="dialog-title" id="project-notes-title">Project Notes</h3>
+            <p class="dialog-subtitle project-notes-dialog-subtitle" id="project-notes-subtitle"></p>
+          </div>
           <button class="detail-close" id="project-notes-close">&times;</button>
         </div>
-        <div class="dialog-body">
-          <p class="dialog-subtitle" id="project-notes-subtitle"></p>
-          <textarea class="dialog-textarea" id="project-notes-textarea" placeholder="Add project notes here... These notes stay with the project even after tasks are completed." rows="8"></textarea>
+        <div class="dialog-body project-notes-dialog-body">
+          <div class="project-notes-layout">
+            <aside class="project-notes-sidebar">
+              <div class="project-notes-sidebar-header">
+                <div class="project-notes-sidebar-title">Shared Notes</div>
+                <button class="btn btn-accent btn-sm" id="project-notes-add" type="button">+ New Note</button>
+              </div>
+              <div class="project-notes-sidebar-list" id="project-notes-list"></div>
+            </aside>
+            <section class="project-notes-main" id="project-notes-main"></section>
+          </div>
         </div>
         <div class="dialog-footer">
-          <button class="btn btn-ghost" id="project-notes-cancel">Cancel</button>
-          <button class="btn btn-primary" id="project-notes-save">Save Notes</button>
+          <button class="btn btn-ghost" id="project-notes-cancel">Close</button>
+          <button class="btn btn-danger hidden" id="project-notes-delete" type="button">Delete Note</button>
+          <button class="btn btn-primary" id="project-notes-save" type="button">Save Note</button>
         </div>
       </div>
     </div>
-  </div>
 
     <!-- Add Subtask Dialog -->
     <div class="dialog-overlay hidden" id="add-subtask-overlay">
@@ -299,6 +310,10 @@
           <div class="form-group">
             <label>Action Item Title</label>
             <input type="text" class="input" id="add-subtask-title" placeholder="What needs to be done...">
+          </div>
+          <div class="form-group">
+            <label>Assign To</label>
+            <select class="input" id="add-subtask-assignee"></select>
           </div>
         </div>
         <div class="dialog-footer">

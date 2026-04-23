@@ -342,6 +342,51 @@ class Database {
       }
       this._setMeta('schema_version', '11');
     }
+
+    if (version < 12) {
+      const projectCols = this.db.pragma('table_info(projects)').map(c => c.name);
+      if (!projectCols.includes('folder_link')) {
+        this.db.exec(`ALTER TABLE projects ADD COLUMN folder_link TEXT NOT NULL DEFAULT ''`);
+      }
+
+      const taskCols = this.db.pragma('table_info(tasks)').map(c => c.name);
+      if (!taskCols.includes('status')) {
+        this.db.exec(`ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'not_started'`);
+        this.db.exec(`UPDATE tasks SET status = CASE WHEN completed = 1 THEN 'complete' ELSE 'not_started' END WHERE status IS NULL OR TRIM(status) = ''`);
+      }
+
+      this._setMeta('schema_version', '12');
+    }
+
+    if (version < 13) {
+      const projectNoteCols = this.db.pragma('table_info(project_notes)').map(c => c.name);
+      if (!projectNoteCols.includes('title')) {
+        this.db.exec(`ALTER TABLE project_notes ADD COLUMN title TEXT NOT NULL DEFAULT 'General'`);
+      }
+      if (!projectNoteCols.includes('created_by')) {
+        this.db.exec(`ALTER TABLE project_notes ADD COLUMN created_by TEXT`);
+      }
+      if (!projectNoteCols.includes('created_at')) {
+        this.db.exec(`ALTER TABLE project_notes ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))`);
+      }
+
+      this.db.exec(`
+        UPDATE project_notes
+        SET
+          title = CASE
+            WHEN title IS NULL OR TRIM(title) = '' THEN 'General'
+            ELSE title
+          END,
+          created_by = COALESCE(created_by, updated_by),
+          created_at = CASE
+            WHEN created_at IS NULL OR TRIM(created_at) = '' THEN COALESCE(updated_at, datetime('now'))
+            ELSE created_at
+          END
+      `);
+
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_project_notes_project_updated ON project_notes(project_id, updated_at DESC)`);
+      this._setMeta('schema_version', '13');
+    }
   }
 
   _getMetaInt(key, defaultVal) {
@@ -351,6 +396,37 @@ class Database {
 
   _setMeta(key, value) {
     this.db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, String(value));
+  }
+
+  _getCurrentTimestamp() {
+    return new Date().toISOString().slice(0, 19).replace('T', ' ');
+  }
+
+  _normalizeProjectNotePayload(data = {}) {
+    const now = this._getCurrentTimestamp();
+    return {
+      id: data.id || uuidv4(),
+      project_id: data.project_id,
+      title: String(data.title || '').trim() || 'Untitled Note',
+      notes: data.notes || '',
+      created_by: data.created_by || data.updated_by || null,
+      updated_by: data.updated_by || data.created_by || null,
+      created_at: String(data.created_at || now).trim() || now,
+      updated_at: String(data.updated_at || data.created_at || now).trim() || now,
+    };
+  }
+
+  _getLegacyProjectNote(projectId) {
+    return this.db.prepare(`
+      SELECT *
+      FROM project_notes
+      WHERE project_id = ?
+      ORDER BY
+        CASE WHEN lower(COALESCE(title, '')) = 'general' THEN 0 ELSE 1 END,
+        datetime(updated_at) DESC,
+        datetime(created_at) DESC
+      LIMIT 1
+    `).get(projectId) || null;
   }
 
   // ── Sync Meta ──────────────────────────────────────────
@@ -475,6 +551,9 @@ class Database {
   }
 
   updateCustomPriority(data) {
+    const existing = this.getCustomPriorityById(data.id);
+    if (!existing) return null;
+
     const fields = [];
     const values = [];
     for (const key of ['label', 'color', 'sort_order']) {
@@ -483,14 +562,43 @@ class Database {
         values.push(data[key]);
       }
     }
-    if (fields.length === 0) return this.getCustomPriorityById(data.id);
-    values.push(data.id);
-    this.db.prepare(`UPDATE custom_priorities SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    if (fields.length === 0) return existing;
+
+    const nextLabel = data.label !== undefined ? data.label : existing.label;
+    const transaction = this.db.transaction(() => {
+      values.push(data.id);
+      this.db.prepare(`UPDATE custom_priorities SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+      if (nextLabel && existing.label && nextLabel !== existing.label) {
+        this.db.prepare(`
+          UPDATE tasks
+          SET priority_label = ?
+          WHERE priority = -2 AND priority_label = ?
+        `).run(`cp:${nextLabel}`, `cp:${existing.label}`);
+      }
+    });
+
+    transaction();
     return this.getCustomPriorityById(data.id);
   }
 
   deleteCustomPriority(id) {
-    this.db.prepare('DELETE FROM custom_priorities WHERE id = ?').run(id);
+    const existing = this.getCustomPriorityById(id);
+    if (!existing) return;
+
+    const transaction = this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE tasks
+        SET priority = 0,
+            priority_label = NULL,
+            updated_at = datetime('now')
+        WHERE priority = -2 AND priority_label = ?
+      `).run(`cp:${existing.label}`);
+
+      this.db.prepare('DELETE FROM custom_priorities WHERE id = ?').run(id);
+    });
+
+    transaction();
   }
 
   reorderCustomPriorities(orders) {
@@ -582,6 +690,41 @@ class Database {
     return this.db.prepare('SELECT COUNT(*) as count FROM tasks WHERE assigned_to = ?').get(userId)?.count || 0;
   }
 
+  getTaskCount(filters = {}) {
+    let sql = 'SELECT COUNT(*) as count FROM tasks WHERE 1=1';
+    const params = [];
+
+    if (filters.assigned_to) {
+      sql += ' AND assigned_to = ?';
+      params.push(filters.assigned_to);
+    }
+    if (filters.project_id) {
+      sql += ' AND project_id = ?';
+      params.push(filters.project_id);
+    }
+    if (filters.completed !== undefined) {
+      sql += ' AND completed = ?';
+      params.push(filters.completed ? 1 : 0);
+    }
+
+    return this.db.prepare(sql).get(...params)?.count || 0;
+  }
+
+  hasTasksOlderThanWeek(weekStr) {
+    if (!weekStr) return false;
+
+    const row = this.db.prepare(`
+      SELECT 1
+      FROM tasks
+      WHERE date(created_at) < date(?)
+         OR date(updated_at) < date(?)
+         OR (due_date IS NOT NULL AND date(due_date) < date(?))
+      LIMIT 1
+    `).get(weekStr, weekStr, weekStr);
+
+    return Boolean(row);
+  }
+
   deleteUser(id) {
     this.db.prepare('UPDATE users SET active = 0 WHERE id = ?').run(id);
   }
@@ -620,8 +763,8 @@ class Database {
     ).get(data.assigned_to || null)?.m || 0;
 
     this.db.prepare(`
-      INSERT INTO tasks (id, project_id, assigned_to, created_by, title, notes, priority, due_date, sort_order, confirmed, partner_id, category)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, project_id, assigned_to, created_by, title, notes, priority, priority_label, due_date, sort_order, confirmed, partner_id, category, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.project_id || null,
@@ -630,11 +773,13 @@ class Database {
       data.title || '',
       data.notes || '',
       data.priority ?? 0,
+      data.priority_label || null,
       data.due_date || null,
       data.sort_order ?? maxOrder + 1,
       data.confirmed ?? 1,
       data.partner_id || null,
-      data.category || 'current'
+      data.category || 'current',
+      data.status || (data.completed ? 'complete' : 'not_started')
     );
 
     return this.getTaskById(id);
@@ -643,7 +788,7 @@ class Database {
   updateTask(data) {
     const fields = [];
     const values = [];
-    for (const key of ['project_id', 'assigned_to', 'title', 'notes', 'priority', 'priority_label', 'due_date', 'completed', 'sort_order', 'confirmed', 'partner_id', 'category']) {
+    for (const key of ['project_id', 'assigned_to', 'title', 'notes', 'priority', 'priority_label', 'due_date', 'completed', 'sort_order', 'confirmed', 'partner_id', 'category', 'status']) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
         values.push(data[key]);
@@ -797,8 +942,8 @@ class Database {
     const partnerData = this._normalizeProjectPartnerFields(data);
 
     this.db.prepare(`
-      INSERT INTO projects (id, client, name, status, category, notes, partner_id, partner_ids, partner_initials, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (id, client, name, status, category, notes, partner_id, partner_ids, partner_initials, folder_link, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.client || '',
@@ -809,6 +954,7 @@ class Database {
       partnerData.partner_id ?? null,
       partnerData.partner_ids ?? '[]',
       partnerData.partner_initials ?? '',
+      data.folder_link || '',
       data.sort_order ?? maxOrder + 1
     );
 
@@ -819,7 +965,7 @@ class Database {
     const fields = [];
     const values = [];
     const partnerData = this._normalizeProjectPartnerFields(data);
-    for (const key of ['client', 'name', 'status', 'category', 'notes', 'sort_order']) {
+    for (const key of ['client', 'name', 'status', 'category', 'notes', 'folder_link', 'sort_order']) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
         values.push(data[key]);
@@ -929,22 +1075,38 @@ class Database {
   // ── Weekly Rollover ──────────────────────────────────────
 
   getLastRolloverWeek() {
-    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'last_rollover_week'").get();
-    return row ? row.value : null;
+    return this.getGlobalSetting('rollover_week')
+      || this.db.prepare("SELECT value FROM meta WHERE key = 'last_rollover_week'").get()?.value
+      || null;
   }
 
   setLastRolloverWeek(weekStr) {
     this._setMeta('last_rollover_week', weekStr);
+    this.setGlobalSetting('rollover_week', weekStr);
   }
 
-  performWeeklyRollover() {
+  performWeeklyRollover(weekStr = null) {
     const transaction = this.db.transaction(() => {
-      // Delete subtasks belonging to completed tasks
-      this.db.exec(`DELETE FROM sub_tasks WHERE task_id IN (SELECT id FROM tasks WHERE completed = 1)`);
-      // Delete completed tasks (they're done, clean slate)
-      this.db.exec(`DELETE FROM tasks WHERE completed = 1`);
-      // Move remaining (incomplete) tasks to "last_week" and reset confirmed/priority
-      this.db.exec(`UPDATE tasks SET category = 'last_week', confirmed = 0, priority = 0`);
+      // Move all tasks into carry-over review state for the new week.
+      // Keep due dates only if they land in the new week or later.
+      this.db.prepare(`
+        UPDATE tasks
+        SET category = 'last_week',
+            confirmed = 0,
+            priority = CASE
+              WHEN priority = -2 THEN priority
+              ELSE 0
+            END,
+            priority_label = CASE
+              WHEN priority = -2 THEN priority_label
+              ELSE NULL
+            END,
+            due_date = CASE
+              WHEN ? IS NOT NULL AND due_date IS NOT NULL AND date(due_date) >= date(?) THEN due_date
+              WHEN ? IS NULL THEN due_date
+              ELSE NULL
+            END
+      `).run(weekStr, weekStr, weekStr);
       // Clear all PTO dates
       this.db.exec(`DELETE FROM staff_pto_dates`);
     });
@@ -952,34 +1114,145 @@ class Database {
   }
 
   confirmTask(taskId) {
-    this.db.prepare('UPDATE tasks SET confirmed = 1 WHERE id = ?').run(taskId);
+    this.db.prepare(`
+      UPDATE tasks
+      SET confirmed = 1,
+          completed = 0,
+          priority = CASE
+            WHEN priority = -2 THEN priority
+            ELSE 0
+          END,
+          priority_label = CASE
+            WHEN priority = -2 THEN priority_label
+            ELSE NULL
+          END,
+          category = 'current',
+          created_at = datetime('now'),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(taskId);
     return this.getTaskById(taskId);
   }
 
   // ── Project Notes (partner-authored, separate from Excel notes) ──
 
   getProjectNotes(projectId) {
-    return this.db.prepare('SELECT * FROM project_notes WHERE project_id = ?').get(projectId) || null;
+    return this._getLegacyProjectNote(projectId);
   }
 
   getAllProjectNotes() {
-    return this.db.prepare('SELECT * FROM project_notes').all();
+    const projectIds = this.db.prepare('SELECT DISTINCT project_id FROM project_notes').all();
+    return projectIds
+      .map(({ project_id }) => this._getLegacyProjectNote(project_id))
+      .filter(Boolean);
   }
 
   upsertProjectNotes(data) {
-    const existing = data.project_id ? this.getProjectNotes(data.project_id) : null;
+    if (!data?.project_id) return null;
+
+    const existing = this.db.prepare(`
+      SELECT *
+      FROM project_notes
+      WHERE project_id = ? AND lower(COALESCE(title, '')) = 'general'
+      ORDER BY datetime(updated_at) DESC
+      LIMIT 1
+    `).get(data.project_id);
+
     if (existing) {
-      this.db.prepare(`
-        UPDATE project_notes SET notes = ?, updated_by = ?, updated_at = datetime('now') WHERE project_id = ?
-      `).run(data.notes || '', data.updated_by || null, data.project_id);
-    } else {
-      const id = data.id || uuidv4();
-      this.db.prepare(`
-        INSERT INTO project_notes (id, project_id, notes, updated_by, updated_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-      `).run(id, data.project_id, data.notes || '', data.updated_by || null);
+      return this.updateProjectSharedNote({
+        id: existing.id,
+        title: existing.title || 'General',
+        notes: data.notes || '',
+        updated_by: data.updated_by || null,
+        updated_at: data.updated_at,
+      });
     }
-    return this.getProjectNotes(data.project_id);
+
+    return this.createProjectSharedNote({
+      id: data.id,
+      project_id: data.project_id,
+      title: data.title || 'General',
+      notes: data.notes || '',
+      created_by: data.created_by || data.updated_by || null,
+      updated_by: data.updated_by || null,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    });
+  }
+
+  getProjectSharedNotes(projectId) {
+    return this.db.prepare(`
+      SELECT *
+      FROM project_notes
+      WHERE project_id = ?
+      ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, lower(title) ASC
+    `).all(projectId);
+  }
+
+  getAllProjectSharedNotes() {
+    return this.db.prepare(`
+      SELECT *
+      FROM project_notes
+      ORDER BY project_id ASC, datetime(updated_at) DESC, datetime(created_at) DESC, lower(title) ASC
+    `).all();
+  }
+
+  getProjectSharedNoteById(id) {
+    return this.db.prepare('SELECT * FROM project_notes WHERE id = ?').get(id) || null;
+  }
+
+  createProjectSharedNote(data) {
+    const note = this._normalizeProjectNotePayload(data);
+    this.db.prepare(`
+      INSERT INTO project_notes (
+        id, project_id, title, notes, created_by, updated_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      note.id,
+      note.project_id,
+      note.title,
+      note.notes,
+      note.created_by,
+      note.updated_by,
+      note.created_at,
+      note.updated_at
+    );
+    return this.getProjectSharedNoteById(note.id);
+  }
+
+  updateProjectSharedNote(data) {
+    if (!data?.id) return null;
+    const existing = this.getProjectSharedNoteById(data.id);
+    if (!existing) return null;
+
+    const note = this._normalizeProjectNotePayload({
+      ...existing,
+      ...data,
+      project_id: existing.project_id,
+      created_by: existing.created_by,
+      created_at: existing.created_at,
+    });
+
+    this.db.prepare(`
+      UPDATE project_notes
+      SET title = ?, notes = ?, updated_by = ?, updated_at = ?
+      WHERE id = ?
+    `).run(note.title, note.notes, note.updated_by, note.updated_at, note.id);
+
+    return this.getProjectSharedNoteById(note.id);
+  }
+
+  deleteProjectSharedNote(id) {
+    this.db.prepare('DELETE FROM project_notes WHERE id = ?').run(id);
+    return true;
+  }
+
+  _upsertProjectSharedNote(data) {
+    const existing = data?.id ? this.getProjectSharedNoteById(data.id) : null;
+    if (existing) {
+      return this.updateProjectSharedNote(data);
+    }
+    return this.createProjectSharedNote(data);
   }
 
   // ── Bulk operations for sync ───────────────────────────
@@ -1005,6 +1278,9 @@ class Database {
       case 'pto-set':         return this._upsertPTO(event.data);
       case 'pto-cleared':     return this.clearPTO(event.data.user_id);
       case 'project-notes-updated': return this.upsertProjectNotes(event.data);
+      case 'project-shared-note-created': return this._upsertProjectSharedNote(event.data);
+      case 'project-shared-note-updated': return this._upsertProjectSharedNote(event.data);
+      case 'project-shared-note-deleted': return this.deleteProjectSharedNote(event.data.id);
       case 'role-created':    return this._upsertBusinessRole(event.data);
       case 'role-updated':    return this._upsertBusinessRole(event.data);
       case 'role-deleted':    return this.deleteBusinessRole(event.data.id);
@@ -1096,7 +1372,7 @@ class Database {
   }
 
   _applyRollover(data) {
-    this.performWeeklyRollover();
+    this.performWeeklyRollover(data?.week || null);
     if (data.week) this.setLastRolloverWeek(data.week);
   }
 }

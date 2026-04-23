@@ -1,6 +1,6 @@
 # SD Apps - File Structure
 
-> Current StudioSync repo layout, app identities, and release-flow notes are captured in the `Current Update (2026-04-03)` section near the end of this file.
+> Current StudioSync repo layout, app identities, and release-flow notes are captured in the `Current Update (2026-04-21)` section near the end of this file.
 
 ## Repository Root
 
@@ -25,6 +25,7 @@ sd-scheduling/
   package-lock.json
   main/
     index.js                             # Electron main process, IPC handlers, lock handling, startup flow
+    logger.js                            # Persistent JSON-line runtime logging and crash capture
     preload.js                           # Context bridge for renderer APIs
     database.js                          # SQLite schema and CRUD logic (11 migrations)
     sync.js                              # Shared-drive sync engine with validation and processed-file tracking
@@ -89,6 +90,9 @@ sd-scheduling/data/
   local.db                               # Dashboard SQLite database
   config.json                            # Shared path, user, Excel path, exports
   .lock                                  # Local fallback lock before shared path is set
+  logs/                                  # Daily StudioSync runtime logs
+  diagnostics/
+    dashboard-input-diagnostics.log      # Focus/input freeze tracing for Dashboard text fields
 ```
 
 Once the shared drive is configured, the dashboard also uses:
@@ -106,6 +110,7 @@ sd-companion/
   package-lock.json
   main/
     index.js                             # Electron main process, IPC handlers, notifications
+    logger.js                            # Persistent JSON-line runtime logging and crash capture
     preload.js                           # Context bridge for renderer APIs
     database.js                          # Shared schema plus private_tasks table (11 migrations)
     sync.js                              # Shared-drive sync engine with validation and processed-file tracking
@@ -142,6 +147,7 @@ Runtime data:
 sd-companion/data/
   local.db                               # Local synced cache plus private task data
   config.json                            # Shared path and remembered username
+  logs/                                  # Daily StudioSync MyTasks runtime logs
 ```
 
 ## Shared Drive
@@ -160,7 +166,7 @@ Notes:
 - Each app tracks processed filenames locally so delayed or previously failed files are not skipped.
 - Shared metadata such as the office-wide update folder is stored in synced database rows, not loose config files.
 
-## Current Update (2026-04-03)
+## Current Update (2026-04-21)
 
 This section is the current source of truth for the repository and release structure.
 
@@ -176,7 +182,12 @@ Current release flow:
 - The interactive installers are currently forced to current-user mode and default to `C:\SD Apps\StudioSync` and `C:\SD Apps\StudioSync MyTasks`.
 - Both apps now use compact branded sign-in windows before switching to the full shell.
 - Dashboard project creation follows the active Current/Future tab, and future projects can be moved into the current list from the project menu.
+- Both apps now keep persistent runtime logs under their local `data/logs` folders, and the dashboard also keeps a focused input diagnostics log.
+- Dashboard startup now resumes from the local cache on normal launches instead of rebuilding the cache every time.
+- Dashboard startup now waits for shared sync replay and Excel refresh before the auth/app shell opens, so Excel and partner-originated project changes are loaded first.
+- Weekly rollover now preserves custom priorities, clears only numbered priorities, and presents carried tasks with in-card Keep/Delete review actions.
 - MyTasks partner project cards now show assigned staff avatars, keep the header fixed while the list scrolls, and expose project actions through a right-click menu.
+- MyTasks refresh handling now coalesces overlapping sync-driven UI updates, and longer staff lists now scroll correctly inside their cards.
 - The SignPath configuration values below are retained for future signed-release restoration.
 
 Reserved SignPath values:

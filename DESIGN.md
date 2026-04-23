@@ -1,6 +1,6 @@
 ﻿# SD Apps â€” Design System & Architecture
 
-> Current StudioSync branding, app IDs, repo layout, and release-flow notes are captured in the `Current Update (2026-04-03)` section near the end of this file.
+> Current StudioSync branding, app IDs, repo layout, and release-flow notes are captured in the `Current Update (2026-04-21)` section near the end of this file.
 
 ## Overview
 
@@ -187,21 +187,23 @@ Muted tones for sidebar/user avatars:
 | IDs           | `uuid` v4                     |
 | Excel import  | `exceljs` (main app only)     |
 | Build         | `electron-builder`            |
-| Fonts         | Google Fonts (Rubik + Source Sans 3)|
+| Fonts         | Local font stack (Rubik + Source Sans 3 fallbacks, no network dependency)|
 
 ### Process Model
 Both apps use Electron's standard architecture:
-- **Main process** â€” Database, sync engine, auth, IPC handlers, window management, lock file (main app only)
-- **Preload script** â€” Bridges `window.api` via `contextBridge` (context isolation enabled)
-- **Renderer** â€” Vanilla JS, no framework. DOM manipulation with component modules
+- **Main process** - Database, sync engine, auth, IPC handlers, window management, lock file (main app only), and persistent runtime logging
+- **Preload script** - Bridges `window.api` via `contextBridge` (context isolation enabled)
+- **Renderer** - Vanilla JS, no framework. DOM manipulation with component modules, with renderer diagnostics forwarded into the main-process log pipeline
 
 ### Data Flow
 ```
-Renderer  â”€â”€(ipcRenderer.invoke)â”€â”€>  Main Process  â”€â”€>  SQLite DB
-                                         â”‚
-                                         â”œâ”€â”€>  SyncEngine.pushEvent()  â”€â”€>  Shared Drive (JSON files)
-                                         â”‚
-                                         â””â”€â”€>  BrowserWindow.send('data-updated')  â”€â”€>  Renderer refreshes
+Renderer  ->(ipcRenderer.invoke)->  Main Process  ->  SQLite DB
+                                    |
+                                    +->  SyncEngine.pushEvent()  ->  Shared Drive (JSON files)
+                                    |
+                                    +->  BrowserWindow.send('data-updated')  ->  Serialized renderer refreshes
+                                    |
+                                    `->  Logger  ->  local JSON-line log files
 ```
 
 ---
@@ -299,16 +301,17 @@ A lock file prevents concurrent dashboard access. Before the shared drive is con
 Three-panel layout with a draggable splitter between tasks and projects.
 
 ### Features
-- **Task Management** â€” Create, assign, prioritize, reorder (drag), confirm tasks
-- **Staff Sidebar** â€” Staff list with task counts, PTO badges, drag-drop assignment
-- **Project Panel** â€” Imported from Excel, draggable onto staff to create tasks, with new-project defaults tied to the active Current/Future tab
-- **Excel Import** â€” Reads `.xlsx` and upserts projects with auto-refresh
-- **Faster Startup Paint** â€” Shows the window before longer sync and Excel initialization work completes
-- **PDF Export** â€” 11x17 tabloid format for printing
-- **HTML Export** â€” Auto-updating file on shared drive, staff can bookmark it
-- **Weekly Rollover** â€” Triggered Mondays: deletes completed tasks and their subtasks, moves incomplete tasks to "Last Week", clears PTO and priorities
-- **Admin Settings** â€” Manage users, business roles, custom priorities, export paths, the global update folder, and MyTasks self-assign permissions
-- **Drag-and-Drop** â€” Projects to staff, tasks between staff, with ghost card insertion
+- **Task Management** - Create, assign, prioritize, reorder (drag), confirm tasks
+- **Staff Sidebar** - Staff list with task counts, PTO badges, drag-drop assignment
+- **Project Panel** - Imported from Excel, draggable onto staff to create tasks, with new-project defaults tied to the active Current/Future tab
+- **Excel Import** - Reads `.xlsx`, upserts projects, and now completes before the live app opens on startup
+- **Resume Startup Path** - Normal launches reuse the local cache instead of rebuilding it every time
+- **Startup Data Integrity** - Shared sync replay and Excel refresh finish before auth/app open so shared-drive and Excel-side changes are loaded first
+- **PDF Export** - 11x17 tabloid format for printing
+- **HTML Export** - Auto-updating file on shared drive, staff can bookmark it
+- **Weekly Rollover** - Deletes completed tasks, moves incomplete tasks into a review state, preserves custom priorities, and clears only numbered weekly priorities
+- **Admin Settings** - Manage users, business roles, custom priorities, export paths, the global update folder, and MyTasks self-assign permissions
+- **Drag-and-Drop** - Projects to staff, tasks between staff, with ghost card insertion
 
 ### Admin-Only Features
 - User CRUD (create/edit/delete staff and partners)
@@ -343,22 +346,22 @@ Three-panel layout. Sidebar collapses to 40px. Detail panel shows on task select
 - **My Projects** â€” Partner workspace for active/future/inactive projects with project detail editing, assigned staff avatars, and context-menu actions
 
 ### Features
-- **Private Tasks** â€” Local-only tasks visible only to the partner, never synced
-- **Project Details + Notes** â€” Partners can edit project fields and notes from My Projects
-- **Project Creation** â€” Partners can add projects as current or future directly from MyTasks
-- **Action Items** â€” View, toggle, add, edit, and delete task Action Items (backed by `sub_tasks`) and share them across staff assigned to the same project-linked work
-- **Shared Assignees** â€” Project-linked task detail shows everyone assigned to that project
-- **Comments** â€” View and add shared comments on project-linked tasks
-- **Search** â€” Filter tasks by title and notes
-- **Stats Bar** â€” Pending / Completed / Overdue filter buttons
-- **Settings Gear** â€” Houses sign-out and low-frequency controls without crowding the top bar
-- **Sync Status Dot** â€” Shows sync activity beside the signed-in user badge
-- **Real-time Sync** â€” Receives updates from main app via shared drive events (5-second polling)
-- **Username Login** â€” Simple username entry, saved for future sessions
-- **Private Partner Workspace** â€” Private tasks remain local to that companion install and do not sync back to Scheduling
-- **Staff Self-Assign Option** â€” Selected staff can add project-linked tasks to their own MyTasks list, add Action Items to their own work, and adjust priority on those shared tasks
-- **Update Checks** â€” Reads the synced global update folder and can prompt to launch a newer installer
-- **Project Assignment Menu** â€” Partner project context menus support assign-to staff, duplicate, delete, and move-to-current flows
+- **Private Tasks** - Local-only tasks visible only to the partner, never synced
+- **Project Details + Notes** - Partners can edit project fields and notes from My Projects
+- **Project Creation** - Partners can add projects as current or future directly from MyTasks
+- **Action Items** - View, toggle, add, edit, and delete task Action Items (backed by `sub_tasks`) and share them across staff assigned to the same project-linked work
+- **Shared Assignees** - Project-linked task detail shows everyone assigned to that project
+- **Comments** - View and add shared comments on project-linked tasks
+- **Search** - Filter tasks by title and notes
+- **Stats Bar** - Pending / Completed / Overdue filter buttons
+- **Settings Gear** - Houses sign-out and low-frequency controls without crowding the top bar
+- **Sync Status Dot** - Shows sync activity beside the signed-in user badge
+- **Real-time Sync** - Receives updates from main app via shared drive events, with overlapping renderer refreshes coalesced so the UI stays responsive
+- **Username Login** - Simple username entry, saved for future sessions
+- **Private Partner Workspace** - Private tasks remain local to that companion install and do not sync back to Scheduling
+- **Staff Self-Assign Option** - Selected staff can add project-linked tasks to their own MyTasks list, add Action Items to their own work, and adjust priority on those shared tasks
+- **Update Checks** - Reads the synced global update folder and can prompt to launch a newer installer
+- **Project Assignment Menu** - Partner project context menus support assign-to staff, duplicate, delete, and move-to-current flows
 
 ### Role-Based Visibility
 | Feature              | Partner | Staff |
@@ -419,10 +422,11 @@ Triggered by an admin on Monday (or whenever a new week is detected). The rollov
 1. **Deletes subtasks** belonging to completed tasks
 2. **Deletes completed tasks** entirely (clean slate)
 3. **Moves incomplete tasks** to `category = 'last_week'` so they appear under a "Last Week" heading
-4. **Resets** `confirmed = 0` and `priority = 0` on all remaining tasks
+4. **Resets** `confirmed = 0` on all remaining tasks and clears only numbered priorities while preserving custom labels
 5. **Clears all PTO dates**
 
 New tasks created after rollover default to `category = 'current'`.
+Carried tasks stay in a visible review state until they are explicitly kept or deleted.
 
 ---
 
@@ -432,7 +436,7 @@ New tasks created after rollover default to `category = 'current'`.
 - Use CSS custom properties (`--token`) for all colors, spacing, shadows
 - Use individual cards for each task and project
 - Use tonal shifts to define layout zones
-- Use Display font (Manrope) for headings, Body font (Inter) for everything else
+- Use Display font (Rubik) for headings, Body font (Source Sans 3) for everything else
 - Use ambient shadows (highly diffused, tinted) for card elevation
 - Use muted avatar colors
 - Use pill-shaped buttons and badges
@@ -451,7 +455,7 @@ New tasks created after rollover default to `category = 'current'`.
 - Rely on Windows username detection for authentication
 - Store main app data in `%APPDATA%` (it must be portable)
 
-## Current Update (2026-04-03)
+## Current Update (2026-04-21)
 
 This section is the current source of truth for the app naming, repository shape, and release flow.
 
@@ -465,5 +469,10 @@ This section is the current source of truth for the app naming, repository shape
 - The current brand masters are `sd-scheduling/assets/studiosync-main.svg` and `sd-companion/assets/studiosync-mytasks.svg`.
 - The current installers default under `C:\SD Apps` and force current-user install mode.
 - Both apps now open in compact branded sign-in windows before transitioning to the full shell.
+- Both apps now keep persistent local runtime logs, and StudioSync also keeps a focused dashboard input diagnostics log.
+- StudioSync now resumes from its local cache on normal launches instead of rebuilding startup state every time.
+- StudioSync startup now completes shared sync replay and Excel refresh before the live auth/app shell opens.
+- Weekly rollover now preserves custom priorities, clears only numbered priorities, and uses in-card Keep/Delete review actions for carried work.
+- StudioSync MyTasks now coalesces overlapping sync-driven refreshes and keeps long staff task lists scrollable.
 
 When older sections below mention `SD Scheduling` or `SD Companion`, read them as the current StudioSync names.

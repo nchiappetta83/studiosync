@@ -11,7 +11,7 @@ Latest public release: [v1.0.4](https://github.com/nchiappetta83/studiosync/rele
 - `StudioSync` is the main dashboard used to plan work, manage people, import projects, and publish office-wide updates.
 - `StudioSync MyTasks` is the companion app used by partners and staff to track assigned work, add follow-up notes, and stay in sync with the main board.
 
-Both apps are Electron-based, store data locally in SQLite, and synchronize through a shared-drive event system instead of a central server database.
+Both apps are Electron-based, store data locally in SQLite, synchronize through a shared-drive event system instead of a central server database, and now keep local runtime logs for troubleshooting.
 
 ## Product overview
 
@@ -28,7 +28,10 @@ Core capabilities:
 - Manage custom priorities, business roles, and user records
 - Export the schedule as PDF and HTML for office-wide visibility
 - Configure a shared update folder used by both apps
-- Run the weekly rollover flow to carry unfinished work forward cleanly
+- Run the weekly rollover flow to carry unfinished work forward cleanly with explicit Keep/Delete review actions
+- Preserve custom rollover priorities while clearing only numbered weekly priorities
+- Resume from the local cache on normal startup instead of rebuilding the full local database each launch
+- Wait for shared sync replay and Excel refresh before opening the live dashboard so new shared or Excel-side projects are loaded first
 - Start in a compact branded sign-in window before expanding into the full dashboard
 - Install through a current-user installer flow that seeds the default path under `C:\SD Apps`
 
@@ -57,6 +60,7 @@ Core capabilities:
 - Let selected staff adjust priority on their own shared tasks
 - Detect new installers from the shared update folder
 - Start in a compact branded sign-in window that mirrors the StudioSync auth flow
+- Write persistent local logs for renderer and main-process issues to speed up support and diagnostics
 
 <p align="center">
   <img src="docs/images/studiosync-mytasks-main.png" alt="StudioSync MyTasks showing a focused personal task list with fictional demo assignments and notes." width="920"><br>
@@ -130,6 +134,16 @@ cd sd-companion
 npm ci
 npm run build
 ```
+
+## Logs and diagnostics
+
+Both apps now keep local runtime logs to make troubleshooting easier.
+
+- StudioSync logs: `sd-scheduling/data/logs`
+- StudioSync MyTasks logs: `sd-companion/data/logs`
+- StudioSync input diagnostics: `sd-scheduling/data/diagnostics/dashboard-input-diagnostics.log`
+
+For installed builds, the same structure is kept inside each app's sibling `... Data` folder next to the installed executable.
 
 ## GitHub releases
 

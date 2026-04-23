@@ -38,6 +38,9 @@ const EVENT_VALIDATORS = {
   'pto-set': (value) => isObject(value) && typeof value.user_id === 'string' && Array.isArray(value.dates),
   'pto-cleared': (value) => isObject(value) && typeof value.user_id === 'string',
   'project-notes-updated': (value) => isObject(value) && typeof value.project_id === 'string',
+  'project-shared-note-created': hasStringId,
+  'project-shared-note-updated': hasStringId,
+  'project-shared-note-deleted': hasStringId,
   'role-created': hasStringId,
   'role-updated': hasStringId,
   'role-deleted': hasStringId,
@@ -79,8 +82,9 @@ class SyncEngine {
     this._seedProcessedFilesFromLegacyCursor();
 
     const isFreshDb = !this.db.getLastSyncTimestamp() && this.processedFiles.size === 0;
-    this.pull(isFreshDb);
+    const initialEvents = this.pull(isFreshDb);
     this._maybeCleanup();
+    return initialEvents;
   }
 
   startPolling(onUpdate) {
@@ -89,7 +93,7 @@ class SyncEngine {
       try {
         const appliedEvents = this.pull();
         this._maybeCleanup();
-        if (appliedEvents.length > 0 && onUpdate) onUpdate(appliedEvents);
+        if (onUpdate) onUpdate(appliedEvents);
       } catch (err) {
         console.error('Sync pull error:', err.message);
       }
@@ -119,19 +123,11 @@ class SyncEngine {
     try {
       files = fs.readdirSync(this.eventsDir)
         .filter((file) => file.endsWith('.json'))
-        .map((file) => {
-          const filePath = path.join(this.eventsDir, file);
-          let mtimeMs = 0;
-          try {
-            mtimeMs = fs.statSync(filePath).mtimeMs;
-          } catch (_) {}
-
-          return { file, filePath, mtimeMs };
-        })
-        .sort((left, right) => {
-          if (left.mtimeMs !== right.mtimeMs) return left.mtimeMs - right.mtimeMs;
-          return left.file.localeCompare(right.file);
-        });
+        .sort((left, right) => left.localeCompare(right))
+        .map((file) => ({
+          file,
+          filePath: path.join(this.eventsDir, file),
+        }));
     } catch (err) {
       console.error('Cannot read events directory:', err.message);
       return [];

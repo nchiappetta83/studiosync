@@ -34,7 +34,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
-      "createDesktopShortcut": "always",
+      "createDesktopShortcut": true,
       "shortcutName": "StudioSync MyTasks"
     },
     "portable": {

@@ -33,6 +33,10 @@ const SettingsDialog = {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               File Paths
             </button>
+            <button class="settings-nav-item" data-section="status">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+              System Status
+            </button>
             <button class="settings-nav-item" data-section="about">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
               About
@@ -90,6 +94,7 @@ const SettingsDialog = {
       case 'roles': return this._renderRoles(content);
       case 'priorities': return this._renderPriorities(content);
       case 'paths': return this._renderPaths(content);
+      case 'status': return this._renderStatus(content);
       case 'about': return this._renderAbout(content);
     }
   },
@@ -229,39 +234,49 @@ const SettingsDialog = {
 
   _renderPriorities(container) {
     const priorities = AppState.get('customPriorities') || [];
+    const rows = this._buildPriorityOrderRows(priorities);
 
     container.innerHTML = `
       <div class="settings-section">
-        <h2 class="settings-section-title">Custom Priorities</h2>
-        <p class="settings-section-desc">Define custom priority levels for tasks. These are in addition to the built-in priority system.</p>
+        <h2 class="settings-section-title">Priorities</h2>
+        <p class="settings-section-desc">Set the order shown in priority menus. Numbered priority is represented as one line here, then expands to the right number of slots on each staff list.</p>
         <div class="settings-list" id="settings-priorities-list">
-          ${priorities.length === 0
-            ? '<div class="settings-empty">No custom priorities defined. Using built-in priorities (1-4).</div>'
-            : priorities.map((p, i) => `
-              <div class="settings-list-item" data-id="${p.id}">
+          ${rows.map((row, i) => `
+              <div class="settings-list-item" data-token="${row.token}">
                 <div class="settings-reorder-btns">
-                  <button class="settings-arrow-btn${i === 0 ? ' disabled' : ''}" data-action="move-priority-up" data-id="${p.id}" title="Move up"${i === 0 ? ' disabled' : ''}>${this._upArrow}</button>
-                  <button class="settings-arrow-btn${i === priorities.length - 1 ? ' disabled' : ''}" data-action="move-priority-down" data-id="${p.id}" title="Move down"${i === priorities.length - 1 ? ' disabled' : ''}>${this._downArrow}</button>
+                  <button class="settings-arrow-btn${i === 0 ? ' disabled' : ''}" data-action="move-priority-up" data-token="${row.token}" title="Move up"${i === 0 ? ' disabled' : ''}>${this._upArrow}</button>
+                  <button class="settings-arrow-btn${i === rows.length - 1 ? ' disabled' : ''}" data-action="move-priority-down" data-token="${row.token}" title="Move down"${i === rows.length - 1 ? ' disabled' : ''}>${this._downArrow}</button>
                 </div>
-                <span class="settings-priority-dot" style="background:${p.color}"></span>
-                <span class="settings-list-label">${this._esc(p.label)}</span>
+                ${row.swatch}
+                <span class="settings-list-label">${this._esc(row.label)}</span>
                 <div class="settings-list-actions">
-                  <button class="task-action-btn" data-action="edit-priority" data-id="${p.id}" title="Edit">
+                  ${row.styleKey ? `
+                  <input
+                    type="color"
+                    value="${this._esc(row.color || '#4D4AD5')}"
+                    data-action="priority-style-color"
+                    data-style-key="${row.styleKey}"
+                    title="Choose ${this._esc(row.label)} color"
+                    style="width:32px;height:32px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;"
+                  >
+                  ` : ''}
+                  ${row.editable ? `
+                  <button class="task-action-btn" data-action="edit-priority" data-id="${row.id}" title="Edit">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
                       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                       <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                     </svg>
                   </button>
-                  <button class="task-action-btn" data-action="delete-priority" data-id="${p.id}" title="Delete">
+                  <button class="task-action-btn" data-action="delete-priority" data-id="${row.id}" title="Delete">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
                       <polyline points="3 6 5 6 21 6"></polyline>
                       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                     </svg>
                   </button>
+                  ` : (!row.styleKey ? '<span class="settings-priority-built-in">Built-in</span>' : '')}
                 </div>
               </div>
-            `).join('')
-          }
+            `).join('')}
         </div>
         <div class="settings-add-row">
           <input type="color" id="settings-priority-color" value="#4D4AD5" style="width:36px;height:36px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;">
@@ -289,10 +304,10 @@ const SettingsDialog = {
 
     // Move up/down
     container.querySelectorAll('[data-action="move-priority-up"]').forEach(btn => {
-      btn.addEventListener('click', () => this._movePriority(priorities, btn.dataset.id, -1, container));
+      btn.addEventListener('click', () => this._movePriority(rows, btn.dataset.token, -1, container));
     });
     container.querySelectorAll('[data-action="move-priority-down"]').forEach(btn => {
-      btn.addEventListener('click', () => this._movePriority(priorities, btn.dataset.id, 1, container));
+      btn.addEventListener('click', () => this._movePriority(rows, btn.dataset.token, 1, container));
     });
 
     // Edit priority
@@ -301,7 +316,7 @@ const SettingsDialog = {
         const id = btn.dataset.id;
         const pri = (AppState.get('customPriorities') || []).find(p => p.id === id);
         if (!pri) return;
-        const item = container.querySelector(`.settings-list-item[data-id="${id}"]`);
+        const item = btn.closest('.settings-list-item');
         item.innerHTML = `
           <input type="color" id="edit-priority-color" value="${pri.color}" style="width:36px;height:36px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;">
           <input type="text" class="input settings-inline-edit" id="edit-priority-label" value="${this._esc(pri.label)}" style="flex:1;">
@@ -343,22 +358,128 @@ const SettingsDialog = {
         }
       });
     });
+
+    container.querySelectorAll('[data-action="priority-style-color"]').forEach((input) => {
+      input.addEventListener('change', async () => {
+        await this._savePriorityStyleColor(input.dataset.styleKey, input.value);
+        await AppState.refresh();
+        this._renderPriorities(container);
+      });
+    });
   },
 
-  async _movePriority(priorities, id, direction, container) {
-    const idx = priorities.findIndex(p => p.id === id);
+  async _movePriority(rows, token, direction, container) {
+    const idx = rows.findIndex(row => row.token === token);
     const swapIdx = idx + direction;
-    if (swapIdx < 0 || swapIdx >= priorities.length) return;
+    if (swapIdx < 0 || swapIdx >= rows.length) return;
 
-    const orders = priorities.map((p, i) => {
-      if (i === idx) return { id: p.id, sort_order: swapIdx };
-      if (i === swapIdx) return { id: p.id, sort_order: idx };
-      return { id: p.id, sort_order: i };
-    });
+    const reordered = [...rows];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(swapIdx, 0, moved);
 
-    await window.api.reorderCustomPriorities(orders);
+    await window.api.setPriorityMenuOrder(reordered.map((row) => row.token));
     await AppState.refresh();
     this._renderPriorities(container);
+  },
+
+  _buildPriorityOrderRows(priorities) {
+    const validTokens = [
+      'numbered',
+      ...priorities.map((priority) => `custom:${priority.id}`),
+      'wait',
+      'clear',
+    ];
+    const savedTokens = Array.isArray(AppState.get('priorityMenuOrder'))
+      ? AppState.get('priorityMenuOrder')
+      : [];
+    const orderedTokens = [];
+
+    for (const token of savedTokens) {
+      if (!validTokens.includes(token) || orderedTokens.includes(token)) continue;
+      orderedTokens.push(token);
+    }
+
+    for (const token of validTokens) {
+      if (!orderedTokens.includes(token)) {
+        orderedTokens.push(token);
+      }
+    }
+
+    return orderedTokens.map((token) => this._priorityOrderRowFromToken(token, priorities)).filter(Boolean);
+  },
+
+  _priorityOrderRowFromToken(token, priorities) {
+    const styles = this._getPriorityDisplayStyles();
+
+    if (token === 'numbered') {
+      return {
+        token,
+        label: 'Numbered Priority',
+        swatch: `<span class="settings-priority-line settings-priority-line-numbered" aria-hidden="true" style="background:${this._esc(styles.numbered.color)}"></span>`,
+        editable: false,
+        styleKey: 'numbered',
+        color: styles.numbered.color,
+      };
+    }
+
+    if (token === 'wait') {
+      return {
+        token,
+        label: 'W (Wait)',
+        swatch: `<span class="settings-priority-dot" style="background:${this._esc(styles.wait.color)}"></span>`,
+        editable: false,
+        styleKey: 'wait',
+        color: styles.wait.color,
+      };
+    }
+
+    if (token === 'clear') {
+      return {
+        token,
+        label: 'Clear',
+        swatch: '<span class="settings-priority-clear" aria-hidden="true">—</span>',
+        editable: false,
+        swatch: `<span class="settings-priority-clear" aria-hidden="true" style="color:${this._esc(styles.clear.color)}">—</span>`,
+        styleKey: 'clear',
+        color: styles.clear.color,
+      };
+    }
+
+    if (token.startsWith('custom:')) {
+      const priority = priorities.find((item) => item.id === token.slice('custom:'.length));
+      if (!priority) return null;
+
+      return {
+        token,
+        id: priority.id,
+        label: priority.label,
+        swatch: `<span class="settings-priority-dot" style="background:${priority.color}"></span>`,
+        editable: true,
+      };
+    }
+
+    return null;
+  },
+
+  _getPriorityDisplayStyles() {
+    const saved = AppState.get('priorityDisplayStyles');
+    return {
+      numbered: { color: '#4D4AD5', ...(saved?.numbered || {}) },
+      wait: { color: '#6E7680', ...(saved?.wait || {}) },
+      clear: { color: '#9CA6B4', ...(saved?.clear || {}) },
+    };
+  },
+
+  async _savePriorityStyleColor(styleKey, color) {
+    if (!styleKey) return;
+    const styles = this._getPriorityDisplayStyles();
+    await window.api.setPriorityDisplayStyles({
+      ...styles,
+      [styleKey]: {
+        ...(styles[styleKey] || {}),
+        color,
+      },
+    });
   },
 
   // ── File Paths Section ───────────────────────────────
@@ -503,6 +624,65 @@ const SettingsDialog = {
 
   // ── About Section ────────────────────────────────────
 
+  async _renderStatus(container) {
+    const status = await window.api.getRuntimeStatus();
+    const syncLabel = this._formatTimestamp(status?.lastSyncAt);
+    const excelLabel = this._formatTimestamp(status?.lastExcelWriteAt);
+    const updateLabel = status?.updateAvailable
+      ? `Ready: ${this._esc(status.latestVersion || 'new version')}`
+      : 'No pending update';
+
+    container.innerHTML = `
+      <div class="settings-section">
+        <h2 class="settings-section-title">System Status</h2>
+        <p class="settings-section-desc">Live operational status for this Dashboard installation.</p>
+
+        <div class="settings-status-grid">
+          <div class="settings-status-card">
+            <div class="settings-status-label">App Version</div>
+            <div class="settings-status-value">${this._esc(status?.appVersion || 'Unknown')}</div>
+          </div>
+          <div class="settings-status-card">
+            <div class="settings-status-label">Last Sync</div>
+            <div class="settings-status-value">${this._esc(syncLabel)}</div>
+          </div>
+          <div class="settings-status-card">
+            <div class="settings-status-label">Last Excel Update</div>
+            <div class="settings-status-value">${this._esc(excelLabel)}</div>
+          </div>
+          <div class="settings-status-card">
+            <div class="settings-status-label">Update Status</div>
+            <div class="settings-status-value">${this._esc(updateLabel)}</div>
+          </div>
+        </div>
+
+        <div class="settings-status-list">
+          ${this._renderStatusRow('Shared Folder', status?.sharedDrivePath, status?.sharedDriveReachable)}
+          ${this._renderStatusRow('Excel File', status?.excelPath, status?.excelReachable)}
+          ${this._renderStatusRow('Export Folder', status?.exportPath, status?.exportReachable)}
+          ${this._renderStatusRow('Update Folder', status?.updateFolderPath, status?.updateFolderReachable)}
+          ${status?.lastExcelWriteError ? `
+            <div class="settings-status-row settings-status-row-warning">
+              <div>
+                <div class="settings-status-row-label">Last Excel Error</div>
+                <div class="settings-status-row-path">${this._esc(status.lastExcelWriteError)}</div>
+              </div>
+              <span class="settings-status-pill warning">Needs Attention</span>
+            </div>
+          ` : ''}
+        </div>
+
+        <div class="settings-add-row" style="margin-top:16px;">
+          <button class="btn btn-ghost btn-sm" id="settings-refresh-status">Refresh Status</button>
+        </div>
+      </div>
+    `;
+
+    container.querySelector('#settings-refresh-status')?.addEventListener('click', () => {
+      this._renderStatus(container);
+    });
+  },
+
   async _renderAbout(container) {
     const version = await window.api.getAppVersion();
     container.innerHTML = `
@@ -513,6 +693,34 @@ const SettingsDialog = {
           <div class="settings-about-version">Version ${this._esc(version || 'Unknown')}</div>
           <p class="settings-about-desc">A desktop scheduling tool for managing staff task assignments, project tracking, and team coordination.</p>
         </div>
+      </div>
+    `;
+  },
+
+  _formatTimestamp(isoStr) {
+    if (!isoStr) return 'Not yet';
+    const date = new Date(isoStr);
+    if (Number.isNaN(date.getTime())) return 'Not yet';
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  },
+
+  _renderStatusRow(label, pathValue, isReachable) {
+    const configured = Boolean(pathValue);
+    const pillLabel = !configured ? 'Not Set' : (isReachable ? 'Available' : 'Unavailable');
+    const pillClass = !configured ? 'muted' : (isReachable ? 'success' : 'warning');
+
+    return `
+      <div class="settings-status-row">
+        <div>
+          <div class="settings-status-row-label">${label}</div>
+          <div class="settings-status-row-path">${this._esc(pathValue || 'Not configured')}</div>
+        </div>
+        <span class="settings-status-pill ${pillClass}">${pillLabel}</span>
       </div>
     `;
   },

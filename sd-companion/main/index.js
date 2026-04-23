@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, Notification, Tray, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, Notification, Tray, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Database = require('./database');
 const SyncEngine = require('./sync');
 const Auth = require('./auth');
 const UpdateManager = require('./updateManager');
+const { createLogger } = require('./logger');
 
 let mainWindow = null;
 let db = null;
@@ -16,11 +17,15 @@ let hasShownTrayHint = false;
 let updateManager = null;
 let currentWindowMode = 'login';
 let saveWindowBoundsTimer = null;
+let logger = null;
+let runtimeStatus = {
+  lastSyncAt: null,
+};
 
 const LOGIN_WINDOW_BOUNDS = {
-  width: 760,
-  height: 620,
-  minWidth: 700,
+  width: 500,
+  height: 600,
+  minWidth: 500,
   minHeight: 560,
 };
 
@@ -142,6 +147,9 @@ function ensureAppDataDir() {
 }
 
 const APP_DATA_DIR = ensureAppDataDir();
+logger = createLogger({ appDataDir: APP_DATA_DIR, appName: 'sd-companion' });
+logger.attachConsole();
+logger.attachProcessHandlers();
 
 // ── Config ─────────────────────────────────────────────
 
@@ -158,19 +166,76 @@ function loadConfig() {
   }
 
   const envSharedDrivePath = process.env[ENV_SHARED_DRIVE_PATH];
+  const normalizedConfig = {
+    ...(config || {}),
+    launchOnStartup: config?.launchOnStartup !== false,
+  };
+
   if (envSharedDrivePath && String(envSharedDrivePath).trim()) {
     return {
-      ...(config || {}),
+      ...normalizedConfig,
       sharedDrivePath: path.resolve(String(envSharedDrivePath).trim()),
     };
   }
 
-  return config;
+  return normalizedConfig;
 }
 
 function saveConfig(config) {
   fs.mkdirSync(APP_DATA_DIR, { recursive: true });
-  fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+  const normalizedConfig = {
+    ...(config || {}),
+    launchOnStartup: config?.launchOnStartup !== false,
+  };
+  fs.writeFileSync(getConfigPath(), JSON.stringify(normalizedConfig, null, 2));
+}
+
+function getLaunchOnStartupPreference(config = null) {
+  const resolvedConfig = config || loadConfig() || {};
+  return resolvedConfig.launchOnStartup !== false;
+}
+
+function applyLaunchOnStartupPreference(enabled, options = {}) {
+  const nextEnabled = Boolean(enabled);
+  const { persist = true } = options;
+
+  if (persist) {
+    const config = loadConfig() || {};
+    config.launchOnStartup = nextEnabled;
+    saveConfig(config);
+  }
+
+  const supported = process.platform === 'win32';
+  if (supported && app.isPackaged) {
+    app.setLoginItemSettings({
+      openAtLogin: nextEnabled,
+      path: process.execPath,
+    });
+  }
+
+  return getLaunchOnStartupState();
+}
+
+function getLaunchOnStartupState() {
+  const config = loadConfig() || {};
+  const configured = getLaunchOnStartupPreference(config);
+  const supported = process.platform === 'win32';
+  let enabled = configured;
+
+  if (supported && app.isPackaged) {
+    try {
+      enabled = Boolean(app.getLoginItemSettings({ path: process.execPath }).openAtLogin);
+    } catch (_) {
+      enabled = configured;
+    }
+  }
+
+  return {
+    supported,
+    configured,
+    enabled,
+    manageable: supported,
+  };
 }
 
 function inspectSharedDrivePath(selectedPath) {
@@ -237,6 +302,20 @@ function notifyDataChanged() {
   if (mainWindow) mainWindow.webContents.send('data-updated');
 }
 
+function getPriorityDisplayStyles() {
+  if (!db) return {};
+
+  const rawValue = db.getGlobalSetting('priority_display_styles');
+  if (!rawValue) return {};
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
 function emitUpdatePrompt(result) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-available', result);
@@ -249,6 +328,54 @@ function emitWindowState() {
       isMaximized: mainWindow.isMaximized(),
     });
   }
+}
+
+function getRuntimeStatus() {
+  const config = loadConfig() || {};
+  const sharedDrivePath = config.sharedDrivePath || null;
+  const pendingUpdate = updateManager?.getPendingPrompt?.() || null;
+  const lastUpdateResult = updateManager?.getLastResult?.() || null;
+
+  return {
+    appVersion: app.getVersion(),
+    sharedDrivePath,
+    sharedDriveReachable: sharedDrivePath ? fs.existsSync(sharedDrivePath) : false,
+    lastSyncAt: runtimeStatus.lastSyncAt,
+    updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
+    latestVersion: pendingUpdate?.latestVersion || lastUpdateResult?.latestVersion || null,
+    launchOnStartup: getLaunchOnStartupState(),
+  };
+}
+
+function emitRuntimeStatus() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('runtime-status-changed', getRuntimeStatus());
+  }
+}
+
+async function openExternalTarget(rawValue) {
+  const target = String(rawValue || '').trim();
+  if (!target) return { success: false, error: 'No link provided.' };
+
+  const isWindowsPath = /^[a-zA-Z]:[\\/]/.test(target) || /^\\\\/.test(target);
+  const hasProtocol = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(target);
+
+  try {
+    if (!isWindowsPath && hasProtocol) {
+      await shell.openExternal(target);
+    } else {
+      const result = await shell.openPath(target);
+      if (result) return { success: false, error: result };
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+function markSyncActivity() {
+  runtimeStatus.lastSyncAt = new Date().toISOString();
+  emitRuntimeStatus();
 }
 
 function getTrayIconPath() {
@@ -464,6 +591,22 @@ function processIncomingEvents(events = []) {
   }
 }
 
+async function handlePulledSyncEvents(events = []) {
+  if (!Array.isArray(events) || events.length === 0) return [];
+
+  processIncomingEvents(events);
+  markSyncActivity();
+  if (updateManager) {
+    try {
+      await updateManager.handleSyncEvents(events);
+    } catch (err) {
+      console.error('Update sync handling failed:', err.message);
+    }
+  }
+  notifyDataChanged();
+  return events;
+}
+
 function createTray() {
   if (tray) return;
 
@@ -517,6 +660,23 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logger?.error('renderer-process-gone', details);
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    logger?.error('renderer-did-fail-load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    });
+  });
+
+  mainWindow.on('unresponsive', () => {
+    logger?.warn('window-unresponsive');
+  });
+
   mainWindow.once('ready-to-show', () => {
     emitWindowState();
   });
@@ -544,11 +704,30 @@ function createWindow() {
 // ── IPC Handlers ───────────────────────────────────────
 
 function registerIPC() {
+  ipcMain.handle('get-log-paths', () => logger?.getLogPaths() || null);
+  ipcMain.handle('write-log', (_e, entry) => {
+    const level = String(entry?.level || 'info').toLowerCase();
+    const message = entry?.message || entry?.type || 'renderer-log';
+    const meta = entry?.meta || entry;
+
+    if (level === 'error') logger?.error(message, meta);
+    else if (level === 'warn') logger?.warn(message, meta);
+    else if (level === 'debug') logger?.debug(message, meta);
+    else logger?.info(message, meta);
+    return true;
+  });
+
   // Config
   ipcMain.handle('get-config', () => loadConfig());
   ipcMain.handle('save-config', (_e, config) => {
     saveConfig(config);
     return true;
+  });
+  ipcMain.handle('get-launch-on-startup', () => getLaunchOnStartupState());
+  ipcMain.handle('set-launch-on-startup', (_e, enabled) => {
+    const state = applyLaunchOnStartupPreference(enabled);
+    emitRuntimeStatus();
+    return state;
   });
 
   ipcMain.handle('check-for-updates', async () => {
@@ -607,6 +786,9 @@ function registerIPC() {
     return { isMaximized: mainWindow.isMaximized() };
   });
 
+  ipcMain.handle('get-runtime-status', () => getRuntimeStatus());
+  ipcMain.handle('open-link', (_e, value) => openExternalTarget(value));
+
   ipcMain.handle('initialize-app', async (_e, sharedPath) => {
     try {
       const inspection = inspectSharedDrivePath(sharedPath);
@@ -632,20 +814,23 @@ function registerIPC() {
       auth = new Auth(db);
       sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'companion');
       sync.initialize();
+      markSyncActivity();
       sync.startPolling((events) => {
-        processIncomingEvents(events);
-        if (updateManager) {
-          updateManager.handleSyncEvents(events).catch((err) => {
-            console.error('Update sync handling failed:', err.message);
-          });
+        if (!events.length) {
+          markSyncActivity();
+          return;
         }
-        notifyDataChanged();
+        handlePulledSyncEvents(events).catch((err) => {
+          console.error('Sync event handling failed:', err.message);
+        });
       });
 
       if (updateManager) {
         updateManager.start();
         await updateManager.checkForUpdates({ promptIfAvailable: true });
       }
+
+      emitRuntimeStatus();
 
       return { success: true, user: null };
     } catch (err) {
@@ -669,6 +854,7 @@ function registerIPC() {
       const config = loadConfig() || {};
       config.loggedInUsername = username;
       saveConfig(config);
+      emitRuntimeStatus();
       return user;
     }
     return null;
@@ -681,6 +867,7 @@ function registerIPC() {
     delete config.loggedInUsername;
     saveConfig(config);
     setWindowMode('login');
+    emitRuntimeStatus();
     return true;
   });
 
@@ -700,7 +887,11 @@ function registerIPC() {
 
   ipcMain.handle('create-task', (_e, data) => {
     if (!db) return null;
-    const task = db.createTask(data);
+    const normalizedData = { ...data };
+    if (normalizedData.completed !== undefined && normalizedData.status === undefined) {
+      normalizedData.status = normalizedData.completed ? 'complete' : 'not_started';
+    }
+    const task = db.createTask(normalizedData);
     if (sync) sync.pushEvent('task-created', task);
     notifyDataChanged();
     return task;
@@ -708,7 +899,11 @@ function registerIPC() {
 
   ipcMain.handle('update-task', (_e, data) => {
     if (!db) return null;
-    const task = db.updateTask(data);
+    const normalizedData = { ...data };
+    if (normalizedData.completed !== undefined && normalizedData.status === undefined) {
+      normalizedData.status = normalizedData.completed ? 'complete' : 'not_started';
+    }
+    const task = db.updateTask(normalizedData);
     if (sync) sync.pushEvent('task-updated', task);
     notifyDataChanged();
     return task;
@@ -849,6 +1044,40 @@ function registerIPC() {
     return result;
   });
 
+  ipcMain.handle('get-project-shared-notes', (_e, projectId) => {
+    if (!db) return [];
+    return db.getProjectSharedNotes(projectId);
+  });
+
+  ipcMain.handle('get-all-project-shared-notes', () => {
+    if (!db) return [];
+    return db.getAllProjectSharedNotes();
+  });
+
+  ipcMain.handle('create-project-shared-note', (_e, data) => {
+    if (!db) return null;
+    const result = db.createProjectSharedNote(data);
+    if (sync) sync.pushEvent('project-shared-note-created', result);
+    notifyDataChanged();
+    return result;
+  });
+
+  ipcMain.handle('update-project-shared-note', (_e, data) => {
+    if (!db) return null;
+    const result = db.updateProjectSharedNote(data);
+    if (result && sync) sync.pushEvent('project-shared-note-updated', result);
+    notifyDataChanged();
+    return result;
+  });
+
+  ipcMain.handle('delete-project-shared-note', (_e, id) => {
+    if (!db) return false;
+    db.deleteProjectSharedNote(id);
+    if (sync) sync.pushEvent('project-shared-note-deleted', { id });
+    notifyDataChanged();
+    return true;
+  });
+
   // PTO
   ipcMain.handle('get-pto', () => {
     if (!db) return [];
@@ -859,15 +1088,16 @@ function registerIPC() {
     if (!db) return [];
     return db.getCustomPriorities();
   });
+  ipcMain.handle('get-priority-display-styles', () => getPriorityDisplayStyles());
 
   // Sync
-  ipcMain.handle('force-sync', () => {
+  ipcMain.handle('force-sync', async () => {
     if (!sync) return false;
     const events = sync.pull();
-    if (events.length > 0) {
-      processIncomingEvents(events);
-      notifyDataChanged();
+    if (events.length === 0) {
+      markSyncActivity();
     }
+    await handlePulledSyncEvents(events);
     return true;
   });
 }
@@ -875,7 +1105,9 @@ function registerIPC() {
 // ── App Lifecycle ──────────────────────────────────────
 
 app.whenReady().then(async () => {
+  logger?.info('app-ready', { pid: process.pid });
   app.setAppUserModelId('com.studiosync.mytasks');
+  applyLaunchOnStartupPreference(getLaunchOnStartupPreference(), { persist: false });
   registerIPC();
   createTray();
   createWindow();
@@ -921,19 +1153,21 @@ app.whenReady().then(async () => {
 
       sync = new SyncEngine(db, resolvedSharedPath, config.loggedInUsername || 'unknown', 'companion');
       sync.initialize();
+      markSyncActivity();
       sync.startPolling((events) => {
-        processIncomingEvents(events);
-        if (updateManager) {
-          updateManager.handleSyncEvents(events).catch((err) => {
-            console.error('Update sync handling failed:', err.message);
-          });
+        if (!events.length) {
+          markSyncActivity();
+          return;
         }
-        notifyDataChanged();
+        handlePulledSyncEvents(events).catch((err) => {
+          console.error('Sync event handling failed:', err.message);
+        });
       });
       if (updateManager) {
         updateManager.start();
         await updateManager.checkForUpdates({ promptIfAvailable: true });
       }
+      emitRuntimeStatus();
     } catch (err) {
       console.error('Failed to initialize:', err.message);
     }
@@ -941,6 +1175,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  logger?.info('window-all-closed');
   if (!isQuitting) return;
   if (updateManager) updateManager.stop();
   if (sync) sync.stopPolling();
@@ -957,5 +1192,6 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
+  logger?.info('before-quit');
   isQuitting = true;
 });

@@ -71,6 +71,10 @@ class UpdateManager {
     return this.pendingPrompt;
   }
 
+  getLastResult() {
+    return this.lastResult;
+  }
+
   clearPendingPrompt() {
     this.pendingPrompt = null;
   }
