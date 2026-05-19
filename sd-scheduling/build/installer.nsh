@@ -10,6 +10,5 @@
 !macroend
 
 !macro customInstall
-  IfFileExists "$DESKTOP\StudioSync.lnk" +2 0
-    CreateShortCut "$DESKTOP\StudioSync.lnk" "$INSTDIR\StudioSync.exe"
+  CreateShortCut "$DESKTOP\StudioSync.lnk" "$INSTDIR\StudioSync.exe" "" "$INSTDIR\resources\studiosync-main.ico" 0
 !macroend

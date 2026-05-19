@@ -117,12 +117,76 @@ let EXTERNAL_SYNC_REFRESH_PENDING = false;
 const STAFF_SECTION_COLLAPSE = {};
 const PROJECT_SECTION_COLLAPSE = { active: false, future: true, inactive: true };
 const COMMENT_VIEW_STATE = new Map();
-const TASK_STATUS_OPTIONS = [
-  { value: 'not_started', label: 'Not started' },
-  { value: 'in_progress', label: 'In progress' },
-  { value: 'complete', label: 'Complete' },
-];
-const COMMENT_SCROLL_BOTTOM_THRESHOLD = 18;
+const {
+  PRIORITY_NONE,
+  PRIORITY_WAIT,
+  PRIORITY_CUSTOM,
+  buildCustomPriorityLabel,
+  getCustomPriorityLabel,
+  isPrioritySet,
+  getPrioritySortKey,
+  parsePrioritySelectValue,
+  getPrioritySelectValue,
+} = window.MyTasksPriority;
+const {
+  getPriorityDisplayStyles: getPriorityDisplayStylesBase,
+  getPriorityStyleForToken: getPriorityStyleForTokenBase,
+  getPriorityInlineStyle: getPriorityInlineStyleBase,
+  getPriorityPresentation: getPriorityPresentationBase,
+} = window.MyTasksPriorityPresentation;
+const {
+  canAddActionItems: canAddActionItemsPermission,
+  canManageOwnSharedTask: canManageOwnSharedTaskPermission,
+  canManageProjectFolder: canManageProjectFolderPermission,
+} = window.MyTasksPermissions;
+const {
+  buildTaskPayload,
+} = window.MyTasksTaskPayload;
+const {
+  getPlainTextFromRichNote,
+  getRichEditorHtml,
+  renderRichNoteHtml,
+  normalizeEditorFontTags,
+} = window.MyTasksRichNotes;
+const {
+  orderProjectNotes,
+  buildProjectNoteDrafts,
+  hasProjectNotePersistedChanges,
+  formatProjectNoteTimestamp,
+} = window.MyTasksProjectNotes;
+const {
+  getProjectPartnerIds,
+  isFutureProject,
+  getProjectSection,
+  getProjectDisplayTitle,
+  normalizeTaskDisplayTitle,
+  getTaskDisplayTitle: getTaskDisplayTitleFromProjectDisplay,
+} = window.MyTasksProjectDisplay;
+const {
+  getSubtaskAssigneeIds,
+  getVisibleRepresentativeTasks,
+} = window.MyTasksActionItems;
+const {
+  escapeHtml,
+  escapeAttr,
+} = window.MyTasksHtml;
+const {
+  TASK_STATUS_OPTIONS,
+  formatDate,
+  getTaskStatusValue,
+  getTaskStatusLabel,
+  isTaskOverdue,
+} = window.MyTasksTaskDisplay;
+const {
+  getCommentStateSignature,
+  isCommentScrollAtBottom,
+  setCommentJumpButtonState,
+  timeAgo,
+  formatClockTime,
+} = window.MyTasksCommentDisplay;
+const {
+  sortTasksLikeScheduling: sortTasksLikeSchedulingBase,
+} = window.MyTasksTaskOrdering;
 
 // ── Data Loading ────────────────────────────────────
 
@@ -162,16 +226,16 @@ async function loadAllData() {
 }
 
 async function loadSubtasksAndComments(taskIds) {
-  const results = await Promise.all(taskIds.map(async id => {
-    const [subs, comments] = await Promise.all([
-      window.api.getSubTasks(id),
-      window.api.getComments(id),
-    ]);
-    return { id, subs, comments };
-  }));
-  for (const r of results) {
-    SUBTASK_CACHE[r.id] = r.subs;
-    COMMENT_CACHE[r.id] = r.comments;
+  const ids = [...new Set((Array.isArray(taskIds) ? taskIds : []).filter(Boolean))];
+  if (ids.length === 0) return;
+
+  const payload = await window.api.getTaskSupportData(ids);
+  const subtasksByTaskId = payload?.subtasksByTaskId || {};
+  const commentsByTaskId = payload?.commentsByTaskId || {};
+
+  for (const id of ids) {
+    SUBTASK_CACHE[id] = subtasksByTaskId[id] || [];
+    COMMENT_CACHE[id] = commentsByTaskId[id] || [];
   }
 }
 
@@ -210,13 +274,7 @@ function getInitials(user) {
 }
 
 function getProjectSharedNotes(projectId) {
-  return (PROJECT_SHARED_NOTES_CACHE[projectId] || []).slice().sort((left, right) => {
-    const updatedDiff = Date.parse(right.updated_at || 0) - Date.parse(left.updated_at || 0);
-    if (Number.isFinite(updatedDiff) && updatedDiff !== 0) return updatedDiff;
-    const createdDiff = Date.parse(right.created_at || 0) - Date.parse(left.created_at || 0);
-    if (Number.isFinite(createdDiff) && createdDiff !== 0) return createdDiff;
-    return String(left.title || '').localeCompare(String(right.title || ''));
-  });
+  return orderProjectNotes(PROJECT_SHARED_NOTES_CACHE[projectId] || []);
 }
 
 function getPrimaryProjectSharedNote(projectId) {
@@ -234,23 +292,12 @@ function getProjectSharedNotesPreview(projectId) {
   }
 
   const latest = notes[0];
-  const rawBody = String(latest.notes || '').trim().replace(/\s+/g, ' ');
+  const rawBody = getPlainTextFromRichNote(latest.notes || '').trim().replace(/\s+/g, ' ');
   return {
     summary: notes.length === 1 ? (latest.title || 'Untitled note') : `${notes.length} notes`,
     detail: rawBody || 'No details yet.',
     count: notes.length,
   };
-}
-
-function formatProjectNoteTimestamp(value) {
-  const parsed = value ? new Date(value) : null;
-  if (!parsed || Number.isNaN(parsed.getTime())) return 'Just now';
-  return parsed.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
 }
 
 function getDefaultTabForCurrentUser() {
@@ -274,25 +321,6 @@ function getUserById(id) {
   return USERS.find(u => u.id === id);
 }
 
-function getCommentStateSignature(comments = []) {
-  if (!Array.isArray(comments) || comments.length === 0) return '0';
-  const lastComment = comments[comments.length - 1];
-  return `${comments.length}:${lastComment.id || ''}:${lastComment.created_at || ''}`;
-}
-
-function isCommentScrollAtBottom(scrollEl) {
-  if (!scrollEl) return true;
-  const remaining = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
-  return remaining <= COMMENT_SCROLL_BOTTOM_THRESHOLD;
-}
-
-function setCommentJumpButtonState(button, unreadCount = 0) {
-  if (!button) return;
-  const hasUnread = unreadCount > 0;
-  button.classList.toggle('hidden', !hasUnread);
-  button.textContent = unreadCount > 1 ? `${unreadCount} new messages ↓` : 'New message ↓';
-}
-
 function getProjectById(id) {
   return PROJECTS.find(p => p.id === id);
 }
@@ -303,21 +331,6 @@ function getTaskPartnerLabel(task, project = null) {
 
   const partner = getUserById(task.partner_id || linkedProject?.partner_id);
   return partner ? getInitials(partner) : '';
-}
-
-function getProjectPartnerIds(project) {
-  if (!project) return [];
-
-  try {
-    const parsed = JSON.parse(project.partner_ids || '[]');
-    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
-  } catch (_) {
-    return [];
-  }
-}
-
-function isFutureProject(project) {
-  return project?.category === 'future' || project?.status === 'future';
 }
 
 function isProjectManagedByCurrentPartner(project) {
@@ -343,28 +356,9 @@ function getProjectsForCurrentPartner({ includeFuture = true, includeInactive = 
   });
 }
 
-function getProjectDisplayTitle(project) {
-  if (!project) return '';
-  return project.client ? `${project.client} | ${project.name}` : (project.name || '');
-}
-
-function normalizeTaskDisplayTitle(title) {
-  const rawTitle = String(title || '').trim();
-  if (!rawTitle) return '';
-  if (rawTitle.includes('|')) {
-    return rawTitle
-      .split('|')
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join(' | ');
-  }
-  return rawTitle.replace(/\s+[–—-]\s+/, ' | ');
-}
-
 function getTaskDisplayTitle(task, project = null) {
   const linkedProject = project || getProjectById(task?.project_id);
-  if (linkedProject) return getProjectDisplayTitle(linkedProject);
-  return normalizeTaskDisplayTitle(task?.title || '');
+  return getTaskDisplayTitleFromProjectDisplay(task, linkedProject);
 }
 
 function getAssignedStaffForProject(projectId) {
@@ -413,37 +407,30 @@ function syncTabOrder() {
 }
 
 function canCurrentUserAddActionItems(task) {
-  return Boolean(
-    task &&
-    (
-      canPartnerManageTask(task) ||
-      (currentUser?.role === 'staff' && task.assigned_to === currentUser?.id)
-    )
-  );
+  return canAddActionItemsPermission(task, {
+    currentUser,
+    canPartnerManageTask,
+  });
+}
+
+function canCurrentUserManageOwnSharedTask(task) {
+  return canManageOwnSharedTaskPermission(task, {
+    currentUser,
+    canPartnerManageTask,
+    canCurrentUserAddOwnTasks,
+  });
 }
 
 function canCurrentUserManageTaskPriority(task) {
-  return Boolean(
-    task &&
-    (
-      canPartnerManageTask(task) ||
-      (canCurrentUserAddOwnTasks() && task.assigned_to === currentUser?.id)
-    )
-  );
+  return canCurrentUserManageOwnSharedTask(task);
 }
 
 function canCurrentUserEditSharedTask(task) {
-  return Boolean(
-    task &&
-    (
-      canPartnerManageTask(task) ||
-      (canCurrentUserAddOwnTasks() && task.assigned_to === currentUser?.id)
-    )
-  );
+  return canCurrentUserManageOwnSharedTask(task);
 }
 
 function canCurrentUserDeleteSharedTask(task) {
-  return canCurrentUserEditSharedTask(task);
+  return canCurrentUserManageOwnSharedTask(task);
 }
 
 function isCurrentUserAssignedToProject(projectId) {
@@ -452,18 +439,80 @@ function isCurrentUserAssignedToProject(projectId) {
 }
 
 function canCurrentUserManageProjectFolder(project) {
-  if (!project) return false;
-  if (isPartner()) return isProjectManagedByCurrentPartner(project);
-  return isCurrentUserAssignedToProject(project.id);
+  return canManageProjectFolderPermission(project, {
+    isPartner,
+    isProjectManagedByCurrentPartner,
+    isCurrentUserAssignedToProject,
+  });
 }
 
-function getProjectSection(project) {
-  if (project?.status !== 'active') return 'inactive';
-  return isFutureProject(project) ? 'future' : 'active';
+function buildSharedTaskPayloadFromInput(options = {}) {
+  return buildTaskPayload({
+    title: options.title,
+    notes: options.notes,
+    priorityValue: options.priorityValue,
+    dueDate: options.dueDate,
+    base: options.base,
+    includePriorityLabel: true,
+  });
+}
+
+function buildPrivateTaskPayloadFromInput(options = {}) {
+  return buildTaskPayload({
+    title: options.title,
+    notes: options.notes,
+    priorityValue: options.priorityValue,
+    dueDate: options.dueDate,
+    base: options.base,
+    includePriorityLabel: false,
+  });
+}
+
+async function applyTaskPriorityChange(taskId, priority, priorityLabel = null) {
+  await window.api.updateTask({
+    id: taskId,
+    priority,
+    priority_label: priorityLabel,
+  });
+  await refreshAfterTaskChange(taskId);
+}
+
+async function applyTaskAssignmentChange(taskId, assignedTo) {
+  await window.api.updateTask({
+    id: taskId,
+    assigned_to: assignedTo,
+  });
+  await refreshAfterTaskChange(taskId);
+}
+
+async function applyTaskStatusChange(taskId, nextStatus) {
+  await window.api.updateTask({
+    id: taskId,
+    status: nextStatus,
+    completed: nextStatus === 'complete' ? 1 : 0,
+  });
+  await refreshAfterTaskChange(taskId);
+}
+
+async function applyTaskCompletionChange(taskId, nextCompleted) {
+  await window.api.updateTask({
+    id: taskId,
+    completed: nextCompleted,
+    status: nextCompleted ? 'complete' : 'not_started',
+  });
+  await refreshAfterTaskChange(taskId);
+}
+
+async function applyTaskNotesChange(taskId, notes) {
+  await window.api.updateTask({
+    id: taskId,
+    notes,
+  });
+  await refreshAfterTaskChange(taskId);
 }
 
 function getTasksForUser(userId) {
-  return TASKS.filter(t => t.assigned_to === userId);
+  return getVisibleRepresentativeTasks(TASKS, userId, getTaskActionItems, sortTasksLikeScheduling);
 }
 
 function getTaskThreadTasks(task) {
@@ -497,12 +546,28 @@ function getTaskAssignees(task) {
     assignees.push(user);
   }
 
+  for (const subtask of getTaskActionItems(task)) {
+    for (const userId of getSubtaskAssigneeIds(subtask)) {
+      if (!userId || seen.has(userId)) continue;
+      const user = getUserById(userId);
+      if (!user) continue;
+      seen.add(userId);
+      assignees.push(user);
+    }
+  }
+
   return assignees.sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''));
 }
 
 function getTaskActionItems(task) {
   const ownerTask = getTaskThreadOwner(task);
   return ownerTask ? (SUBTASK_CACHE[ownerTask.id] || []) : [];
+}
+
+function getProjectActionItemTask(project) {
+  if (!project) return null;
+  const projectTasks = TASKS.filter((task) => String(task.project_id || '') === String(project.id || ''));
+  return sortTasksLikeScheduling(projectTasks)[0] || null;
 }
 
 function getTaskComments(task) {
@@ -527,265 +592,33 @@ function getTaskComments(task) {
 function getSharedPriorityTaskCount(userId) {
   const numericPool = TASKS.filter((item) => (
     item.assigned_to === userId &&
-    item.priority !== -1 &&
-    item.priority !== -2
+    item.priority !== PRIORITY_WAIT &&
+    item.priority !== PRIORITY_CUSTOM
   ));
   return Math.max(numericPool.length, 1);
 }
 
-function withAlpha(color, alpha, fallback) {
-  const value = String(color || '').trim();
-  const hexMatch = value.match(/^#([0-9a-f]{6}|[0-9a-f]{3})$/i);
-  if (!hexMatch) return fallback;
-
-  const hex = hexMatch[1].length === 3
-    ? hexMatch[1].split('').map((char) => char + char).join('')
-    : hexMatch[1];
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function getPriorityDisplayStyles() {
-  return {
-    numbered: { color: '#4D4AD5', ...(PRIORITY_DISPLAY_STYLES?.numbered || {}) },
-    wait: { color: '#6E7680', ...(PRIORITY_DISPLAY_STYLES?.wait || {}) },
-    clear: { color: '#9CA6B4', ...(PRIORITY_DISPLAY_STYLES?.clear || {}) },
-    customDefault: { color: '#5C6B75', ...(PRIORITY_DISPLAY_STYLES?.customDefault || {}) },
-  };
-}
-
-function getPriorityTone(priority) {
-  const baseColor = getPriorityDisplayStyles().numbered.color;
-  return {
-    color: baseColor,
-    background: withAlpha(baseColor, 0.14, '#EEEDFE'),
-    border: withAlpha(baseColor, 0.18, '#DCDFF7'),
-  };
-}
-
-function getPriorityStyleForToken(token) {
-  const baseColor = getPriorityDisplayStyles()[token]?.color || '#5C6B75';
-  const isClear = token === 'clear';
-  return {
-    color: baseColor,
-    background: withAlpha(baseColor, isClear ? 0.08 : 0.14, '#EEF1F4'),
-    border: withAlpha(baseColor, isClear ? 0.12 : 0.18, '#E4EAF0'),
-  };
-}
-
-function getPriorityInlineStyle(priority) {
-  const tone = getPriorityTone(priority);
-  return tone ? `color:${tone.color};background:${tone.background};border:1px solid ${tone.border};` : '';
-}
+const getPriorityDisplayStyles = () => getPriorityDisplayStylesBase(PRIORITY_DISPLAY_STYLES);
+const getPriorityStyleForToken = (token) => getPriorityStyleForTokenBase(token, PRIORITY_DISPLAY_STYLES);
+const getPriorityInlineStyle = (priority) => getPriorityInlineStyleBase(priority, PRIORITY_DISPLAY_STYLES);
 
 function getPTOForUser(userId) {
   return PTO_DATA.find(p => p.user_id === userId) || null;
 }
 
-function getPrioritySortKey(priority) {
-  if (typeof priority === 'number' && priority >= 1) return priority;
-  if (priority === -2) return 500;
-  if (priority === 0 || priority === null || priority === undefined) return 100;
-  if (priority === -1) return 1000;
-  return 150;
-}
+const sortTasksLikeScheduling = (tasks) => sortTasksLikeSchedulingBase(tasks, getPrioritySortKey);
 
-function sortTasksLikeScheduling(tasks) {
-  return [...tasks].sort((a, b) => {
-    const ac = a.confirmed ?? 1;
-    const bc = b.confirmed ?? 1;
-    if (ac !== bc) return bc - ac;
-
-    if (a.completed !== b.completed) return a.completed ? 1 : -1;
-
-    const ap = getPrioritySortKey(a.priority);
-    const bp = getPrioritySortKey(b.priority);
-    if (ap !== bp) return ap - bp;
-
-    const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
-    const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
-    if (ao !== bo) return ao - bo;
-
-    if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
-    if (a.due_date) return -1;
-    if (b.due_date) return 1;
-
-    return (a.title || '').localeCompare(b.title || '');
-  });
-}
-
-function getPriorityPresentation(task) {
-  const priority = task.priority;
-  const isSet = priority !== null && priority !== undefined && priority !== '' && priority !== 0;
-
-  if (!isSet) {
-    return { label: '–', className: 'punset', inlineStyle: '', shortLabel: '–' };
-  }
-
-  if (priority === -1) {
-    return { label: 'W', className: 'pw', inlineStyle: '', shortLabel: 'W' };
-  }
-
-  if (priority === -2 && task.priority_label) {
-    const customLabel = task.priority_label.replace(/^cp:/, '');
-    const shortLabel = customLabel.length <= 2 ? customLabel.toUpperCase() : customLabel.slice(0, 2).toUpperCase();
-    return { label: customLabel, className: 'pcustom', inlineStyle: '', shortLabel };
-  }
-
-  if (typeof priority === 'number' && priority >= 1) {
-    return { label: String(priority), className: 'pnumeric', inlineStyle: '', shortLabel: String(priority) };
-  }
-
-  return { label: '–', className: 'punset', inlineStyle: '', shortLabel: '–' };
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return { text: '', cls: 'none', isCurrentWeek: false, isToday: false };
-  const d = new Date(dateStr + 'T00:00:00');
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diff = Math.floor((d - today) / 86400000);
-  const dayOfWeek = today.getDay();
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const weekStart = new Date(today);
-  weekStart.setDate(today.getDate() + mondayOffset);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 6);
-
-  const isCurrentWeek = d >= weekStart && d <= weekEnd;
-  const formatted = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const weekday = d.toLocaleDateString('en-US', { weekday: 'long' });
-  const text = isCurrentWeek ? weekday : formatted;
-
-  if (diff < 0) return { text, cls: 'urgent', isCurrentWeek, isToday: false };
-  if (isCurrentWeek && diff === 0) return { text, cls: 'urgent', isCurrentWeek, isToday: true };
-  if (isCurrentWeek) return { text, cls: 'warn', isCurrentWeek, isToday: false };
-  if (diff <= 14) return { text, cls: 'future', isCurrentWeek: false, isToday: false };
-  return { text, cls: 'normal', isCurrentWeek: false, isToday: false };
-}
-
-function getPriorityPresentation(task) {
-  const priority = task.priority;
-  const isSet = priority !== null && priority !== undefined && priority !== '' && priority !== 0;
-
-  if (!isSet) {
-    const clearTone = getPriorityStyleForToken('clear');
-    return {
-      label: '–',
-      className: 'punset',
-      inlineStyle: `color:${clearTone.color};background:${clearTone.background};border:1px solid ${clearTone.border};`,
-      shortLabel: '–'
-    };
-  }
-
-  if (priority === -1) {
-    const waitTone = getPriorityStyleForToken('wait');
-    return {
-      label: 'W',
-      className: 'pw',
-      inlineStyle: `color:${waitTone.color};background:${waitTone.background};border:1px solid ${waitTone.border};`,
-      shortLabel: 'W'
-    };
-  }
-
-  if (priority === -2 && task.priority_label) {
-    const customLabel = task.priority_label.replace(/^cp:/, '');
-    const shortLabel = customLabel.length <= 2 ? customLabel.toUpperCase() : customLabel.slice(0, 2).toUpperCase();
-    const customPriority = CUSTOM_PRIORITIES.find((item) => item.label === customLabel);
-    const customColor = customPriority?.color || getPriorityDisplayStyles().customDefault.color;
-    return {
-      label: customLabel,
-      className: 'pcustom',
-      inlineStyle: `color:${customColor};background:${withAlpha(customColor, 0.14, '#EEF1F4')};border:1px solid ${withAlpha(customColor, 0.18, '#E4EAF0')};`,
-      shortLabel
-    };
-  }
-
-  if (typeof priority === 'number' && priority >= 1) {
-    return {
-      label: String(priority),
-      className: 'pnumeric',
-      inlineStyle: getPriorityInlineStyle(priority),
-      shortLabel: String(priority)
-    };
-  }
-
-  const clearTone = getPriorityStyleForToken('clear');
-  return {
-    label: '–',
-    className: 'punset',
-    inlineStyle: `color:${clearTone.color};background:${clearTone.background};border:1px solid ${clearTone.border};`,
-    shortLabel: '–'
-  };
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return { text: '', cls: 'none', isCurrentWeek: false, isToday: false };
-  const d = new Date(dateStr + 'T00:00:00');
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diff = Math.floor((d - today) / 86400000);
-  const dayOfWeek = today.getDay();
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const weekStart = new Date(today);
-  weekStart.setDate(today.getDate() + mondayOffset);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 6);
-
-  const isCurrentWeek = d >= weekStart && d <= weekEnd;
-  const weekday = d.toLocaleDateString('en-US', { weekday: 'long' });
-  const text = isCurrentWeek ? weekday : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
-
-  if (diff <= 0) return { text, cls: 'urgent', isCurrentWeek, isToday: diff === 0 };
-  if (diff <= 3) return { text, cls: 'warn', isCurrentWeek, isToday: false };
-  if (diff <= 14) return { text, cls: 'future', isCurrentWeek: false, isToday: false };
-  return { text, cls: 'normal', isCurrentWeek: false, isToday: false };
-}
-
-function getTaskStatusValue(task) {
-  if (!task) return 'not_started';
-  if (task.completed) return 'complete';
-  const status = String(task.status || '').trim();
-  if (status === 'in_review') return 'in_progress';
-  if (TASK_STATUS_OPTIONS.some((option) => option.value === status)) {
-    return status;
-  }
-  return 'not_started';
-}
-
-function getTaskStatusLabel(task) {
-  const value = getTaskStatusValue(task);
-  return TASK_STATUS_OPTIONS.find((option) => option.value === value)?.label || 'Not started';
-}
-
-function timeAgo(isoStr) {
-  const d = new Date(isoStr);
-  const now = new Date();
-  const hrs = Math.floor((now - d) / 3600000);
-  if (hrs < 1) return 'just now';
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days === 1) return 'yesterday';
-  return `${days}d ago`;
-}
-
-function formatClockTime(isoStr) {
-  const d = new Date(isoStr);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-}
+const getPriorityPresentation = (task) => getPriorityPresentationBase(task, {
+  displayStyles: PRIORITY_DISPLAY_STYLES,
+  customPriorities: CUSTOM_PRIORITIES,
+  isPrioritySet,
+  getCustomPriorityLabel,
+  PRIORITY_WAIT,
+  PRIORITY_CUSTOM,
+});
 
 function isPartner() {
   return currentUser && currentUser.role === 'partner';
-}
-
-function isTaskOverdue(task) {
-  if (task.completed || !task.due_date) return false;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return new Date(task.due_date + 'T00:00:00') < today;
 }
 
 function getSharedTaskById(id) {
@@ -817,43 +650,33 @@ function getActionItemAssigneeOptions(task) {
   return users.sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''));
 }
 
-function renderActionItemAssigneeAvatar(userId) {
-  const user = getUserById(userId);
-  if (!user) return '';
-  return `
-    <span
-      class="subtask-assignee-avatar"
-      style="background:${user.avatar_color}"
-      title="${escapeAttr(user.display_name || '')}"
-    >
-      ${escapeHtml(getInitials(user))}
-    </span>
-  `;
-}
+function renderActionItemAssignees(subtask) {
+  const assigneeIds = getSubtaskAssigneeIds(subtask);
+  if (!assigneeIds.length) return '';
 
-function escapeHtml(value) {
-  if (!value) return '';
-  const div = document.createElement('div');
-  div.textContent = value;
-  return div.innerHTML;
-}
+  const avatars = assigneeIds.map((userId) => {
+    const user = getUserById(userId);
+    if (!user) return '';
+    return `
+      <span
+        class="subtask-assignee-avatar"
+        style="background:${user.avatar_color}"
+        title="${escapeAttr(user.display_name || '')}"
+      >
+        ${escapeHtml(getInitials(user))}
+      </span>
+    `;
+  }).join('');
 
-function escapeAttr(value) {
-  if (!value) return '';
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return avatars ? `<span class="subtask-assignee-list">${avatars}</span>` : '';
 }
 
 function getAvailableProjectsForTaskCreation() {
   if (isPartner()) {
-    return getProjectsForCurrentPartner({ includeFuture: false });
+    return getProjectsForCurrentPartner({ includeFuture: true, includeInactive: true });
   }
 
   return PROJECTS
-    .filter((project) => project.status === 'active' && !isFutureProject(project))
     .sort((a, b) => {
       const clientCompare = (a.client || '').localeCompare(b.client || '');
       if (clientCompare !== 0) return clientCompare;
@@ -883,15 +706,66 @@ function bindProjectPickerSelection(picker, projects, titleInput, onProjectChang
   if (!picker) return;
 
   let selectedProjectId = null;
+  let activePickerTab = 'active';
 
-  picker.innerHTML = projects.length === 0 ? `
-    <div class="project-picker-empty">No active projects are available right now.</div>
-  ` : projects.map((project) => `
-    <div class="project-picker-item" data-project-id="${project.id}">
-      <span class="pp-name">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</span>
-      <span class="pp-status" style="color:var(--status-active)">ACTIVE</span>
-    </div>
-  `).join('');
+  const getProjectPickerSection = (project) => {
+    if (isFutureProject(project)) return 'future';
+    return project.status === 'active' ? 'active' : 'inactive';
+  };
+
+  const getTabProjects = (tab) => projects.filter((project) => getProjectPickerSection(project) === tab);
+
+  const renderPicker = () => {
+    const tabs = [
+      { id: 'active', label: 'Active' },
+      { id: 'inactive', label: 'Inactive' },
+      { id: 'future', label: 'Future' },
+    ];
+    const visibleProjects = getTabProjects(activePickerTab);
+
+    picker.innerHTML = `
+      <div class="project-picker-tabs" role="tablist" aria-label="Project status">
+        ${tabs.map((tab) => `
+          <button
+            class="project-picker-tab ${activePickerTab === tab.id ? 'active' : ''}"
+            type="button"
+            data-project-picker-tab="${tab.id}"
+            role="tab"
+            aria-selected="${activePickerTab === tab.id ? 'true' : 'false'}"
+          >
+            <span>${tab.label}</span>
+          </button>
+        `).join('')}
+      </div>
+      <div class="project-picker-list">
+        ${visibleProjects.length === 0 ? `
+          <div class="project-picker-empty">No ${activePickerTab} projects are available right now.</div>
+        ` : visibleProjects.map((project) => {
+          const section = getProjectPickerSection(project);
+          return `
+            <div class="project-picker-item ${selectedProjectId === project.id ? 'selected' : ''}" data-project-id="${project.id}">
+              <span class="pp-name">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</span>
+              <span class="pp-status ${section}">${section === 'future' ? 'FUTURE' : (section === 'active' ? 'ACTIVE' : 'INACTIVE')}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    picker.querySelectorAll('[data-project-picker-tab]').forEach((tabButton) => {
+      tabButton.addEventListener('click', () => {
+        activePickerTab = tabButton.dataset.projectPickerTab;
+        renderPicker();
+      });
+    });
+
+    picker.querySelectorAll('.project-picker-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        const nextProjectId = item.dataset.projectId;
+        applySelection(selectedProjectId === nextProjectId ? null : nextProjectId);
+      });
+    });
+  };
 
   const applySelection = (projectId) => {
     selectedProjectId = projectId;
@@ -903,126 +777,9 @@ function bindProjectPickerSelection(picker, projects, titleInput, onProjectChang
     if (onProjectChange) onProjectChange(selectedProjectId, selectedProject);
   };
 
-  picker.querySelectorAll('.project-picker-item').forEach((item) => {
-    item.addEventListener('click', () => {
-      const nextProjectId = item.dataset.projectId;
-      applySelection(selectedProjectId === nextProjectId ? null : nextProjectId);
-    });
-  });
-
+  renderPicker();
   applySelection(null);
 }
-
-function positionMenu(menu, x, y) {
-  menu.style.top = `${y}px`;
-  menu.style.left = `${x}px`;
-
-  requestAnimationFrame(() => {
-    const rect = menu.getBoundingClientRect();
-    if (rect.bottom > window.innerHeight - 8) {
-      menu.style.top = `${Math.max(8, window.innerHeight - rect.height - 8)}px`;
-    }
-    if (rect.right > window.innerWidth - 8) {
-      menu.style.left = `${Math.max(8, window.innerWidth - rect.width - 8)}px`;
-    }
-  });
-}
-
-const ContextMenu = {
-  _current: null,
-
-  create(items) {
-    this.dismiss();
-
-    const menu = document.createElement('div');
-    menu.className = 'context-menu';
-    this._appendItems(menu, items);
-
-    document.body.appendChild(menu);
-    this._current = menu;
-
-    setTimeout(() => {
-      document.addEventListener('click', this._onOutsideClick);
-      document.addEventListener('keydown', this._onEscape);
-    }, 0);
-
-    return menu;
-  },
-
-  _appendItems(container, items) {
-    for (const item of items) {
-      if (item.divider) {
-        const divider = document.createElement('div');
-        divider.className = 'context-menu-divider';
-        container.appendChild(divider);
-        continue;
-      }
-
-      const btn = document.createElement(item.submenu ? 'div' : 'button');
-      if (!item.submenu) btn.type = 'button';
-      btn.className = `context-menu-item ${item.danger ? 'danger' : ''}${item.submenu ? ' has-submenu' : ''}`;
-
-      let iconHtml = '';
-      if (item.icon) {
-        iconHtml = item.icon;
-      } else if (item.color) {
-        iconHtml = `<span style="width:10px;height:10px;border-radius:50%;background:${item.color};flex-shrink:0;"></span>`;
-      }
-
-      const chevronHtml = item.submenu
-        ? '<span class="context-menu-chevron" aria-hidden="true">&#8250;</span>'
-        : '';
-
-      btn.innerHTML = `${iconHtml}<span class="context-menu-label">${escapeHtml(item.label)}</span>${chevronHtml}`;
-
-      if (item.submenu) {
-        const submenu = document.createElement('div');
-        submenu.className = 'context-menu context-submenu';
-        this._appendItems(submenu, item.submenu);
-        btn.appendChild(submenu);
-
-        const positionSubmenu = () => {
-          requestAnimationFrame(() => {
-            const rect = submenu.getBoundingClientRect();
-            btn.classList.toggle('open-left', rect.right > window.innerWidth - 8);
-            btn.classList.toggle('open-up', rect.bottom > window.innerHeight - 8);
-          });
-        };
-
-        btn.addEventListener('mouseenter', positionSubmenu);
-        btn.addEventListener('focusin', positionSubmenu);
-      } else {
-        btn.addEventListener('click', () => {
-          this.dismiss();
-          if (item.action) item.action();
-        });
-      }
-
-      container.appendChild(btn);
-    }
-  },
-
-  dismiss() {
-    if (this._current) {
-      this._current.remove();
-      this._current = null;
-    }
-    document.removeEventListener('click', this._onOutsideClick);
-    document.removeEventListener('keydown', this._onEscape);
-  },
-
-  _onOutsideClick(e) {
-    if (ContextMenu._current && !ContextMenu._current.contains(e.target)) {
-      ContextMenu.dismiss();
-    }
-  },
-
-  _onEscape(e) {
-    if (e.key === 'Escape') {
-      ContextMenu.dismiss();
-    }
-  }
-};
 
 async function refreshAfterTaskChange(taskId = null) {
   await loadAllData();
@@ -1065,10 +822,7 @@ function buildPriorityMenuItems(task) {
     items.push({
       label: String(i),
       color: getPriorityStyleForToken('numbered').color,
-      action: async () => {
-        await window.api.updateTask({ id: task.id, priority: i, priority_label: null });
-        await refreshAfterTaskChange(task.id);
-      }
+      action: async () => applyTaskPriorityChange(task.id, i)
     });
   }
 
@@ -1076,10 +830,7 @@ function buildPriorityMenuItems(task) {
   items.push({
     label: 'W (Wait)',
     color: getPriorityStyleForToken('wait').color,
-    action: async () => {
-      await window.api.updateTask({ id: task.id, priority: -1, priority_label: null });
-      await refreshAfterTaskChange(task.id);
-    }
+    action: async () => applyTaskPriorityChange(task.id, PRIORITY_WAIT)
   });
 
   if (CUSTOM_PRIORITIES.length > 0) {
@@ -1088,10 +839,7 @@ function buildPriorityMenuItems(task) {
       items.push({
         label: priority.label,
         color: priority.color,
-        action: async () => {
-          await window.api.updateTask({ id: task.id, priority: -2, priority_label: `cp:${priority.label}` });
-          await refreshAfterTaskChange(task.id);
-        }
+        action: async () => applyTaskPriorityChange(task.id, PRIORITY_CUSTOM, buildCustomPriorityLabel(priority.label))
       });
     }
   }
@@ -1100,10 +848,7 @@ function buildPriorityMenuItems(task) {
   items.push({
     label: '— Clear',
     color: getPriorityStyleForToken('clear').color,
-    action: async () => {
-      await window.api.updateTask({ id: task.id, priority: 0, priority_label: null });
-      await refreshAfterTaskChange(task.id);
-    }
+    action: async () => applyTaskPriorityChange(task.id, PRIORITY_NONE)
   });
 
   return items;
@@ -1124,7 +869,7 @@ function buildPrioritySelectOptions(maxPriority) {
   }
   options.push('<option value="w">W - Wait</option>');
   for (const priority of CUSTOM_PRIORITIES) {
-    options.push(`<option value="cp:${escapeAttr(priority.label)}">${escapeHtml(priority.label)}</option>`);
+    options.push(`<option value="${buildCustomPriorityLabel(escapeAttr(priority.label))}">${escapeHtml(priority.label)}</option>`);
   }
   return options.join('');
 }
@@ -1143,24 +888,18 @@ function populatePrioritySelect(userId, selectedValue = '') {
 }
 
 async function duplicateSharedTask(task) {
-  const created = await window.api.createTask({
-    project_id: task.project_id,
-    assigned_to: task.assigned_to,
-    created_by: currentUser?.id || null,
-    partner_id: task.partner_id || currentUser?.id || null,
+  const created = await window.api.createTask(buildSharedTaskPayloadFromInput({
     title: task.title,
     notes: task.notes || '',
-    priority: task.priority ?? 0,
-    due_date: task.due_date || null,
-  });
-
-  if (created && task.priority === -2 && task.priority_label) {
-    await window.api.updateTask({
-      id: created.id,
-      priority: -2,
-      priority_label: task.priority_label,
-    });
-  }
+    priorityValue: getPrioritySelectValue(task),
+    dueDate: task.due_date || null,
+    base: {
+      project_id: task.project_id,
+      assigned_to: task.assigned_to,
+      created_by: currentUser?.id || null,
+      partner_id: task.partner_id || currentUser?.id || null,
+    },
+  }));
 
   await refreshAfterTaskChange(created?.id || null);
 }
@@ -1178,9 +917,7 @@ function openEditSharedTaskDialog(task) {
   if (!canEditTask) return;
 
   const project = getProjectById(task.project_id);
-  const selectedPriorityValue = task.priority === -1
-    ? 'w'
-    : (task.priority === -2 && task.priority_label ? task.priority_label : String(task.priority || ''));
+  const selectedPriorityValue = getPrioritySelectValue(task);
   const priorityOptions = buildPrioritySelectOptions(getSharedPriorityTaskCount(task.assigned_to));
   const staffOptions = getActiveStaffUsers().map((user) => `
     <option value="${user.id}" ${user.id === task.assigned_to ? 'selected' : ''}>${escapeHtml(user.display_name)}</option>
@@ -1260,27 +997,18 @@ function openEditSharedTaskDialog(task) {
     const title = document.getElementById('edit-task-title').value.trim();
     if (!title) return;
 
-    const priorityValue = document.getElementById('edit-task-priority').value;
-    let priority = 0;
-    let priorityLabel = null;
-    if (priorityValue === 'w') {
-      priority = -1;
-    } else if (priorityValue.startsWith('cp:')) {
-      priority = -2;
-      priorityLabel = priorityValue;
-    } else {
-      priority = parseInt(priorityValue || '0', 10);
-    }
-
-    await window.api.updateTask({
-      id: task.id,
+    const payload = buildSharedTaskPayloadFromInput({
       title,
-      assigned_to: document.getElementById('edit-task-assignee').value || null,
-      priority,
-      priority_label: priorityLabel,
-      due_date: document.getElementById('edit-task-due').value || null,
-      notes: document.getElementById('edit-task-notes').value.trim(),
+      notes: document.getElementById('edit-task-notes').value,
+      priorityValue: document.getElementById('edit-task-priority').value,
+      dueDate: document.getElementById('edit-task-due').value,
+      base: {
+        id: task.id,
+        assigned_to: document.getElementById('edit-task-assignee').value || null,
+      },
     });
+
+    await window.api.updateTask(payload);
 
     close();
     await refreshAfterTaskChange(task.id);
@@ -1300,8 +1028,7 @@ function openSharedTaskContextMenu(e, task) {
   const moveTargets = canPartnerEdit ? getActiveStaffUsers(task.assigned_to).map((user) => ({
     label: user.display_name,
     action: async () => {
-      await window.api.updateTask({ id: task.id, assigned_to: user.id });
-      await refreshAfterTaskChange(task.id);
+      await applyTaskAssignmentChange(task.id, user.id);
     }
   })) : [];
 
@@ -1368,7 +1095,7 @@ function bindWindowChrome() {
 
   document.querySelectorAll('.topbar, .login-screen').forEach((region) => {
     region.addEventListener('dblclick', async (e) => {
-      if (e.target.closest('.window-controls, .login-card, .topbar-center, .topbar-right')) return;
+      if (e.target.closest('.window-controls, .login-card, .topbar-right')) return;
       const state = await window.api.toggleMaximizeWindow();
       applyWindowState(state);
     });
@@ -1669,7 +1396,6 @@ async function enterApp() {
   }
   setupAddSelfTask();
   setupTabBar();
-  setupSearch();
   setupSettingsMenu();
   activateTab(activeTab);
 
@@ -1776,7 +1502,7 @@ function renderStatsBar() {
       const filter = btn.dataset.filter;
       activeFilter = (activeFilter === filter) ? null : filter;
       renderStatsBar();
-      renderMyTasks(document.getElementById('search-input').value);
+      renderMyTasks();
     });
   });
 }
@@ -1860,8 +1586,8 @@ function renderMyTasks(query = '') {
     return;
   }
 
-  const waitingTasks = tasks.filter((task) => task.priority === -1 && !task.completed);
-  const activeTasks = tasks.filter((task) => !(task.priority === -1 && !task.completed));
+  const waitingTasks = tasks.filter((task) => task.priority === PRIORITY_WAIT && !task.completed);
+  const activeTasks = tasks.filter((task) => !(task.priority === PRIORITY_WAIT && !task.completed));
 
   const activeMarkup = activeTasks.map((task) => renderTaskCard(task, { isPrivate: isPartner() })).join('');
   const waitingMarkup = waitingTasks.map((task) => renderTaskCard(task, { isPrivate: isPartner() })).join('');
@@ -1883,15 +1609,7 @@ function renderMyTasks(query = '') {
 // ── My Projects (from Excel, partner only) ──────────
 
 function renderMyProjects() {
-  const query = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
-  const projects = getProjectsForCurrentPartner({ includeFuture: true, includeInactive: true }).filter((project) => {
-    if (!query) return true;
-    return (
-      (project.client || '').toLowerCase().includes(query) ||
-      (project.name || '').toLowerCase().includes(query) ||
-      (project.notes || '').toLowerCase().includes(query)
-    );
-  });
+  const projects = getProjectsForCurrentPartner({ includeFuture: true, includeInactive: true });
 
   document.getElementById('my-projects-count').textContent = `${projects.length} projects`;
 
@@ -1904,7 +1622,7 @@ function renderMyProjects() {
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-state-icon">&#128193;</div>
-        <div class="empty-state-text">${query ? 'No projects match your search' : 'No projects assigned to your initials yet'}</div>
+        <div class="empty-state-text">No projects assigned to your initials yet</div>
       </div>
     `;
     return;
@@ -2044,20 +1762,17 @@ function openAddPrivateTaskDialog() {
     const title = titleInput.value.trim();
     if (!title) return;
 
-    const notes = document.getElementById('add-task-notes-input').value.trim();
-    const priorityVal = document.getElementById('add-task-priority').value;
-    const dueDate = document.getElementById('add-task-due').value || null;
-    let priority = 0;
-    if (priorityVal === 'w') priority = -1;
-    else if (priorityVal) priority = parseInt(priorityVal);
-
-    await window.api.createPrivateTask({
-      project_id: selectedProjectId,
+    const payload = buildPrivateTaskPayloadFromInput({
       title,
-      notes,
-      priority,
-      due_date: dueDate,
+      notes: document.getElementById('add-task-notes-input').value,
+      priorityValue: document.getElementById('add-task-priority').value,
+      dueDate: document.getElementById('add-task-due').value,
+      base: {
+        project_id: selectedProjectId,
+      },
     });
+
+    await window.api.createPrivateTask(payload);
     close();
     await loadAllData();
     await refreshAll();
@@ -2127,16 +1842,19 @@ async function assignProjectToStaff(project, staffId) {
   const existingTask = TASKS.find((task) => task.project_id === project.id && task.assigned_to === staffId);
   if (existingTask) return existingTask;
 
-  return window.api.createTask({
-    project_id: project.id,
-    assigned_to: staffId,
-    created_by: currentUser?.id || null,
-    partner_id: project.partner_id || currentUser?.id || null,
-    title: project.client ? `${project.client} — ${project.name}` : project.name,
+  const payload = buildSharedTaskPayloadFromInput({
+    title: project.client ? `${project.client} - ${project.name}` : project.name,
     notes: '',
-    priority: 0,
-    due_date: null,
+    priorityValue: '',
+    dueDate: null,
+    base: {
+      project_id: project.id,
+      assigned_to: staffId,
+      created_by: currentUser?.id || null,
+      partner_id: project.partner_id || currentUser?.id || null,
+    },
   });
+  return window.api.createTask(payload);
 }
 
 async function duplicateProject(project) {
@@ -2298,7 +2016,7 @@ function renderTaskCard(task, options = {}) {
   `;
 
   return `
-    <div class="task-card ${task.completed ? 'completed' : ''} ${selectedTaskId === task.id ? 'selected' : ''} ${readOnly ? 'read-only' : ''} ${task.priority === -1 ? 'wait' : ''} ${hasMeta ? 'has-activity' : ''}" data-task-id="${task.id}" ${isPrivate ? 'data-private="true"' : ''} ${readOnly ? 'data-read-only="true"' : ''}>
+    <div class="task-card ${task.completed ? 'completed' : ''} ${selectedTaskId === task.id ? 'selected' : ''} ${readOnly ? 'read-only' : ''} ${task.priority === PRIORITY_WAIT ? 'wait' : ''} ${hasMeta ? 'has-activity' : ''}" data-task-id="${task.id}" ${isPrivate ? 'data-private="true"' : ''} ${readOnly ? 'data-read-only="true"' : ''}>
       <div class="task-check">
         <div class="task-checkbox ${task.completed ? 'checked' : ''} ${readOnly ? 'read-only' : ''}" data-task-id="${task.id}" ${isPrivate ? 'data-private="true"' : ''} ${readOnly ? 'data-read-only="true"' : ''}></div>
       </div>
@@ -2352,11 +2070,7 @@ function attachTaskCardEvents(container, options = {}) {
         const task = TASKS.find(t => t.id === taskId);
         if (task) {
           const nextCompleted = task.completed ? 0 : 1;
-          await window.api.updateTask({
-            id: taskId,
-            completed: nextCompleted,
-            status: nextCompleted ? 'complete' : 'not_started',
-          });
+          await applyTaskCompletionChange(taskId, nextCompleted);
         }
       }
       await loadAllData();
@@ -2395,9 +2109,8 @@ function attachTaskCardEvents(container, options = {}) {
     input.addEventListener('blur', async () => {
       const nextValue = input.value.trim();
       if (nextValue === original) return;
-      await window.api.updateTask({ id: taskId, notes: nextValue });
+      await applyTaskNotesChange(taskId, nextValue);
       original = nextValue;
-      await refreshAfterTaskChange(taskId);
     });
 
     input.addEventListener('keydown', (e) => {
@@ -2447,7 +2160,7 @@ async function refreshAll() {
   }
   if (activeTab === 'my-projects') renderMyProjects();
   else if (activeTab === 'staff-view') renderStaffOverview();
-  else renderMyTasks(document.getElementById('search-input').value);
+  else renderMyTasks();
 }
 
 // ── Staff Overview (Partner) ────────────────────────
@@ -2455,8 +2168,9 @@ async function refreshAll() {
 function renderStaffOverview() {
   const container = document.getElementById('staff-overview');
   const isReadOnlyStaffView = !isPartner();
-  const query = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
   let staffUsers = getActiveStaffUsers(isReadOnlyStaffView ? currentUser?.id : null);
+  container.classList.toggle('staff-filtered-overview', !isReadOnlyStaffView && Boolean(selectedStaffFilter));
+  container.classList.toggle('staff-readonly-overview-list', isReadOnlyStaffView);
 
   if (isReadOnlyStaffView) {
     selectedReadonlyStaffIds = selectedReadonlyStaffIds.filter((id) => staffUsers.some((user) => user.id === id));
@@ -2491,20 +2205,10 @@ function renderStaffOverview() {
         </aside>
 
         <section class="staff-readonly-main ${selectedUsers.length === 1 ? 'single-selection' : ''}">
-          <div class="staff-readonly-task-list">
+          <div class="staff-readonly-task-list" style="--staff-selection-count:${Math.max(selectedUsers.length, 1)}">
             ${selectedUsers.map((user) => {
               const pto = getPTOForUser(user.id);
-              const tasks = sortTasksLikeScheduling(getTasksForUser(user.id)).filter((task) => {
-                if (!query) return true;
-                const project = getProjectById(task.project_id);
-                const haystack = [
-                  task.title,
-                  task.notes,
-                  project?.client,
-                  project?.name,
-                ].map((value) => String(value || '').toLowerCase());
-                return haystack.some((value) => value.includes(query));
-              });
+              const tasks = sortTasksLikeScheduling(getTasksForUser(user.id));
               const pendingCount = tasks.filter((task) => !task.completed).length;
 
               return `
@@ -2522,7 +2226,7 @@ function renderStaffOverview() {
                   <div class="staff-readonly-group-list">
                     ${tasks.length === 0 ? `
                       <div class="empty-state">
-                        <div class="empty-state-text">${query ? 'No tasks match your search' : 'No tasks assigned'}</div>
+                        <div class="empty-state-text">No tasks assigned</div>
                       </div>
                     ` : tasks.map((task) => renderTaskCard(task, { readOnly: true })).join('')}
                   </div>
@@ -2571,18 +2275,6 @@ function renderStaffOverview() {
 
   container.innerHTML = staffUsers.map(user => {
     let tasks = sortTasksLikeScheduling(getTasksForUser(user.id));
-    if (query) {
-      tasks = tasks.filter((task) => {
-        const project = getProjectById(task.project_id);
-        const haystack = [
-          task.title,
-          task.notes,
-          project?.client,
-          project?.name,
-        ].map((value) => String(value || '').toLowerCase());
-        return haystack.some((value) => value.includes(query));
-      });
-    }
     const pending = tasks.filter(t => !t.completed);
     const pto = getPTOForUser(user.id);
     const isCollapsed = !isReadOnlyStaffView && selectedStaffFilter
@@ -2601,7 +2293,7 @@ function renderStaffOverview() {
         <div class="staff-section-tasks ${isCollapsed ? 'hidden' : ''}" data-staff-id="${user.id}">
           ${tasks.length === 0 ? `
             <div class="empty-state" style="padding:20px">
-              <div class="empty-state-text">${query ? 'No tasks match your search' : 'No tasks assigned'}</div>
+              <div class="empty-state-text">No tasks assigned</div>
             </div>
           ` : tasks.map(t => renderTaskCard(t, { readOnly: isReadOnlyStaffView })).join('')}
           ${isReadOnlyStaffView ? '' : `
@@ -2690,23 +2382,20 @@ function openAddStaffTaskDialog(staffId) {
     const title = titleInput.value.trim();
     if (!title) return;
 
-    const notes = document.getElementById('add-task-notes-input').value.trim();
-    const priorityVal = document.getElementById('add-task-priority').value;
-    const dueDate = document.getElementById('add-task-due').value || null;
-    let priority = 0;
-    if (priorityVal === 'w') priority = -1;
-    else if (priorityVal) priority = parseInt(priorityVal);
-
-    await window.api.createTask({
-      project_id: selectedProjectId,
-      assigned_to: staffId,
-      created_by: currentUser.id,
-      partner_id: project?.partner_id || currentUser.id,
+    const payload = buildSharedTaskPayloadFromInput({
       title,
-      notes,
-      priority,
-      due_date: dueDate,
+      notes: document.getElementById('add-task-notes-input').value,
+      priorityValue: document.getElementById('add-task-priority').value,
+      dueDate: document.getElementById('add-task-due').value,
+      base: {
+        project_id: selectedProjectId,
+        assigned_to: staffId,
+        created_by: currentUser.id,
+        partner_id: project?.partner_id || currentUser.id,
+      },
     });
+
+    await window.api.createTask(payload);
     close();
     await loadAllData();
     await refreshAll();
@@ -2755,23 +2444,20 @@ function setupAddSelfTask() {
       const title = titleInput.value.trim();
       if (!title) return;
 
-      const notes = document.getElementById('add-task-notes-input').value.trim();
-      const priorityVal = document.getElementById('add-task-priority').value;
-      const dueDate = document.getElementById('add-task-due').value || null;
-      let priority = 0;
-      if (priorityVal === 'w') priority = -1;
-      else if (priorityVal) priority = parseInt(priorityVal, 10);
-
-      await window.api.createTask({
-        project_id: selectedProjectId,
-        assigned_to: currentUser.id,
-        created_by: currentUser.id,
-        partner_id: project?.partner_id || null,
+      const payload = buildSharedTaskPayloadFromInput({
         title,
-        notes,
-        priority,
-        due_date: dueDate,
+        notes: document.getElementById('add-task-notes-input').value,
+        priorityValue: document.getElementById('add-task-priority').value,
+        dueDate: document.getElementById('add-task-due').value,
+        base: {
+          project_id: selectedProjectId,
+          assigned_to: currentUser.id,
+          created_by: currentUser.id,
+          partner_id: project?.partner_id || null,
+        },
       });
+
+      await window.api.createTask(payload);
       close();
       await loadAllData();
       await refreshAll();
@@ -2791,7 +2477,9 @@ function showDetailEmptyState() {
   document.getElementById('detail-header').innerHTML = `
     <h3 class="detail-title" id="detail-title">Task Details</h3>
   `;
-  document.getElementById('detail-body').innerHTML = `
+  const detailBody = document.getElementById('detail-body');
+  detailBody.className = 'detail-body';
+  detailBody.innerHTML = `
     <div class="detail-empty-state">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg>
       <span>Select a task for details</span>
@@ -2870,7 +2558,9 @@ async function openDetailPanel(taskId) {
     showDetailEmptyState();
   });
 
-  document.getElementById('detail-body').innerHTML = `
+  const detailBody = document.getElementById('detail-body');
+  detailBody.className = 'detail-body';
+  detailBody.innerHTML = `
     <section class="detail-panel-section">
       <div class="detail-section-heading">Details</div>
       <div class="detail-summary-grid">
@@ -2957,7 +2647,7 @@ async function openDetailPanel(taskId) {
         <div class="subtask-item ${subtask.completed ? 'completed' : ''}" data-subtask-id="${subtask.id}">
           <div class="task-checkbox ${subtask.completed ? 'checked' : ''}" data-subtask-id="${subtask.id}"></div>
           <span class="subtask-title">${escapeHtml(subtask.title)}</span>
-          ${subtask.assigned_to ? renderActionItemAssigneeAvatar(subtask.assigned_to) : ''}
+          ${renderActionItemAssignees(subtask)}
         </div>
       `).join('')}
       ${canManageThisTask ? '<div class="detail-add-link" id="add-subtask-btn">+ Add action item</div>' : ''}
@@ -3095,12 +2785,7 @@ async function openDetailPanel(taskId) {
     button.addEventListener('click', async () => {
       const nextStatus = button.dataset.taskStatus;
       if (!nextStatus || nextStatus === getTaskStatusValue(task)) return;
-      await window.api.updateTask({
-        id: task.id,
-        status: nextStatus,
-        completed: nextStatus === 'complete' ? 1 : 0,
-      });
-      await refreshAfterTaskChange(task.id);
+      await applyTaskStatusChange(task.id, nextStatus);
     });
   });
 
@@ -3227,41 +2912,17 @@ async function openDetailPanel(taskId) {
 
 // ── Add Subtask Dialog ──────────────────────────────
 
-function openActionItemContextMenu(event, task, subtask) {
-  const assigneeOptions = [
-    {
-      label: `Unassigned${!subtask.assigned_to ? ' ✓' : ''}`,
-      action: async () => {
-        await window.api.updateSubTask({ id: subtask.id, assigned_to: null });
-        await loadAllData();
-        await openDetailPanel(task.id);
-        await refreshAll();
-      }
-    },
-    ...getActionItemAssigneeOptions(task).map((user) => ({
-      label: `${user.display_name}${subtask.assigned_to === user.id ? ' ✓' : ''}`,
-      action: async () => {
-        await window.api.updateSubTask({ id: subtask.id, assigned_to: user.id });
-        await loadAllData();
-        await openDetailPanel(task.id);
-        await refreshAll();
-      }
-    }))
-  ];
-
+function openActionItemContextMenu(event, task, subtask, options = {}) {
   const items = [
     {
       label: 'Edit Action Item',
-      action: () => openAddSubtaskDialog(task, subtask)
-    }
+      action: () => openAddSubtaskDialog(task, subtask, options)
+    },
+    {
+      label: 'Assign To...',
+      action: () => openAddSubtaskDialog(task, subtask, { ...options, focusAssignees: true })
+    },
   ];
-
-  if (assigneeOptions.length > 0) {
-    items.push({
-      label: 'Assign To',
-      submenu: assigneeOptions
-    });
-  }
 
   items.push({ divider: true });
   items.push({
@@ -3271,8 +2932,12 @@ function openActionItemContextMenu(event, task, subtask) {
       if (!confirm(`Delete action item "${subtask.title}"?`)) return;
       await window.api.deleteSubTask(subtask.id);
       await loadAllData();
-      await openDetailPanel(task.id);
       await refreshAll();
+      if (options.returnToProjectId) {
+        await openProjectDetailPanel(options.returnToProjectId);
+      } else {
+        await openDetailPanel(task.id);
+      }
     }
   });
 
@@ -3280,27 +2945,85 @@ function openActionItemContextMenu(event, task, subtask) {
   positionMenu(menu, event.clientX, event.clientY);
 }
 
-function openAddSubtaskDialog(task, subtask = null) {
+function getPreferredActionItemAssigneeIds(task, subtask = null) {
+  const currentIds = getSubtaskAssigneeIds(subtask);
+  if (currentIds.length) return currentIds;
+
+  const selectedStaffIds = activeTab === 'staff-view'
+    ? (selectedReadonlyStaffIds.length ? selectedReadonlyStaffIds : (selectedStaffFilter ? [selectedStaffFilter] : []))
+    : (selectedStaffFilter ? [selectedStaffFilter] : []);
+  if (selectedStaffIds.length) return selectedStaffIds;
+
+  if (task.assigned_to) return [task.assigned_to];
+  if (task.owner_id) return [task.owner_id];
+  return [];
+}
+
+function renderActionItemAssigneeChecklist(task, selectedAssigneeIds) {
+  const assignedUsers = getTaskAssignees(task);
+  const assignedIds = new Set(assignedUsers.map((user) => user.id));
+  const unassignedUsers = getActiveStaffUsers().filter((user) => !assignedIds.has(user.id));
+
+  const renderDivider = (label) => `
+    <div class="dialog-checklist-divider">
+      <div class="dialog-checklist-divider-line"></div>
+      <span class="dialog-checklist-divider-label">${escapeHtml(label)}</span>
+      <div class="dialog-checklist-divider-line"></div>
+    </div>
+  `;
+
+  const renderUserRow = (user) => `
+    <label class="dialog-checklist-row ${selectedAssigneeIds.has(user.id) ? 'active' : ''}" data-subtask-assignee-row="${user.id}">
+      <input type="checkbox" value="${user.id}" ${selectedAssigneeIds.has(user.id) ? 'checked' : ''}>
+      <span class="dialog-checklist-avatar" style="background:${user.avatar_color}">${escapeHtml(getInitials(user))}</span>
+      <span class="dialog-checklist-name">${escapeHtml(user.display_name)}</span>
+    </label>
+  `;
+
+  const sections = [];
+  if (assignedUsers.length) {
+    sections.push(renderDivider('Assigned'));
+    sections.push(assignedUsers.map(renderUserRow).join(''));
+  }
+  if (unassignedUsers.length) {
+    sections.push(renderDivider('Unassigned'));
+    sections.push(unassignedUsers.map(renderUserRow).join(''));
+  }
+  return sections.join('');
+}
+
+function openAddSubtaskDialog(task, subtask = null, options = {}) {
   if (!canCurrentUserAddActionItems(task)) return;
 
   const overlay = document.getElementById('add-subtask-overlay');
   const ownerTask = getTaskThreadOwner(task) || task;
   const titleInput = document.getElementById('add-subtask-title');
-  const assigneeSelect = document.getElementById('add-subtask-assignee');
+  const assigneeList = document.getElementById('add-subtask-assignee-list');
   const saveButton = document.getElementById('add-subtask-save');
   const assigneeOptions = getActionItemAssigneeOptions(task);
-  const defaultAssignee = subtask?.assigned_to || task.assigned_to || task.owner_id || assigneeOptions[0]?.id || '';
+  const selectedAssigneeIds = new Set(
+    getPreferredActionItemAssigneeIds(task, subtask).filter((id) => assigneeOptions.some((user) => user.id === id))
+  );
 
   overlay.classList.remove('hidden');
   document.getElementById('add-subtask-subtitle').textContent = task.title;
   saveButton.textContent = subtask ? 'Save Action Item' : 'Add Action Item';
   titleInput.value = subtask?.title || '';
-  assigneeSelect.innerHTML = [
-    '<option value="">Unassigned</option>',
-    ...assigneeOptions.map((user) => `<option value="${user.id}">${escapeHtml(user.display_name)}</option>`)
-  ].join('');
-  assigneeSelect.value = assigneeSelect.querySelector(`option[value="${defaultAssignee}"]`) ? defaultAssignee : '';
-  setTimeout(() => titleInput.focus(), 50);
+  assigneeList.innerHTML = assigneeOptions.length === 0
+    ? '<div class="detail-empty-copy">No staff available.</div>'
+    : renderActionItemAssigneeChecklist(task, selectedAssigneeIds);
+
+  assigneeList.querySelectorAll('[data-subtask-assignee-row]').forEach((row) => {
+    const checkbox = row.querySelector('input[type="checkbox"]');
+    checkbox?.addEventListener('change', () => {
+      row.classList.toggle('active', checkbox.checked);
+    });
+  });
+
+  const focusTarget = options.focusAssignees
+    ? assigneeList.querySelector('input[type="checkbox"]')
+    : titleInput;
+  setTimeout(() => focusTarget?.focus(), 50);
 
   const close = () => {
     document.removeEventListener('keydown', escHandler);
@@ -3313,25 +3036,32 @@ function openAddSubtaskDialog(task, subtask = null) {
   saveButton.onclick = async () => {
     const title = titleInput.value.trim();
     if (!title) return;
+    const nextAssignedIds = [...assigneeList.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
 
     if (subtask) {
       await window.api.updateSubTask({
         id: subtask.id,
         title,
-        assigned_to: assigneeSelect.value || null,
+        assigned_to: nextAssignedIds[0] || null,
+        assigned_to_ids: nextAssignedIds,
       });
     } else {
       await window.api.createSubTask({
         task_id: ownerTask.id,
         title,
-        assigned_to: assigneeSelect.value || null,
+        assigned_to: nextAssignedIds[0] || null,
+        assigned_to_ids: nextAssignedIds,
       });
     }
 
     close();
     await loadAllData();
-    await openDetailPanel(task.id);
     await refreshAll();
+    if (options.returnToProjectId) {
+      await openProjectDetailPanel(options.returnToProjectId);
+    } else {
+      await openDetailPanel(task.id);
+    }
   };
 
   const escHandler = (e) => {
@@ -3355,15 +3085,7 @@ async function openProjectNotesDialog(project) {
   document.getElementById('project-notes-subtitle').textContent = `${project.client} | ${project.name}`;
 
   const buildDrafts = () => {
-    const drafts = new Map();
-    for (const note of getProjectSharedNotes(project.id)) {
-      drafts.set(note.id, {
-        ...note,
-        _lastSavedTitle: note.title || 'Untitled Note',
-        _lastSavedNotes: note.notes || '',
-      });
-    }
-    return drafts;
+    return buildProjectNoteDrafts(getProjectSharedNotes(project.id));
   };
 
   let drafts = buildDrafts();
@@ -3371,33 +3093,227 @@ async function openProjectNotesDialog(project) {
   let autosaveTimer = null;
   let saveChain = Promise.resolve();
   let isClosing = false;
+  let editingNoteId = null;
+  let savedEditorRange = null;
+  let selectionSaveRaf = null;
+  const fontSizeByCommandValue = {
+    1: 11,
+    2: 12,
+    3: 13,
+    4: 15,
+    5: 17,
+    6: 20,
+    7: 24,
+  };
 
-  const orderedDrafts = () => [...drafts.values()].sort((left, right) => {
-    const updatedDiff = Date.parse(right.updated_at || 0) - Date.parse(left.updated_at || 0);
-    if (Number.isFinite(updatedDiff) && updatedDiff !== 0) return updatedDiff;
-    return String(left.title || '').localeCompare(String(right.title || ''));
-  });
+  const orderedDrafts = () => orderProjectNotes([...drafts.values()]);
 
   const getActiveDraft = () => (activeNoteId ? drafts.get(activeNoteId) || null : null);
   const getAuthorName = (userId) => getUserById(userId)?.display_name || 'StudioSync';
-  const isUntouchedDraft = (draft) => draft?.isDraft
-    && String(draft.title || '').trim() === 'Untitled Note'
-    && !String(draft.notes || '').trim();
-  const hasPersistedChanges = (draft) => {
-    if (!draft) return false;
-    if (draft.isDraft) return !isUntouchedDraft(draft);
-    return String(draft.title || 'Untitled Note') !== String(draft._lastSavedTitle || 'Untitled Note')
-      || String(draft.notes || '') !== String(draft._lastSavedNotes || '');
-  };
 
   const syncDraftFromInputs = () => {
     const draft = getActiveDraft();
     if (!draft) return null;
 
+    const titleInput = document.getElementById('project-note-title-input');
+    if (titleInput) draft.title = titleInput.value.trim() || 'Untitled Note';
     const bodyInput = document.getElementById('project-note-body-input');
-    if (bodyInput) draft.notes = bodyInput.value;
+    if (bodyInput) draft.notes = getRichEditorHtml(bodyInput);
     draft.updated_by = currentUser?.id || draft.updated_by || null;
     return draft;
+  };
+
+  const applyEditorCommand = (command, value = null) => {
+    const bodyEditor = document.getElementById('project-note-body-input');
+    if (!bodyEditor) return;
+    restoreEditorSelection();
+    bodyEditor.focus({ preventScroll: true });
+    document.execCommand(command, false, value);
+    normalizeEditorFontTags(bodyEditor);
+    saveEditorSelection();
+    syncDraftFromInputs();
+    updateEditorToolbarState();
+    void scheduleAutosave();
+  };
+
+  const saveEditorSelection = () => {
+    const bodyEditor = document.getElementById('project-note-body-input');
+    const selection = window.getSelection?.();
+    if (!bodyEditor || !selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!bodyEditor.contains(range.commonAncestorContainer)) return;
+    savedEditorRange = range.cloneRange();
+    updateEditorToolbarState();
+  };
+
+  const queueEditorSelectionSave = () => {
+    if (selectionSaveRaf) {
+      cancelAnimationFrame(selectionSaveRaf);
+    }
+    selectionSaveRaf = requestAnimationFrame(() => {
+      selectionSaveRaf = null;
+      saveEditorSelection();
+    });
+  };
+
+  const handleEditorSelectionChange = () => {
+    const bodyEditor = document.getElementById('project-note-body-input');
+    const selection = window.getSelection?.();
+    if (!bodyEditor || !selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!bodyEditor.contains(range.commonAncestorContainer)) return;
+    queueEditorSelectionSave();
+  };
+
+  const restoreEditorSelection = () => {
+    if (!savedEditorRange) return;
+    const bodyEditor = document.getElementById('project-note-body-input');
+    if (!bodyEditor || !bodyEditor.contains(savedEditorRange.commonAncestorContainer)) return;
+    const selection = window.getSelection?.();
+    if (!selection) return;
+    selection.removeAllRanges();
+    selection.addRange(savedEditorRange);
+  };
+
+  const getFontSizeCommandValueForSelection = () => {
+    const bodyEditor = document.getElementById('project-note-body-input');
+    const selection = window.getSelection?.();
+    const range = savedEditorRange || (selection?.rangeCount ? selection.getRangeAt(0) : null);
+    if (!bodyEditor || !range || !bodyEditor.contains(range.commonAncestorContainer)) return '3';
+
+    const node = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const element = node instanceof Element ? node : bodyEditor;
+    const pxValue = parseFloat(window.getComputedStyle(element).fontSize || '13');
+    let bestValue = '3';
+    let bestDelta = Number.POSITIVE_INFINITY;
+    for (const [value, size] of Object.entries(fontSizeByCommandValue)) {
+      const delta = Math.abs(size - pxValue);
+      if (delta < bestDelta) {
+        bestValue = value;
+        bestDelta = delta;
+      }
+    }
+    return bestValue;
+  };
+
+  const getSelectionElement = () => {
+    const bodyEditor = document.getElementById('project-note-body-input');
+    const selection = window.getSelection?.();
+    const range = savedEditorRange || (selection?.rangeCount ? selection.getRangeAt(0) : null);
+    if (!bodyEditor || !range || !bodyEditor.contains(range.commonAncestorContainer)) return bodyEditor;
+
+    const node = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    return node instanceof Element ? node : bodyEditor;
+  };
+
+  const selectionIsInListItem = () => {
+    const bodyEditor = document.getElementById('project-note-body-input');
+    const element = getSelectionElement();
+    return Boolean(bodyEditor && element?.closest?.('li') && bodyEditor.contains(element.closest('li')));
+  };
+
+  const handleEditorTabKey = (event) => {
+    if (event.key !== 'Tab') return;
+
+    event.preventDefault();
+    const bodyEditor = document.getElementById('project-note-body-input');
+    if (!bodyEditor) return;
+
+    bodyEditor.focus({ preventScroll: true });
+
+    if (selectionIsInListItem()) {
+      document.execCommand(event.shiftKey ? 'outdent' : 'indent', false, null);
+    } else if (!event.shiftKey) {
+      document.execCommand('insertText', false, '\u00a0\u00a0\u00a0\u00a0');
+    }
+
+    saveEditorSelection();
+    syncDraftFromInputs();
+    updateEditorToolbarState();
+    void scheduleAutosave();
+  };
+
+  const updateEditorToolbarState = () => {
+    const fontSizeSelect = document.getElementById('project-notes-font-size');
+    if (fontSizeSelect) fontSizeSelect.value = getFontSizeCommandValueForSelection();
+
+    const stateCommands = ['bold', 'italic', 'underline', 'insertUnorderedList', 'insertOrderedList'];
+    for (const command of stateCommands) {
+      const button = document.querySelector(`.project-notes-tool-btn[data-editor-command="${command}"]`);
+      if (!button) continue;
+      let isActive = false;
+      try {
+        isActive = document.queryCommandState(command);
+      } catch (_) {
+        isActive = false;
+      }
+      button.classList.toggle('active', isActive);
+    }
+  };
+
+  const renderEditorToolbar = () => `
+    <div class="project-notes-toolbar" role="toolbar" aria-label="Note formatting">
+      <button class="project-notes-tool-btn" type="button" data-editor-command="undo" title="Undo" aria-label="Undo">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8H5V4M5 8c2.2-2.5 5.8-3.4 8.9-2.1 3.2 1.3 5.1 4.4 5.1 7.7 0 2.2-.9 4.2-2.3 5.7"></path></svg>
+      </button>
+      <button class="project-notes-tool-btn" type="button" data-editor-command="redo" title="Redo" aria-label="Redo">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 8h4V4M19 8c-2.2-2.5-5.8-3.4-8.9-2.1C6.9 7.2 5 10.3 5 13.6c0 2.2.9 4.2 2.3 5.7"></path></svg>
+      </button>
+      <span class="project-notes-tool-divider" aria-hidden="true"></span>
+      <label class="project-notes-select project-notes-font-picker" title="Font size">
+        <select id="project-notes-font-size" aria-label="Font size">
+          <option value="1">11</option>
+          <option value="2">12</option>
+          <option value="3" selected>13</option>
+          <option value="4">15</option>
+          <option value="5">17</option>
+          <option value="6">20</option>
+          <option value="7">24</option>
+        </select>
+      </label>
+      <span class="project-notes-tool-divider" aria-hidden="true"></span>
+      <button class="project-notes-tool-btn" type="button" data-editor-command="bold" title="Bold" aria-label="Bold">
+        <span class="project-notes-tool-glyph project-notes-tool-bold">B</span>
+      </button>
+      <button class="project-notes-tool-btn" type="button" data-editor-command="italic" title="Italic" aria-label="Italic">
+        <span class="project-notes-tool-glyph project-notes-tool-italic">I</span>
+      </button>
+      <button class="project-notes-tool-btn" type="button" data-editor-command="underline" title="Underline" aria-label="Underline">
+        <span class="project-notes-tool-glyph project-notes-tool-underline">U</span>
+      </button>
+      <span class="project-notes-tool-divider" aria-hidden="true"></span>
+      <button class="project-notes-tool-btn" type="button" data-editor-command="insertUnorderedList" title="Bulleted list" aria-label="Bulleted list">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="7" r="1.4"></circle><circle cx="5" cy="12" r="1.4"></circle><circle cx="5" cy="17" r="1.4"></circle><path d="M9 7h10M9 12h10M9 17h10"></path></svg>
+      </button>
+      <button class="project-notes-tool-btn" type="button" data-editor-command="insertOrderedList" title="Numbered list" aria-label="Numbered list">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h1.8v4M4 10h3M4 14h2.6L4 18h3M10 7h9M10 12h9M10 17h9"></path></svg>
+      </button>
+      <span class="project-notes-tool-divider" aria-hidden="true"></span>
+      <button class="project-notes-tool-btn" type="button" data-editor-command="removeFormat" title="Clear formatting" aria-label="Clear formatting">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h12v2M10 5v10M7 15h6M16 13l4 4M20 13l-4 4"></path></svg>
+      </button>
+    </div>
+  `;
+
+  const beginNoteTitleEdit = (noteId) => {
+    activeNoteId = noteId;
+    editingNoteId = noteId;
+    renderDialog();
+  };
+
+  const finishNoteTitleEdit = (noteId, { autosave = true } = {}) => {
+    const draft = noteId ? drafts.get(noteId) : null;
+    if (!draft) return;
+    draft.title = String(draft.title || '').trim() || 'Untitled Note';
+    editingNoteId = editingNoteId === noteId ? null : editingNoteId;
+    renderDialog();
+    if (autosave) {
+      void scheduleAutosave(noteId, { immediate: true });
+    }
   };
 
   const updateEditorMeta = (draft) => {
@@ -3418,7 +3334,7 @@ async function openProjectNotesDialog(project) {
 
   const persistDraft = async (draftId) => {
     const draft = draftId ? drafts.get(draftId) : null;
-    if (!draft || !hasPersistedChanges(draft)) return draft;
+    if (!draft || !hasProjectNotePersistedChanges(draft)) return draft;
 
     const title = String(draft.title || '').trim() || 'Untitled Note';
     const notes = String(draft.notes || '');
@@ -3511,12 +3427,8 @@ async function openProjectNotesDialog(project) {
       {
         label: 'Rename Note',
         action: () => {
-          const nextTitle = window.prompt('Rename note', note.title || 'Untitled Note');
-          if (nextTitle === null) return;
-          note.title = nextTitle.trim() || 'Untitled Note';
-          note.updated_by = currentUser?.id || note.updated_by || null;
-          renderDialog();
-          void scheduleAutosave(note.id, { immediate: true });
+          syncDraftFromInputs();
+          beginNoteTitleEdit(note.id);
         }
       },
       {
@@ -3575,12 +3487,14 @@ async function openProjectNotesDialog(project) {
         <div class="project-notes-editor">
           <div class="project-notes-main-header">
             <div class="project-notes-main-copy">
-              <div class="project-notes-main-title">${escapeHtml(activeDraft.title || 'Untitled Note')}</div>
+              ${editingNoteId === activeDraft.id
+                ? `<input class="project-notes-title-input" id="project-note-title-input" type="text" value="${escapeAttr(activeDraft.title || 'Untitled Note')}" placeholder="Note name">`
+                : `<div class="project-notes-main-title">${escapeHtml(activeDraft.title || 'Untitled Note')}</div>`}
             </div>
           </div>
+          ${renderEditorToolbar()}
           <div class="detail-field">
-            <div class="detail-field-label">Note Details</div>
-            <textarea class="dialog-textarea project-note-body-input" id="project-note-body-input" rows="12" placeholder="Add the shared details everyone should see for this project...">${escapeHtml(activeDraft.notes || '')}</textarea>
+            <div class="dialog-textarea project-note-body-input" id="project-note-body-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Add the shared details everyone should see for this project...">${renderRichNoteHtml(activeDraft.notes || '')}</div>
           </div>
           <div class="project-notes-meta">
             <span id="project-note-meta-updated">Updated ${escapeHtml(formatProjectNoteTimestamp(activeDraft.updated_at))}</span>
@@ -3588,10 +3502,65 @@ async function openProjectNotesDialog(project) {
           </div>
         </div>
       `;
-      document.getElementById('project-note-body-input')?.addEventListener('input', () => {
+      const bodyEditor = document.getElementById('project-note-body-input');
+      bodyEditor?.addEventListener('mouseup', queueEditorSelectionSave);
+      bodyEditor?.addEventListener('keyup', queueEditorSelectionSave);
+      bodyEditor?.addEventListener('keydown', handleEditorTabKey);
+      bodyEditor?.addEventListener('focus', queueEditorSelectionSave);
+      bodyEditor?.addEventListener('click', updateEditorToolbarState);
+      bodyEditor?.addEventListener('input', () => {
+        queueEditorSelectionSave();
         syncDraftFromInputs();
         void scheduleAutosave();
       });
+      bodyEditor?.addEventListener('paste', (event) => {
+        event.preventDefault();
+        const text = event.clipboardData?.getData('text/plain') || '';
+        document.execCommand('insertText', false, text);
+        saveEditorSelection();
+        syncDraftFromInputs();
+        updateEditorToolbarState();
+        void scheduleAutosave();
+      });
+      bodyEditor?.addEventListener('blur', () => {
+        syncDraftFromInputs();
+      });
+      mainEl.querySelectorAll('.project-notes-tool-btn[data-editor-command]').forEach((button) => {
+        button.addEventListener('mousedown', (event) => event.preventDefault());
+        button.addEventListener('click', () => {
+          applyEditorCommand(button.dataset.editorCommand, button.dataset.editorValue || null);
+        });
+      });
+      const fontSizeSelect = document.getElementById('project-notes-font-size');
+      fontSizeSelect?.addEventListener('mousedown', queueEditorSelectionSave);
+      fontSizeSelect?.addEventListener('focus', queueEditorSelectionSave);
+      fontSizeSelect?.addEventListener('change', () => {
+        applyEditorCommand('fontSize', fontSizeSelect.value);
+        updateEditorToolbarState();
+      });
+      updateEditorToolbarState();
+      const noteTitleInput = document.getElementById('project-note-title-input');
+      noteTitleInput?.addEventListener('input', () => {
+        syncDraftFromInputs();
+      });
+      noteTitleInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          syncDraftFromInputs();
+          finishNoteTitleEdit(activeDraft.id);
+          document.getElementById('project-note-body-input')?.focus();
+        }
+      });
+      noteTitleInput?.addEventListener('blur', () => {
+        syncDraftFromInputs();
+        finishNoteTitleEdit(activeDraft.id);
+      });
+      if (editingNoteId === activeDraft.id) {
+        setTimeout(() => {
+          noteTitleInput?.focus();
+          noteTitleInput?.select();
+        }, 0);
+      }
       saveBtn.textContent = 'Close';
       saveBtn.disabled = false;
     }
@@ -3602,6 +3571,7 @@ async function openProjectNotesDialog(project) {
         syncDraftFromInputs();
         void scheduleAutosave(previousNoteId, { immediate: true });
         activeNoteId = button.dataset.noteId;
+        editingNoteId = null;
         renderDialog();
       });
     });
@@ -3619,7 +3589,12 @@ async function openProjectNotesDialog(project) {
       clearTimeout(autosaveTimer);
       autosaveTimer = null;
     }
+    if (selectionSaveRaf) {
+      cancelAnimationFrame(selectionSaveRaf);
+      selectionSaveRaf = null;
+    }
     document.removeEventListener('keydown', escHandler);
+    document.removeEventListener('selectionchange', handleEditorSelectionChange);
     overlay.classList.add('hidden');
   };
 
@@ -3663,6 +3638,7 @@ async function openProjectNotesDialog(project) {
       isDraft: true,
     });
     activeNoteId = draftId;
+    editingNoteId = draftId;
     renderDialog();
   };
 
@@ -3677,6 +3653,7 @@ async function openProjectNotesDialog(project) {
     if (e.key === 'Escape') void handleClose();
   };
   document.addEventListener('keydown', escHandler);
+  document.addEventListener('selectionchange', handleEditorSelectionChange);
 }
 
 function getProjectPartners(project) {
@@ -3752,62 +3729,113 @@ function renderProjectFolderCard(project, canManageFolder) {
   `;
 }
 
+// ── Tab Bar ─────────────────────────────────────────
+
 async function openProjectDetailPanel(projectId) {
   const project = getProjectById(projectId);
   if (!project) return;
 
   selectedProjectId = projectId;
   selectedTaskId = null;
+  ACTIVE_PROJECT_FOLDER_EDIT = ACTIVE_PROJECT_FOLDER_EDIT?.projectId === project.id ? ACTIVE_PROJECT_FOLDER_EDIT : null;
   document.querySelectorAll('.task-card').forEach((card) => card.classList.remove('selected'));
   document.querySelectorAll('.personal-project-card').forEach((card) => {
     card.classList.toggle('selected', card.dataset.projectId === projectId);
   });
 
+  const projectNotesPreview = getProjectSharedNotesPreview(project.id);
+  const canManageFolder = canCurrentUserManageProjectFolder(project);
+  const actionItemTask = getProjectActionItemTask(project);
+  const subtasks = actionItemTask ? getTaskActionItems(actionItemTask) : [];
+  const canManageActionItems = Boolean(actionItemTask && canCurrentUserAddActionItems(actionItemTask));
+  const statusLabel = getProjectSection(project).toUpperCase();
+
   const header = document.getElementById('detail-header');
   header.innerHTML = `
-    <h3 class="detail-title" id="detail-title">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</h3>
-    <button class="detail-close" id="detail-close">&times;</button>
+    <div class="detail-header-copy">
+      <h3 class="detail-title" id="detail-title">${escapeHtml(project.client)} | ${escapeHtml(project.name)}</h3>
+      <div class="detail-subtitle ${project.notes ? '' : 'is-empty'}">${project.notes ? escapeHtml(project.notes) : '&nbsp;'}</div>
+    </div>
+    <button class="detail-close" id="detail-close" aria-label="Close details">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
   `;
 
   document.getElementById('detail-close').addEventListener('click', () => {
     selectedProjectId = null;
+    ACTIVE_PROJECT_FOLDER_EDIT = null;
     document.querySelectorAll('.personal-project-card').forEach((card) => card.classList.remove('selected'));
     showDetailEmptyState();
   });
 
-  const projectNotesPreview = getProjectSharedNotesPreview(project.id);
-  document.getElementById('detail-body').innerHTML = `
-    <div class="detail-field">
-      <div class="detail-field-label">Client Name</div>
-      <input type="text" class="input" id="project-detail-client" value="${escapeAttr(project.client || '')}">
-    </div>
-    <div class="detail-field">
-      <div class="detail-field-label">Project Name</div>
-      <input type="text" class="input" id="project-detail-name" value="${escapeAttr(project.name || '')}">
-    </div>
-    <div class="detail-field">
-      <div class="detail-field-label">Status</div>
-      <div class="detail-field-value">${escapeHtml(getProjectSection(project).toUpperCase())}</div>
-    </div>
-    <div class="detail-field">
-      <div class="detail-field-label">Scheduling Notes</div>
-      <input type="text" class="input" id="project-detail-notes" value="${escapeAttr(project.notes || '')}" placeholder="Short note shown in Dashboard and project cards.">
-    </div>
-    <div class="detail-field">
-      <div class="detail-field-label">Project Notes</div>
-      <button class="project-notes-btn detail-project-info-btn detail-project-notes-launch" id="project-detail-project-notes" type="button">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        <span class="detail-project-info-btn-label">Manage shared notes</span>
-        <span class="notes-preview">
-          <span class="notes-preview-title">${escapeHtml(projectNotesPreview.summary)}</span>
-          <span class="notes-preview-detail">${escapeHtml(projectNotesPreview.detail)}</span>
-        </span>
-        <span class="detail-link-arrow" aria-hidden="true">›</span>
-      </button>
-    </div>
-    <div class="detail-actions">
-      <button class="btn btn-primary btn-sm" id="project-detail-save">Save Changes</button>
-    </div>
+  const detailBody = document.getElementById('detail-body');
+  detailBody.className = 'detail-body project-detail-body';
+  detailBody.innerHTML = `
+    <section class="detail-panel-section">
+      <div class="detail-section-heading">Details</div>
+      <div class="detail-summary-grid">
+        <div class="detail-summary-item">
+          <div class="detail-summary-label">Status</div>
+          <div class="detail-field-value">${escapeHtml(statusLabel)}</div>
+        </div>
+      </div>
+      <div class="project-detail-form">
+        <div class="detail-field">
+          <div class="detail-field-label">Client Name</div>
+          <input type="text" class="input" id="project-detail-client" value="${escapeAttr(project.client || '')}">
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-label">Project Name</div>
+          <input type="text" class="input" id="project-detail-name" value="${escapeAttr(project.name || '')}">
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-label">Scheduling Notes</div>
+          <input type="text" class="input" id="project-detail-notes" value="${escapeAttr(project.notes || '')}" placeholder="Short note shown in Dashboard and project cards.">
+        </div>
+        <div class="detail-actions project-detail-actions">
+          <button class="btn btn-primary btn-sm" id="project-detail-save">Save Changes</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="detail-panel-section">
+      <div class="detail-section-heading">Project Info</div>
+      <div class="detail-info-stack">
+        <div class="detail-info-item">
+          <div class="detail-summary-label">Project folder</div>
+          ${renderProjectFolderCard(project, canManageFolder)}
+        </div>
+        <div class="detail-info-item">
+          <div class="detail-summary-label">Project Notes</div>
+          <button class="project-notes-btn detail-project-info-btn detail-project-notes-launch" id="project-detail-project-notes" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            <span class="detail-project-info-btn-label">Manage shared notes</span>
+            <span class="notes-preview">
+              <span class="notes-preview-title">${escapeHtml(projectNotesPreview.summary)}</span>
+              <span class="notes-preview-detail">${escapeHtml(projectNotesPreview.detail)}</span>
+            </span>
+            <span class="detail-link-arrow" aria-hidden="true">&rsaquo;</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="detail-panel-section">
+      <div class="detail-section-heading">Action Items</div>
+      ${subtasks.length === 0 ? `
+        <div class="detail-empty-copy">${actionItemTask ? 'No action items yet' : 'Create a task for this project before adding action items.'}</div>
+      ` : subtasks.map((subtask) => `
+        <div class="subtask-item ${subtask.completed ? 'completed' : ''}" data-subtask-id="${subtask.id}">
+          <div class="task-checkbox ${subtask.completed ? 'checked' : ''}" data-subtask-id="${subtask.id}"></div>
+          <span class="subtask-title">${escapeHtml(subtask.title)}</span>
+          ${renderActionItemAssignees(subtask)}
+        </div>
+      `).join('')}
+      ${canManageActionItems ? '<div class="detail-add-link" id="project-add-subtask-btn">+ Add action item</div>' : ''}
+    </section>
   `;
 
   document.getElementById('project-detail-project-notes').addEventListener('click', () => {
@@ -3830,9 +3858,117 @@ async function openProjectDetailPanel(projectId) {
     renderMyProjects();
     await openProjectDetailPanel(project.id);
   });
-}
 
-// ── Tab Bar ─────────────────────────────────────────
+  const panel = document.getElementById('detail-panel');
+  panel.querySelectorAll('.task-checkbox[data-subtask-id]').forEach((checkbox) => {
+    checkbox.addEventListener('click', async () => {
+      const subId = checkbox.dataset.subtaskId;
+      await window.api.toggleSubTask(subId);
+      await loadAllData();
+      await refreshAll();
+      await openProjectDetailPanel(project.id);
+    });
+  });
+
+  panel.querySelectorAll('.subtask-item[data-subtask-id]').forEach((item) => {
+    item.addEventListener('contextmenu', (event) => {
+      if (!canManageActionItems || !actionItemTask) return;
+      const subtask = subtasks.find((candidate) => candidate.id === item.dataset.subtaskId);
+      if (!subtask) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openActionItemContextMenu(event, actionItemTask, subtask, { returnToProjectId: project.id });
+    });
+  });
+
+  document.getElementById('project-add-subtask-btn')?.addEventListener('click', () => {
+    if (!actionItemTask) return;
+    openAddSubtaskDialog(actionItemTask, null, { returnToProjectId: project.id });
+  });
+
+  const folderCard = document.getElementById('detail-folder-link-card');
+  const folderMenuBtn = document.getElementById('detail-folder-link-menu');
+  const folderInput = document.getElementById('detail-folder-link-input');
+  const folderSaveBtn = document.getElementById('detail-folder-link-save');
+  const folderCancelBtn = document.getElementById('detail-folder-link-cancel');
+
+  folderCard?.addEventListener('click', async () => {
+    const linkValue = String(project.folder_link || '').trim();
+    if (linkValue) {
+      const result = await window.api.openLink(linkValue);
+      if (!result?.success) {
+        alert(result?.error || 'Could not open that link.');
+      }
+      return;
+    }
+
+    if (canManageFolder) {
+      ACTIVE_PROJECT_FOLDER_EDIT = { projectId: project.id, value: '' };
+      await openProjectDetailPanel(project.id);
+    }
+  });
+
+  folderMenuBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!canManageFolder) return;
+
+    const menu = ContextMenu.create([
+      {
+        label: 'Edit',
+        action: async () => {
+          ACTIVE_PROJECT_FOLDER_EDIT = {
+            projectId: project.id,
+            value: project.folder_link || '',
+          };
+          await openProjectDetailPanel(project.id);
+        }
+      },
+      {
+        label: 'Clear',
+        danger: true,
+        action: async () => {
+          ACTIVE_PROJECT_FOLDER_EDIT = null;
+          await window.api.updateProject({ id: project.id, folder_link: '' });
+          await refreshAfterProjectChange(project.id, null);
+        }
+      }
+    ]);
+
+    const rect = folderMenuBtn.getBoundingClientRect();
+    positionMenu(menu, rect.right - 180, rect.bottom + 6);
+  });
+
+  if (folderInput) {
+    setTimeout(() => {
+      folderInput.focus();
+      folderInput.select();
+    }, 20);
+  }
+
+  folderSaveBtn?.addEventListener('click', async () => {
+    const nextValue = folderInput.value.trim();
+    ACTIVE_PROJECT_FOLDER_EDIT = null;
+    await window.api.updateProject({ id: project.id, folder_link: nextValue });
+    await refreshAfterProjectChange(project.id, null);
+  });
+
+  folderCancelBtn?.addEventListener('click', async () => {
+    ACTIVE_PROJECT_FOLDER_EDIT = null;
+    await openProjectDetailPanel(project.id);
+  });
+
+  folderInput?.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      folderSaveBtn?.click();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      folderCancelBtn?.click();
+    }
+  });
+}
 
 function setupTabBar() {
   document.querySelectorAll('.tab').forEach(tab => {
@@ -3872,11 +4008,7 @@ function activateTab(tabName, options = {}) {
   document.getElementById(`view-${tabName}`).classList.remove('hidden');
   document.getElementById(`view-${tabName}`).classList.add('active');
 
-  const searchInput = document.getElementById('search-input');
-  if (!searchInput) return;
-
   if (tabName === 'my-projects') {
-    searchInput.placeholder = 'Search projects...';
     renderMyProjects();
     if (selectedProjectId) {
       openProjectDetailPanel(selectedProjectId);
@@ -3884,7 +4016,6 @@ function activateTab(tabName, options = {}) {
       showDetailEmptyState();
     }
   } else if (tabName === 'staff-view') {
-    searchInput.placeholder = 'Search tasks...';
     if (!isPartner()) {
       clearSelectedTaskDetail();
     }
@@ -3895,8 +4026,7 @@ function activateTab(tabName, options = {}) {
       showDetailEmptyState();
     }
   } else {
-    searchInput.placeholder = 'Search tasks...';
-    renderMyTasks(searchInput.value);
+    renderMyTasks();
     if (selectedTaskId) {
       openDetailPanel(selectedTaskId);
     } else {
@@ -3906,18 +4036,6 @@ function activateTab(tabName, options = {}) {
 }
 
 // ── Search ──────────────────────────────────────────
-
-function setupSearch() {
-  document.getElementById('search-input').addEventListener('input', (e) => {
-    if (activeTab === 'my-projects') {
-      renderMyProjects();
-    } else if (activeTab === 'staff-view') {
-      renderStaffOverview();
-    } else {
-      renderMyTasks(e.target.value);
-    }
-  });
-}
 
 // ── Logout ──────────────────────────────────────────
 
@@ -3988,10 +4106,23 @@ function flashSyncIndicator() {
   }, 1200);
 }
 
+document.addEventListener('click', (event) => {
+  const link = event.target.closest?.('[data-open-link]');
+  if (!link) return;
+  event.preventDefault();
+  event.stopPropagation();
+  window.api.openLink(link.dataset.openLink);
+});
+
 function setupSettingsMenu() {
-  document.getElementById('settings-btn').addEventListener('click', async (e) => {
+  const settingsBtn = document.getElementById('settings-btn');
+  if (!settingsBtn || settingsBtn.dataset.bound === 'true') return;
+  settingsBtn.dataset.bound = 'true';
+
+  const openSettingsMenu = async (e) => {
     e.preventDefault();
     e.stopPropagation();
+    ContextMenu.dismiss();
 
     let launchOnStartup = null;
     try {
@@ -4049,8 +4180,14 @@ function setupSettingsMenu() {
 
     const menu = ContextMenu.create(items);
 
-    const rect = e.currentTarget.getBoundingClientRect();
-    positionMenu(menu, rect.right - 220, rect.bottom + 6);
+    const rect = settingsBtn.getBoundingClientRect();
+    positionMenu(menu, Math.max(8, rect.right - 196), rect.bottom + 8);
+  };
+
+  settingsBtn.addEventListener('pointerdown', openSettingsMenu);
+  settingsBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
   });
 }
 

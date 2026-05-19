@@ -1024,6 +1024,14 @@ function registerIPC() {
     return db.getSubTasks(taskId);
   });
 
+  ipcMain.handle('get-task-support-data', (_e, taskIds) => {
+    if (!db) return { subtasksByTaskId: {}, commentsByTaskId: {} };
+    return {
+      subtasksByTaskId: db.getSubTasksByTaskIds(taskIds),
+      commentsByTaskId: db.getCommentsByTaskIds(taskIds),
+    };
+  });
+
   ipcMain.handle('create-subtask', (_e, data) => {
     if (!db) return null;
     const sub = db.createSubTask(data);

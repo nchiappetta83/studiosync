@@ -31,7 +31,8 @@ contextBridge.exposeInMainWorld('api', {
   getUsers:         ()          => ipcRenderer.invoke('get-users'),
   createUser:       (data)      => ipcRenderer.invoke('create-user', data),
   updateUser:       (data)      => ipcRenderer.invoke('update-user', data),
-  deleteUser:       (id)        => ipcRenderer.invoke('delete-user', id),
+  deleteUser:       (idOrOptions) => ipcRenderer.invoke('delete-user', idOrOptions),
+  getUserDeleteImpact: (id)     => ipcRenderer.invoke('get-user-delete-impact', id),
 
   // Business Roles
   getBusinessRoles:     ()      => ipcRenderer.invoke('get-business-roles'),

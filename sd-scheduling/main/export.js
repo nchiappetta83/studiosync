@@ -1,6 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const {
+  PRIORITY_NONE,
+  PRIORITY_WAIT,
+  PRIORITY_CUSTOM,
+  getCustomPriorityLabel,
+} = require('./priority');
 
 class ExportEngine {
   constructor(db) {
@@ -70,6 +76,23 @@ class ExportEngine {
     const partner = usersById[partnerId];
     if (!partner) return '';
     return this._initials(partner.display_name);
+  }
+
+  _getTaskDisplayTitle(task, projectsById) {
+    const project = task.project_id ? projectsById[task.project_id] : null;
+    if (project) {
+      return project.client ? `${project.client} | ${project.name}` : (project.name || '');
+    }
+
+    const rawTitle = String(task.title || '').trim();
+    if (rawTitle.includes('|')) {
+      return rawTitle
+        .split('|')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(' | ');
+    }
+    return rawTitle.replace(/\s+[-\u2013\u2014]\s+/, ' | ');
   }
 
   /**
@@ -197,22 +220,23 @@ class ExportEngine {
       } else {
         for (const task of userTasks) {
           let ps = this._priorityStyle(task.priority);
-          if (task.priority === -2 && task.priority_label) {
-            const cpLabel = task.priority_label.replace(/^cp:/, '');
+          if (task.priority === PRIORITY_CUSTOM && task.priority_label) {
+            const cpLabel = getCustomPriorityLabel(task.priority_label);
             const cpDef = this.db.getCustomPriorities().find(p => p.label === cpLabel);
             if (cpDef) ps = { bg: cpDef.color + '18', color: cpDef.color };
           }
           let priorityLabel = '—';
-          if (task.priority === -2 && task.priority_label) {
-            priorityLabel = task.priority_label.replace(/^cp:/, '');
-          } else if (task.priority === -1) {
+          if (task.priority === PRIORITY_CUSTOM && task.priority_label) {
+            priorityLabel = getCustomPriorityLabel(task.priority_label);
+          } else if (task.priority === PRIORITY_WAIT) {
             priorityLabel = 'W';
-          } else if (task.priority && task.priority > 0) {
+          } else if (task.priority !== PRIORITY_NONE && task.priority > 0) {
             priorityLabel = String(task.priority);
           }
           const dueStr = task.due_date ? this._formatDueDisplay(task.due_date) : '';
           const partnerBadge = this._getPartnerBadge(task, usersById, projectsById);
-          const hashStr = this._hash(user.id + task.title + task.priority + task.due_date + task.notes);
+          const displayTitle = this._getTaskDisplayTitle(task, projectsById);
+          const hashStr = this._hash(user.id + displayTitle + task.priority + task.due_date + task.notes);
           const unconfirmedClass = (task.confirmed === 0) ? ' unconfirmed' : '';
 
           // Header right: due badge + partner badge
@@ -228,7 +252,7 @@ class ExportEngine {
                         <div class="card-body">
                             <div class="card-section">
                                 <span class="card-section-label">Project</span>
-                                <div class="card-name">${this._esc(task.title)}</div>
+                                <div class="card-name">${this._esc(displayTitle)}</div>
                             </div>
                             <div class="card-divider"></div>
                         <div class="card-section">

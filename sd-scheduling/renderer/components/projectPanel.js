@@ -6,6 +6,9 @@
 const ProjectPanel = {
   _projectSearchQuery: '',
   _pendingScrollAnchor: null,
+  _pendingScrollProjectId: null,
+  _lockedScrollTop: null,
+  _scrollLockUntil: 0,
 
   init() {
     this._container = document.getElementById('projects-container');
@@ -60,7 +63,12 @@ const ProjectPanel = {
           activeOnly: this._activeOnlyCheckbox.checked,
         });
         const allowedIds = new Set(nextProjects.map((project) => String(project.id)));
-        this._pendingScrollAnchor = this._captureScrollAnchor({ allowedIds });
+        this._lockedScrollTop = null;
+        this._scrollLockUntil = 0;
+        this._pendingScrollAnchor = this._captureScrollAnchor({
+          allowedIds,
+          strategy: 'top-visible',
+        });
         this.render();
       });
     }
@@ -168,7 +176,8 @@ const ProjectPanel = {
   },
 
   render() {
-    const scrollAnchor = this._pendingScrollAnchor || this._captureScrollAnchor();
+    const scrollLock = this._getActiveScrollLock();
+    const scrollAnchor = scrollLock || this._pendingScrollAnchor || this._captureScrollAnchor();
     this._pendingScrollAnchor = null;
     const projects = this._getFilteredProjects();
 
@@ -227,6 +236,32 @@ const ProjectPanel = {
     this._pendingScrollAnchor = this._buildAnchorForCard(anchorCard, cards, scrollerRect);
   },
 
+  preserveProjectPosition(projectId, options = {}) {
+    this._pendingScrollProjectId = projectId ? String(projectId) : null;
+    this.prepareAnchorNearProject(projectId, options);
+  },
+
+  lockScrollPosition(durationMs = 1500) {
+    if (!this._scroller) return;
+    this._lockedScrollTop = this._scroller.scrollTop;
+    this._scrollLockUntil = Date.now() + durationMs;
+    this._pendingScrollAnchor = null;
+    this._pendingScrollProjectId = null;
+  },
+
+  _getActiveScrollLock() {
+    if (this._lockedScrollTop === null || Date.now() > this._scrollLockUntil) {
+      this._lockedScrollTop = null;
+      this._scrollLockUntil = 0;
+      return null;
+    }
+
+    return {
+      mode: 'scroll-lock',
+      scrollTop: this._lockedScrollTop,
+    };
+  },
+
   _buildAnchorForCard(card, cards, scrollerRect) {
     const cardRect = card.getBoundingClientRect();
     return {
@@ -269,6 +304,15 @@ const ProjectPanel = {
       return cards[0] || null;
     }
 
+    if (options.strategy === 'top-visible') {
+      return candidates
+        .slice()
+        .sort((left, right) => {
+          if (left.rect.top !== right.rect.top) return left.rect.top - right.rect.top;
+          return right.visibleHeight - left.visibleHeight;
+        })[0]?.card || candidates[0].card;
+    }
+
     const nearestToFocus = candidates.reduce((best, item) => {
       if (!best) return item;
 
@@ -302,7 +346,10 @@ const ProjectPanel = {
 
     const scrollerRect = this._scroller.getBoundingClientRect();
     const allowedIds = options.allowedIds instanceof Set ? options.allowedIds : null;
-    const anchorCard = this._pickAnchorCard(cards, scrollerRect, { allowedIds }) || cards[0];
+    const anchorCard = this._pickAnchorCard(cards, scrollerRect, {
+      allowedIds,
+      strategy: options.strategy,
+    }) || cards[0];
     return this._buildAnchorForCard(anchorCard, cards, scrollerRect);
   },
 
@@ -310,6 +357,12 @@ const ProjectPanel = {
     if (!anchor || !this._container || !this._scroller) return;
 
     requestAnimationFrame(() => {
+      if (anchor.mode === 'scroll-lock') {
+        const maxScroll = Math.max(0, this._scroller.scrollHeight - this._scroller.clientHeight);
+        this._scroller.scrollTop = Math.min(anchor.scrollTop || 0, maxScroll);
+        return;
+      }
+
       const cards = Array.from(this._container.querySelectorAll('.project-card'));
       const cardsById = new Map(cards.map((card) => [card.dataset.projectId, card]));
       let target = anchor.id ? cardsById.get(anchor.id) : null;
@@ -334,11 +387,25 @@ const ProjectPanel = {
       if (target) {
         const nextScrollTop = target.offsetTop - (anchor.offset || 0);
         this._scroller.scrollTop = Math.max(0, nextScrollTop);
+        this._pendingScrollProjectId = null;
         return;
+      }
+
+      if (this._pendingScrollProjectId) {
+        const pendingIndex = Array.isArray(anchor.orderedIds)
+          ? anchor.orderedIds.indexOf(this._pendingScrollProjectId)
+          : -1;
+        if (pendingIndex >= 0 && cards.length > 0) {
+          const fallback = cards[Math.min(pendingIndex, cards.length - 1)];
+          this._scroller.scrollTop = Math.max(0, fallback.offsetTop - (anchor.offset || 0));
+          this._pendingScrollProjectId = null;
+          return;
+        }
       }
 
       const maxScroll = Math.max(0, this._scroller.scrollHeight - this._scroller.clientHeight);
       this._scroller.scrollTop = Math.min(anchor.scrollTop || 0, maxScroll);
+      this._pendingScrollProjectId = null;
     });
   }
 };

@@ -1,6 +1,9 @@
+const fs = require('fs');
 const BetterSqlite3 = require('better-sqlite3');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+
+const DB_SCHEMA_VERSION = 15;
 
 class Database {
   constructor(dbPath) {
@@ -40,6 +43,92 @@ class Database {
     }
   }
 
+  _createMigrationBackup(label) {
+    if (!this.dbPath || !this.db || !fs.existsSync(this.dbPath)) return null;
+
+    try {
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch (_) {}
+
+    const dir = path.dirname(this.dbPath);
+    const base = path.basename(this.dbPath, path.extname(this.dbPath));
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = path.join(dir, `${base}.${label}.${stamp}.bak`);
+    fs.copyFileSync(this.dbPath, backupPath);
+    return backupPath;
+  }
+
+  _rebuildUsersTableForVersion8() {
+    const backupPath = this._createMigrationBackup('pre-v8-users-rebuild');
+    if (backupPath) {
+      console.log(`Database backup created before v8 migration: ${backupPath}`);
+    }
+
+    this.db.pragma('foreign_keys = OFF');
+    try {
+      this.db.exec(`
+        CREATE TABLE users_new (
+          id                TEXT PRIMARY KEY,
+          username          TEXT UNIQUE NOT NULL,
+          display_name      TEXT NOT NULL,
+          role              TEXT NOT NULL CHECK(role IN ('partner', 'staff', 'bootstrap')),
+          avatar_color      TEXT NOT NULL DEFAULT '#5856A6',
+          sort_order        INTEGER NOT NULL DEFAULT 0,
+          active            INTEGER NOT NULL DEFAULT 1,
+          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          first_name        TEXT NOT NULL DEFAULT '',
+          last_name         TEXT NOT NULL DEFAULT '',
+          business_role_id  TEXT REFERENCES business_roles(id) ON DELETE SET NULL,
+          is_admin          INTEGER NOT NULL DEFAULT 0,
+          windows_username  TEXT
+        );
+
+        INSERT INTO users_new (
+          id, username, display_name, role, avatar_color, sort_order, active, created_at,
+          first_name, last_name, business_role_id, is_admin, windows_username
+        )
+        SELECT
+          id, username, display_name, role, avatar_color, sort_order, active, created_at,
+          COALESCE(first_name, ''), COALESCE(last_name, ''), business_role_id,
+          COALESCE(is_admin, 0), windows_username
+        FROM users;
+
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+
+        CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_to);
+        CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+        CREATE INDEX IF NOT EXISTS idx_subtasks_task ON sub_tasks(task_id);
+        CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id);
+        CREATE INDEX IF NOT EXISTS idx_pto_user_week ON staff_pto(user_id, week_of);
+        CREATE INDEX IF NOT EXISTS idx_pto_dates_user ON staff_pto_dates(user_id);
+      `);
+    } finally {
+      this.db.pragma('foreign_keys = ON');
+    }
+  }
+
+  _runMigrationIfNeeded(currentVersion, targetVersion, handler, options = {}) {
+    if (currentVersion >= targetVersion) return;
+    const { transactional = true } = options;
+    if (transactional) {
+      this.db.transaction(() => handler.call(this))();
+    } else {
+      handler.call(this);
+    }
+    this._setMeta('schema_version', String(targetVersion));
+  }
+
+  _getTableColumns(tableName) {
+    return this.db.pragma(`table_info(${tableName})`).map((column) => column.name);
+  }
+
+  _addColumnIfMissing(tableName, columnName, columnDefinition) {
+    if (this._getTableColumns(tableName).includes(columnName)) return false;
+    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+    return true;
+  }
+
   // ── Schema Migrations ──────────────────────────────────
 
   _migrate() {
@@ -52,7 +141,7 @@ class Database {
 
     const version = this._getMetaInt('schema_version', 0);
 
-    if (version < 1) {
+    this._runMigrationIfNeeded(version, 1, function migrateV1() {
       this.db.exec(`
         CREATE TABLE users (
           id            TEXT PRIMARY KEY,
@@ -99,6 +188,7 @@ class Database {
           title         TEXT NOT NULL DEFAULT '',
           completed     INTEGER NOT NULL DEFAULT 0,
           assigned_to   TEXT REFERENCES users(id) ON DELETE SET NULL,
+          assigned_to_ids TEXT NOT NULL DEFAULT '[]',
           created_by    TEXT REFERENCES users(id) ON DELETE SET NULL,
           sort_order    INTEGER NOT NULL DEFAULT 0,
           created_at    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -131,11 +221,9 @@ class Database {
         CREATE INDEX idx_comments_task ON comments(task_id);
         CREATE INDEX idx_pto_user_week ON staff_pto(user_id, week_of);
       `);
+    });
 
-      this._setMeta('schema_version', '1');
-    }
-
-    if (version < 2) {
+    this._runMigrationIfNeeded(version, 2, function migrateV2() {
       // Add business roles table
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS business_roles (
@@ -153,21 +241,11 @@ class Database {
       `);
 
       // Add new columns to users table
-      const cols = this.db.pragma('table_info(users)').map(c => c.name);
-      if (!cols.includes('first_name')) {
-        this.db.exec(`ALTER TABLE users ADD COLUMN first_name TEXT NOT NULL DEFAULT ''`);
-      }
-      if (!cols.includes('last_name')) {
-        this.db.exec(`ALTER TABLE users ADD COLUMN last_name TEXT NOT NULL DEFAULT ''`);
-      }
-      if (!cols.includes('business_role_id')) {
-        this.db.exec(`ALTER TABLE users ADD COLUMN business_role_id TEXT REFERENCES business_roles(id) ON DELETE SET NULL`);
-      }
-      if (!cols.includes('is_admin')) {
-        this.db.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`);
-      }
-      if (!cols.includes('windows_username')) {
-        this.db.exec(`ALTER TABLE users ADD COLUMN windows_username TEXT`);
+      this._addColumnIfMissing('users', 'first_name', `TEXT NOT NULL DEFAULT ''`);
+      this._addColumnIfMissing('users', 'last_name', `TEXT NOT NULL DEFAULT ''`);
+      this._addColumnIfMissing('users', 'business_role_id', `TEXT REFERENCES business_roles(id) ON DELETE SET NULL`);
+      this._addColumnIfMissing('users', 'is_admin', `INTEGER NOT NULL DEFAULT 0`);
+      if (this._addColumnIfMissing('users', 'windows_username', 'TEXT')) {
         // Copy existing username to windows_username for existing users
         this.db.exec(`UPDATE users SET windows_username = username WHERE windows_username IS NULL`);
       }
@@ -192,41 +270,26 @@ class Database {
           updateUsername.run(generated, u.id);
         }
       }
+    });
 
-      this._setMeta('schema_version', '2');
-    }
-
-    if (version < 3) {
+    this._runMigrationIfNeeded(version, 3, function migrateV3() {
       // Add confirmed flag and partner_id to tasks for weekly rollover and partner assignment
-      const taskCols = this.db.pragma('table_info(tasks)').map(c => c.name);
-      if (!taskCols.includes('confirmed')) {
-        this.db.exec(`ALTER TABLE tasks ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1`);
-      }
-      if (!taskCols.includes('partner_id')) {
-        this.db.exec(`ALTER TABLE tasks ADD COLUMN partner_id TEXT REFERENCES users(id) ON DELETE SET NULL`);
-      }
-      this._setMeta('schema_version', '3');
-    }
+      this._addColumnIfMissing('tasks', 'confirmed', `INTEGER NOT NULL DEFAULT 1`);
+      this._addColumnIfMissing('tasks', 'partner_id', `TEXT REFERENCES users(id) ON DELETE SET NULL`);
+    });
 
-    if (version < 4) {
+    this._runMigrationIfNeeded(version, 4, function migrateV4() {
       // Add priority_label column for custom priority display text (e.g. "cp:OG")
-      const taskCols = this.db.pragma('table_info(tasks)').map(c => c.name);
-      if (!taskCols.includes('priority_label')) {
-        this.db.exec(`ALTER TABLE tasks ADD COLUMN priority_label TEXT`);
-      }
+      this._addColumnIfMissing('tasks', 'priority_label', 'TEXT');
 
       // Add category column to projects: 'current' or 'future' (which tab it appears in)
-      const projCols = this.db.pragma('table_info(projects)').map(c => c.name);
-      if (!projCols.includes('category')) {
-        this.db.exec(`ALTER TABLE projects ADD COLUMN category TEXT NOT NULL DEFAULT 'current'`);
+      if (this._addColumnIfMissing('projects', 'category', `TEXT NOT NULL DEFAULT 'current'`)) {
         // Migrate existing "future" status projects: set category=future, status=active
         this.db.exec(`UPDATE projects SET category = 'future', status = 'active' WHERE status = 'future'`);
       }
+    });
 
-      this._setMeta('schema_version', '4');
-    }
-
-    if (version < 5) {
+    this._runMigrationIfNeeded(version, 5, function migrateV5() {
       // New date-based PTO system: individual date rows per user
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS staff_pto_dates (
@@ -240,10 +303,9 @@ class Database {
 
       // Migrate old staff_pto labels into dates where possible (best-effort)
       // Old data is free-text so we just drop it — dates weren't stored before
-      this._setMeta('schema_version', '5');
-    }
+    });
 
-    if (version < 6) {
+    this._runMigrationIfNeeded(version, 6, function migrateV6() {
       // Partner-authored project notes (separate from Excel-imported project.notes)
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS project_notes (
@@ -256,119 +318,47 @@ class Database {
         );
         CREATE INDEX IF NOT EXISTS idx_project_notes_project ON project_notes(project_id);
       `);
-      this._setMeta('schema_version', '6');
-    }
+    });
 
-    if (version < 7) {
+    this._runMigrationIfNeeded(version, 7, function migrateV7() {
       // Add category column to tasks: 'current' or 'last_week'
-      const taskCols7 = this.db.pragma('table_info(tasks)').map(c => c.name);
-      if (!taskCols7.includes('category')) {
-        this.db.exec(`ALTER TABLE tasks ADD COLUMN category TEXT NOT NULL DEFAULT 'current'`);
-      }
-      this._setMeta('schema_version', '7');
-    }
+      this._addColumnIfMissing('tasks', 'category', `TEXT NOT NULL DEFAULT 'current'`);
+    });
 
-    if (version < 8) {
-      this.db.exec(`
-        PRAGMA foreign_keys = OFF;
+    this._runMigrationIfNeeded(version, 8, function migrateV8() {
+      this._rebuildUsersTableForVersion8();
+    }, { transactional: false });
 
-        CREATE TABLE users_new (
-          id                TEXT PRIMARY KEY,
-          username          TEXT UNIQUE NOT NULL,
-          display_name      TEXT NOT NULL,
-          role              TEXT NOT NULL CHECK(role IN ('partner', 'staff', 'bootstrap')),
-          avatar_color      TEXT NOT NULL DEFAULT '#5856A6',
-          sort_order        INTEGER NOT NULL DEFAULT 0,
-          active            INTEGER NOT NULL DEFAULT 1,
-          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-          first_name        TEXT NOT NULL DEFAULT '',
-          last_name         TEXT NOT NULL DEFAULT '',
-          business_role_id  TEXT REFERENCES business_roles(id) ON DELETE SET NULL,
-          is_admin          INTEGER NOT NULL DEFAULT 0,
-          windows_username  TEXT
-        );
+    this._runMigrationIfNeeded(version, 9, function migrateV9() {
+      this._addColumnIfMissing('projects', 'partner_ids', `TEXT NOT NULL DEFAULT '[]'`);
+      this._addColumnIfMissing('projects', 'partner_initials', `TEXT NOT NULL DEFAULT ''`);
+    });
 
-        INSERT INTO users_new (
-          id, username, display_name, role, avatar_color, sort_order, active, created_at,
-          first_name, last_name, business_role_id, is_admin, windows_username
-        )
-        SELECT
-          id, username, display_name, role, avatar_color, sort_order, active, created_at,
-          COALESCE(first_name, ''), COALESCE(last_name, ''), business_role_id,
-          COALESCE(is_admin, 0), windows_username
-        FROM users;
-
-        DROP TABLE users;
-        ALTER TABLE users_new RENAME TO users;
-
-        CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_to);
-        CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
-        CREATE INDEX IF NOT EXISTS idx_subtasks_task ON sub_tasks(task_id);
-        CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id);
-        CREATE INDEX IF NOT EXISTS idx_pto_user_week ON staff_pto(user_id, week_of);
-        CREATE INDEX IF NOT EXISTS idx_pto_dates_user ON staff_pto_dates(user_id);
-
-        PRAGMA foreign_keys = ON;
-      `);
-
-      this._setMeta('schema_version', '8');
-    }
-
-    if (version < 9) {
-      const projectCols = this.db.pragma('table_info(projects)').map(c => c.name);
-      if (!projectCols.includes('partner_ids')) {
-        this.db.exec(`ALTER TABLE projects ADD COLUMN partner_ids TEXT NOT NULL DEFAULT '[]'`);
-      }
-      if (!projectCols.includes('partner_initials')) {
-        this.db.exec(`ALTER TABLE projects ADD COLUMN partner_initials TEXT NOT NULL DEFAULT ''`);
-      }
-      this._setMeta('schema_version', '9');
-    }
-
-    if (version < 10) {
+    this._runMigrationIfNeeded(version, 10, function migrateV10() {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS sync_processed_events (
           filename     TEXT PRIMARY KEY,
           processed_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
       `);
-      this._setMeta('schema_version', '10');
-    }
+    });
 
-    if (version < 11) {
-      const userCols = this.db.pragma('table_info(users)').map(c => c.name);
-      if (!userCols.includes('can_self_assign')) {
-        this.db.exec(`ALTER TABLE users ADD COLUMN can_self_assign INTEGER NOT NULL DEFAULT 0`);
-      }
-      this._setMeta('schema_version', '11');
-    }
+    this._runMigrationIfNeeded(version, 11, function migrateV11() {
+      this._addColumnIfMissing('users', 'can_self_assign', `INTEGER NOT NULL DEFAULT 0`);
+    });
 
-    if (version < 12) {
-      const projectCols = this.db.pragma('table_info(projects)').map(c => c.name);
-      if (!projectCols.includes('folder_link')) {
-        this.db.exec(`ALTER TABLE projects ADD COLUMN folder_link TEXT NOT NULL DEFAULT ''`);
-      }
+    this._runMigrationIfNeeded(version, 12, function migrateV12() {
+      this._addColumnIfMissing('projects', 'folder_link', `TEXT NOT NULL DEFAULT ''`);
 
-      const taskCols = this.db.pragma('table_info(tasks)').map(c => c.name);
-      if (!taskCols.includes('status')) {
-        this.db.exec(`ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT 'not_started'`);
+      if (this._addColumnIfMissing('tasks', 'status', `TEXT NOT NULL DEFAULT 'not_started'`)) {
         this.db.exec(`UPDATE tasks SET status = CASE WHEN completed = 1 THEN 'complete' ELSE 'not_started' END WHERE status IS NULL OR TRIM(status) = ''`);
       }
+    });
 
-      this._setMeta('schema_version', '12');
-    }
-
-    if (version < 13) {
-      const projectNoteCols = this.db.pragma('table_info(project_notes)').map(c => c.name);
-      if (!projectNoteCols.includes('title')) {
-        this.db.exec(`ALTER TABLE project_notes ADD COLUMN title TEXT NOT NULL DEFAULT 'General'`);
-      }
-      if (!projectNoteCols.includes('created_by')) {
-        this.db.exec(`ALTER TABLE project_notes ADD COLUMN created_by TEXT`);
-      }
-      if (!projectNoteCols.includes('created_at')) {
-        this.db.exec(`ALTER TABLE project_notes ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))`);
-      }
+    this._runMigrationIfNeeded(version, 13, function migrateV13() {
+      this._addColumnIfMissing('project_notes', 'title', `TEXT NOT NULL DEFAULT 'General'`);
+      this._addColumnIfMissing('project_notes', 'created_by', 'TEXT');
+      this._addColumnIfMissing('project_notes', 'created_at', `TEXT NOT NULL DEFAULT (datetime('now'))`);
 
       this.db.exec(`
         UPDATE project_notes
@@ -385,25 +375,38 @@ class Database {
       `);
 
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_project_notes_project_updated ON project_notes(project_id, updated_at DESC)`);
-      this._setMeta('schema_version', '13');
-    }
+    });
 
-    // Companion-only: private tasks table (local, not synced)
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS private_tasks (
-        id          TEXT PRIMARY KEY,
-        project_id  TEXT,
-        owner_id    TEXT NOT NULL,
-        title       TEXT NOT NULL DEFAULT '',
-        notes       TEXT NOT NULL DEFAULT '',
-        priority    INTEGER NOT NULL DEFAULT 0,
-        due_date    TEXT,
-        completed   INTEGER NOT NULL DEFAULT 0,
-        sort_order  INTEGER NOT NULL DEFAULT 0,
-        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_private_tasks_owner ON private_tasks(owner_id);
-    `);
+    this._runMigrationIfNeeded(version, 14, function migrateV14() {
+      if (this._addColumnIfMissing('sub_tasks', 'assigned_to_ids', `TEXT NOT NULL DEFAULT '[]'`)) {
+        this.db.exec(`
+          UPDATE sub_tasks
+          SET assigned_to_ids = CASE
+            WHEN assigned_to IS NULL OR TRIM(assigned_to) = '' THEN '[]'
+            ELSE json_array(assigned_to)
+          END
+        `);
+      }
+    });
+
+    this._runMigrationIfNeeded(version, DB_SCHEMA_VERSION, function migrateV15() {
+      // Companion-only: private tasks table (local, not synced)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS private_tasks (
+          id          TEXT PRIMARY KEY,
+          project_id  TEXT,
+          owner_id    TEXT NOT NULL,
+          title       TEXT NOT NULL DEFAULT '',
+          notes       TEXT NOT NULL DEFAULT '',
+          priority    INTEGER NOT NULL DEFAULT 0,
+          due_date    TEXT,
+          completed   INTEGER NOT NULL DEFAULT 0,
+          sort_order  INTEGER NOT NULL DEFAULT 0,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_private_tasks_owner ON private_tasks(owner_id);
+      `);
+    });
   }
 
   _getMetaInt(key, defaultVal) {
@@ -430,6 +433,40 @@ class Database {
       updated_by: data.updated_by || data.created_by || null,
       created_at: String(data.created_at || now).trim() || now,
       updated_at: String(data.updated_at || data.created_at || now).trim() || now,
+    };
+  }
+
+  _normalizeAssignedUserIds(value, fallback = null) {
+    const raw = Array.isArray(value)
+      ? value
+      : (() => {
+          if (typeof value !== 'string' || !value.trim()) return [];
+          try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch (_) {
+            return [];
+          }
+        })();
+
+    const uniqueIds = [...new Set(raw
+      .filter((item) => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean))];
+
+    if (!uniqueIds.length && fallback && typeof fallback === 'string' && fallback.trim()) {
+      uniqueIds.push(fallback.trim());
+    }
+
+    return uniqueIds;
+  }
+
+  _normalizeSubTaskPayload(data = {}) {
+    const assignedToIds = this._normalizeAssignedUserIds(data.assigned_to_ids, data.assigned_to || null);
+    return {
+      ...data,
+      assigned_to: assignedToIds[0] || null,
+      assigned_to_ids: JSON.stringify(assignedToIds),
     };
   }
 
@@ -663,7 +700,8 @@ class Database {
   }
 
   deleteUser(id) {
-    this.db.prepare('DELETE FROM tasks WHERE assigned_to = ?').run(id);
+    this.db.prepare('UPDATE tasks SET assigned_to = NULL WHERE assigned_to = ?').run(id);
+    this.db.prepare('UPDATE sub_tasks SET assigned_to = NULL WHERE assigned_to = ?').run(id);
     this.db.prepare('UPDATE users SET active = 0 WHERE id = ?').run(id);
   }
 
@@ -761,31 +799,56 @@ class Database {
     ).all(taskId);
   }
 
+  getSubTasksByTaskIds(taskIds = []) {
+    const ids = Array.isArray(taskIds)
+      ? [...new Set(taskIds.filter((id) => typeof id === 'string' && id.trim()))]
+      : [];
+    if (ids.length === 0) return {};
+
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM sub_tasks
+      WHERE task_id IN (${placeholders})
+      ORDER BY task_id, sort_order, created_at
+    `).all(...ids);
+
+    const grouped = Object.fromEntries(ids.map((id) => [id, []]));
+    for (const row of rows) {
+      if (!grouped[row.task_id]) grouped[row.task_id] = [];
+      grouped[row.task_id].push(row);
+    }
+    return grouped;
+  }
+
   getSubTaskById(id) {
     return this.db.prepare('SELECT * FROM sub_tasks WHERE id = ?').get(id);
   }
 
   createSubTask(data) {
+    const normalized = this._normalizeSubTaskPayload(data);
     const id = data.id || uuidv4();
     const maxOrder = this.db.prepare(
       'SELECT COALESCE(MAX(sort_order), 0) as m FROM sub_tasks WHERE task_id = ?'
     ).get(data.task_id).m;
 
     this.db.prepare(`
-      INSERT INTO sub_tasks (id, task_id, title, assigned_to, created_by, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, data.task_id, data.title || '', data.assigned_to || null, data.created_by || null, maxOrder + 1);
+      INSERT INTO sub_tasks (id, task_id, title, assigned_to, assigned_to_ids, created_by, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.task_id, data.title || '', normalized.assigned_to, normalized.assigned_to_ids, data.created_by || null, maxOrder + 1);
 
     return this.getSubTaskById(id);
   }
 
   updateSubTask(data) {
+    const normalized = this._normalizeSubTaskPayload(data);
     const fields = [];
     const values = [];
-    for (const key of ['title', 'completed', 'assigned_to', 'sort_order']) {
-      if (data[key] !== undefined) {
+    for (const key of ['title', 'completed', 'assigned_to', 'assigned_to_ids', 'sort_order']) {
+      const source = Object.prototype.hasOwnProperty.call(normalized, key) ? normalized : data;
+      if (source[key] !== undefined) {
         fields.push(`${key} = ?`);
-        values.push(data[key]);
+        values.push(source[key]);
       }
     }
     if (fields.length === 0) return this.getSubTaskById(data.id);
@@ -813,6 +876,29 @@ class Database {
       WHERE c.task_id = ?
       ORDER BY c.created_at ASC
     `).all(taskId);
+  }
+
+  getCommentsByTaskIds(taskIds = []) {
+    const ids = Array.isArray(taskIds)
+      ? [...new Set(taskIds.filter((id) => typeof id === 'string' && id.trim()))]
+      : [];
+    if (ids.length === 0) return {};
+
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = this.db.prepare(`
+      SELECT c.*, u.display_name as author_name, u.avatar_color as author_color
+      FROM comments c
+      LEFT JOIN users u ON c.author_id = u.id
+      WHERE c.task_id IN (${placeholders})
+      ORDER BY c.task_id ASC, c.created_at ASC
+    `).all(...ids);
+
+    const grouped = Object.fromEntries(ids.map((id) => [id, []]));
+    for (const row of rows) {
+      if (!grouped[row.task_id]) grouped[row.task_id] = [];
+      grouped[row.task_id].push(row);
+    }
+    return grouped;
   }
 
   addComment(data) {
@@ -1017,6 +1103,7 @@ class Database {
 
   performWeeklyRollover(weekStr = null) {
     const transaction = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM tasks WHERE completed = 1').run();
       // Move all tasks into carry-over review state for the new week.
       // Keep due dates only if they land in the new week or later.
       this.db.prepare(`
@@ -1024,6 +1111,8 @@ class Database {
         SET category = 'last_week',
             confirmed = 0,
             priority = 0,
+            completed = 0,
+            status = 'not_started',
             due_date = CASE
               WHEN ? IS NOT NULL AND due_date IS NOT NULL AND date(due_date) >= date(?) THEN due_date
               WHEN ? IS NULL THEN due_date

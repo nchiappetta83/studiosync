@@ -51,6 +51,19 @@ const TaskPanel = {
   },
 
   render() {
+    const taskCard = window.TaskCard;
+    if (!taskCard) {
+      console.error('TaskPanel render aborted: window.TaskCard is unavailable');
+      this._subtitle.textContent = 'Unable to load task cards';
+      this._container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-title">Task view failed to load</div>
+          <div class="empty-state-text">Please restart Dashboard. If this keeps happening, check the app log for a TaskCard startup error.</div>
+        </div>
+      `;
+      return;
+    }
+
     const activeElement = document.activeElement;
     const activeNoteTaskId = activeElement?.classList?.contains('task-notes-input')
       ? activeElement.dataset.taskId
@@ -155,7 +168,7 @@ const TaskPanel = {
         html += `<div class="empty-section">No tasks assigned</div>`;
       } else {
         for (const task of tasks) {
-          html += TaskCard.render(task);
+          html += taskCard.render(task);
         }
       }
 
@@ -183,7 +196,7 @@ const TaskPanel = {
     requestAnimationFrame(() => this._updateRailThumb());
 
     // Bind task card events
-    TaskCard.bindEvents(this._container);
+    taskCard.bindEvents(this._container);
 
     if (activeNoteTaskId) {
       const restoredInput = this._container.querySelector(`.task-notes-input[data-task-id="${activeNoteTaskId}"]`);

@@ -2,6 +2,13 @@
  * Task Dialog - create/edit tasks. Also includes project creation.
  */
 
+(function attachTaskDialog(globalScope) {
+const {
+  PRIORITY_NONE,
+  getTaskPrioritySelectValue,
+  parseTaskPrioritySelectValue,
+} = globalScope.SchedulingPriority;
+
 const TaskDialog = {
   show(taskData = {}, isEdit = false) {
     const users = AppState.get('users') || [];
@@ -435,40 +442,12 @@ const TaskDialog = {
   },
 
   _getTaskPrioritySelectValue(taskData, customPriorities) {
-    if (taskData.priority === -1) return 'wait';
-    if (taskData.priority === -2) {
-      const label = String(taskData.priority_label || '').replace(/^cp:/, '');
-      const customPriority = customPriorities.find((item) => item.label === label);
-      return customPriority ? `custom:${customPriority.id}` : 'clear';
-    }
-    if (typeof taskData.priority === 'number' && taskData.priority >= 1) {
-      return String(taskData.priority);
-    }
-    return 'clear';
+    return getTaskPrioritySelectValue(taskData, customPriorities);
   },
 
   _parseTaskPrioritySelectValue(value) {
-    if (!value || value === 'clear') {
-      return { priority: 0, priority_label: null };
-    }
-
-    if (value === 'wait') {
-      return { priority: -1, priority_label: null };
-    }
-
-    if (value.startsWith('custom:')) {
-      const id = value.slice('custom:'.length);
-      const customPriority = (AppState.get('customPriorities') || []).find((item) => item.id === id);
-      return {
-        priority: customPriority ? -2 : 0,
-        priority_label: customPriority ? `cp:${customPriority.label}` : null,
-      };
-    }
-
-    const numericPriority = parseInt(value, 10);
-    return {
-      priority: Number.isFinite(numericPriority) ? numericPriority : 0,
-      priority_label: null,
-    };
+    return parseTaskPrioritySelectValue(value, AppState.get('customPriorities') || []);
   }
 };
+globalScope.TaskDialog = TaskDialog;
+})(window);

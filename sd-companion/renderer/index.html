@@ -55,12 +55,7 @@
           <span class="topbar-brand-subtitle">MyTasks</span>
         </span>
       </div>
-      <div class="topbar-center">
-        <div class="search-wrapper">
-          <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="search-input" class="search-input" placeholder="Search tasks...">
-        </div>
-      </div>
+      <div class="topbar-spacer"></div>
       <div class="topbar-right">
         <div class="user-badge" id="user-badge">
           <div id="sync-indicator" class="sync-indicator" title="Synced">
@@ -70,7 +65,7 @@
           <span class="user-name" id="user-name"></span>
           <span class="user-role-badge" id="user-role-badge"></span>
         </div>
-        <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">
+        <button class="icon-btn" id="settings-btn" type="button" title="Settings" aria-label="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -318,7 +313,7 @@
           </div>
           <div class="form-group">
             <label>Assign To</label>
-            <select class="input" id="add-subtask-assignee"></select>
+            <div class="dialog-checklist" id="add-subtask-assignee-list"></div>
           </div>
         </div>
         <div class="dialog-footer">
@@ -359,6 +354,19 @@
     </div>
   </div>
 
+  <script src="lib/html.js"></script>
+  <script src="lib/priority.js"></script>
+  <script src="lib/priorityPresentation.js"></script>
+  <script src="lib/permissions.js"></script>
+  <script src="lib/taskPayload.js"></script>
+  <script src="lib/richNotes.js"></script>
+  <script src="lib/contextMenu.js"></script>
+  <script src="lib/projectNotes.js"></script>
+  <script src="lib/projectDisplay.js"></script>
+  <script src="lib/actionItems.js"></script>
+  <script src="lib/taskDisplay.js"></script>
+  <script src="lib/taskOrdering.js"></script>
+  <script src="lib/commentDisplay.js"></script>
   <script src="components/app.js"></script>
 </body>
 </html>

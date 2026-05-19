@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Sub-tasks
   getSubTasks:        (taskId)    => ipcRenderer.invoke('get-subtasks', taskId),
+  getTaskSupportData: (taskIds)   => ipcRenderer.invoke('get-task-support-data', taskIds),
   createSubTask:      (data)      => ipcRenderer.invoke('create-subtask', data),
   updateSubTask:      (data)      => ipcRenderer.invoke('update-subtask', data),
   deleteSubTask:      (id)        => ipcRenderer.invoke('delete-subtask', id),

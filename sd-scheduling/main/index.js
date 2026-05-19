@@ -1331,20 +1331,68 @@ function registerIPC() {
 
   ipcMain.handle('delete-user', (_e, userId) => {
     if (!db) return { success: false, error: 'Database is not ready.' };
-    const assignedTaskCount = db.getAssignedTaskCount(userId);
-    if (assignedTaskCount > 0) {
-      return {
-        success: false,
-        error: assignedTaskCount === 1
-          ? 'Reassign or clear the remaining task before removing this person.'
-          : `Reassign or clear the ${assignedTaskCount} remaining tasks before removing this person.`,
-        assignedTaskCount,
-      };
+    const payload = (userId && typeof userId === 'object') ? userId : { userId };
+    const targetUserId = payload.userId;
+    const taskAction = payload.taskAction || 'block';
+    const reassignTo = payload.reassignTo || null;
+
+    if (!targetUserId) {
+      return { success: false, error: 'Missing user id.' };
     }
-    db.deleteUser(userId);
-    if (sync) sync.pushEvent('user-deleted', { id: userId });
+
+    const openTasks = db.getTasks({ assigned_to: targetUserId, completed: false });
+    const openTaskCount = openTasks.length;
+
+    if (openTaskCount > 0) {
+      if (taskAction === 'reassign') {
+        if (!reassignTo || reassignTo === targetUserId) {
+          return { success: false, error: 'Choose someone else to reassign these tasks to.', openTaskCount };
+        }
+        const replacementUser = db.getUserById(reassignTo);
+        if (!replacementUser || replacementUser.active === 0) {
+          return { success: false, error: 'The selected reassignment person is not available.', openTaskCount };
+        }
+        for (const task of openTasks) {
+          const updatedTask = db.updateTask({ id: task.id, assigned_to: reassignTo });
+          if (sync) sync.pushEvent('task-updated', updatedTask);
+        }
+      } else if (taskAction === 'delete') {
+        for (const task of openTasks) {
+          db.deleteTask(task.id);
+          if (sync) sync.pushEvent('task-deleted', { id: task.id });
+        }
+      } else {
+        return {
+          success: false,
+          error: openTaskCount === 1
+            ? 'This person still has 1 open task that must be reassigned or deleted first.'
+            : `This person still has ${openTaskCount} open tasks that must be reassigned or deleted first.`,
+          openTaskCount,
+          requiresTaskAction: true,
+        };
+      }
+    }
+
+    db.deleteUser(targetUserId);
+    if (sync) sync.pushEvent('user-deleted', { id: targetUserId });
     if (auth) auth.clearCache();
-    return { success: true };
+    notifyDataChanged('user-deleted', {
+      userId: targetUserId,
+      openTaskCount,
+      taskAction: openTaskCount > 0 ? taskAction : 'none',
+    });
+    return {
+      success: true,
+      openTaskCount,
+      taskAction: openTaskCount > 0 ? taskAction : 'none',
+    };
+  });
+
+  ipcMain.handle('get-user-delete-impact', (_e, userId) => {
+    if (!db) return { openTaskCount: 0 };
+    return {
+      openTaskCount: db.getAssignedOpenTaskCount(userId),
+    };
   });
 
   // Business Roles

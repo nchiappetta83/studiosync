@@ -15,17 +15,28 @@
  *   - Right-click: context menu with edit, priority, move-to, delete
  */
 
-const TaskCard = {
-  _noteDrafts: new Map(),
+(function attachTaskCard(globalScope) {
+const {
+  PRIORITY_NONE,
+  PRIORITY_WAIT,
+  PRIORITY_CUSTOM,
+  CUSTOM_PRIORITY_PREFIX,
+  buildCustomPriorityLabel,
+  getCustomPriorityLabel,
+  getPriorityDisplayLabel,
+  isPrioritySet,
+} = globalScope.SchedulingPriority;
 
+globalScope.TaskCard = {
   render(task) {
     const isPartner = AppState.isPartner();
     const canEditNotes = isPartner;
     const completedClass = task.completed ? 'completed' : '';
+    const displayTitle = this._getTaskDisplayTitle(task);
 
     // Priority â€” V4 style: null/0 = unset, 1-4 = numeric, 'w' = wait
     const priority = task.priority;
-    const prioritySet = priority !== null && priority !== undefined && priority !== '' && priority !== 0;
+    const prioritySet = isPrioritySet(priority);
     const priorityPresentation = this._getPriorityPresentation(task, priority, prioritySet);
 
     // Due date
@@ -34,8 +45,8 @@ const TaskCard = {
     const dueColor = dueVal ? this._dueColorClass(dueVal) : 'due-none';
 
     // Notes
-    const notesVal = this._noteDrafts.has(task.id)
-      ? this._noteDrafts.get(task.id)
+    const notesVal = globalScope.TaskNotesEditor
+      ? globalScope.TaskNotesEditor.getDisplayValue(task)
       : (task.notes || '');
 
     // Confirmed / Last Week status (V4 weekly rollover)
@@ -90,7 +101,7 @@ const TaskCard = {
         <div class="task-card-main">
           ${priorityBadge}
           <div class="task-title-group">
-            <div class="task-title">${this._escapeHtml(task.title)}</div>
+            <div class="task-title">${this._escapeHtml(displayTitle)}</div>
             ${isConfirmed ? completeBtn : ''}
           </div>
           ${dueHtml}
@@ -116,7 +127,7 @@ const TaskCard = {
           e.stopPropagation();
           const taskId = btn.dataset.taskId;
           await window.api.confirmTask(taskId);
-          AppState.refresh();
+          await AppState.refresh();
         });
       });
     }
@@ -130,7 +141,7 @@ const TaskCard = {
           if (!task) return;
 
           await window.api.updateTask({ id: taskId, completed: task.completed ? 0 : 1 });
-          AppState.refresh();
+          await AppState.refresh();
         });
       });
     }
@@ -145,7 +156,7 @@ const TaskCard = {
 
           if (confirm(`Delete '${task.title}' from carry-over?`)) {
             await window.api.deleteTask(taskId);
-            AppState.refresh();
+            await AppState.refresh();
           }
         });
       });
@@ -252,77 +263,11 @@ const TaskCard = {
       });
     }
 
-    // â”€â”€ Notes: click to edit, debounce/blur to save â”€â”€
+    // â”€â”€ Notes: persistent inline editor â”€â”€
     container.querySelectorAll('.task-notes-input').forEach(input => {
-      const taskId = input.dataset.taskId;
-      let original = input.value;
-      let saveTimer = null;
-      let saveQueue = Promise.resolve();
-
-      const queueSave = (nextValue) => {
-        saveQueue = saveQueue.then(async () => {
-          const trimmedValue = nextValue.trim();
-          if (trimmedValue === original) return;
-
-          await window.api.updateTask({ id: taskId, notes: trimmedValue });
-          original = trimmedValue;
-
-          const currentDraft = this._noteDrafts.get(taskId);
-          if (currentDraft !== undefined && currentDraft.trim() === trimmedValue) {
-            this._noteDrafts.delete(taskId);
-          }
-        }).catch((err) => {
-          console.error('Task note save failed:', err);
-        });
-
-        return saveQueue;
-      };
-
-      input.addEventListener('mousedown', (e) => {
-        e.stopPropagation();
-      });
-
-      input.addEventListener('click', (e) => {
-        e.stopPropagation();
-      });
-
-      if (!isPartner) {
-        input.readOnly = true;
+      if (globalScope.TaskNotesEditor) {
+        globalScope.TaskNotesEditor.bindInput(input);
       }
-
-      if (isPartner) {
-        input.addEventListener('input', () => {
-          this._noteDrafts.set(taskId, input.value);
-          clearTimeout(saveTimer);
-          saveTimer = setTimeout(() => {
-            queueSave(input.value);
-          }, 450);
-        });
-      }
-
-      input.addEventListener('blur', () => {
-        clearTimeout(saveTimer);
-        const val = input.value.trim();
-        if (!val) input.value = '';
-        if (isPartner) {
-          if (val) {
-            this._noteDrafts.set(taskId, val);
-          } else {
-            this._noteDrafts.delete(taskId);
-          }
-          void queueSave(val);
-        }
-      });
-
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') input.blur();
-        if (e.key === 'Escape') {
-          clearTimeout(saveTimer);
-          this._noteDrafts.delete(taskId);
-          input.value = original;
-          input.blur();
-        }
-      });
     });
 
     // â”€â”€ Delete button â”€â”€
@@ -383,7 +328,7 @@ const TaskCard = {
         menu.remove();
         document.removeEventListener('click', dismiss);
         await this._applyPriorityMenuValue(task.id, item.value);
-        AppState.refresh();
+        await AppState.refresh();
       });
 
       menu.appendChild(btn);
@@ -441,7 +386,7 @@ const TaskCard = {
           label: user.display_name,
           action: async () => {
             await window.api.updateTask({ id: task.id, assigned_to: user.id });
-            AppState.refresh();
+            await AppState.refresh();
             Toast.show(`Task moved to ${user.display_name}`, 'success');
           }
         }))
@@ -462,7 +407,7 @@ const TaskCard = {
           priority: 0,
           due_date: task.due_date,
         });
-        AppState.refresh();
+        await AppState.refresh();
         Toast.show('Task duplicated', 'success');
       }
     });
@@ -474,7 +419,7 @@ const TaskCard = {
       action: async () => {
         if (confirm(`Delete '${task.title}'?`)) {
           await window.api.deleteTask(task.id);
-          AppState.refresh();
+          await AppState.refresh();
         }
       }
     });
@@ -504,7 +449,7 @@ const TaskCard = {
         color: this._priorityMenuItemColor(item),
         action: async () => {
           await this._applyPriorityMenuValue(task.id, item.value);
-          AppState.refresh();
+          await AppState.refresh();
         }
       };
     });
@@ -543,7 +488,7 @@ const TaskCard = {
         if (customPriority) {
           groups.push([{
             label: customPriority.label,
-            value: `cp:${customPriority.label}`,
+            value: buildCustomPriorityLabel(customPriority.label),
             type: 'custom',
             color: customPriority.color
           }]);
@@ -600,17 +545,17 @@ const TaskCard = {
 
   async _applyPriorityMenuValue(taskId, value) {
     if (value === null) {
-      await window.api.updateTask({ id: taskId, priority: 0, priority_label: null });
+      await window.api.updateTask({ id: taskId, priority: PRIORITY_NONE, priority_label: null });
       return;
     }
 
     if (value === 'w') {
-      await window.api.updateTask({ id: taskId, priority: -1, priority_label: null });
+      await window.api.updateTask({ id: taskId, priority: PRIORITY_WAIT, priority_label: null });
       return;
     }
 
-    if (typeof value === 'string' && value.startsWith('cp:')) {
-      await window.api.updateTask({ id: taskId, priority: -2, priority_label: value });
+    if (typeof value === 'string' && value.startsWith(CUSTOM_PRIORITY_PREFIX)) {
+      await window.api.updateTask({ id: taskId, priority: PRIORITY_CUSTOM, priority_label: value });
       return;
     }
 
@@ -700,7 +645,7 @@ const TaskCard = {
       popup.remove();
       document.removeEventListener('click', dismissPicker);
       await window.api.updateTask({ id: taskId, due_date: dateStr });
-      AppState.refresh();
+      await AppState.refresh();
     };
 
     renderMonth();
@@ -728,23 +673,44 @@ const TaskCard = {
   // â”€â”€ Helpers â”€â”€
 
   _priorityLabel(p, isSet, task) {
-    if (!isSet || p === 0 || p === null || p === undefined) return '\u2013';
-    if (p === -1) return 'W';
-    if (p === -2 && task?.priority_label) {
-      // Custom priority â€” extract label from "cp:OG" format
-      return task.priority_label.replace(/^cp:/, '');
-    }
-    if (p === -2) return 'Custom';
-    return String(p).toUpperCase();
+    return getPriorityDisplayLabel({ ...task, priority: p });
   },
 
   _priorityClass(priority, isSet, task) {
-    if (!isSet || priority === 0 || priority === null || priority === undefined) return 'priority-unset';
+    if (!isSet || priority === PRIORITY_NONE || priority === null || priority === undefined) return 'priority-unset';
     const p = String(priority);
     if (typeof priority === 'number' && priority >= 1) return 'priority-numeric';
-    if (p === '-1') return 'priority-w';
-    if (p === '-2') return 'priority-custom';
+    if (p === String(PRIORITY_WAIT)) return 'priority-w';
+    if (p === String(PRIORITY_CUSTOM)) return 'priority-custom';
     return 'priority-unset';
+  },
+
+  _getTaskDisplayTitle(task) {
+    const project = AppState.getProjectById?.(task?.project_id);
+    if (project) {
+      return this._getProjectDisplayTitle(project);
+    }
+
+    return this._normalizeProjectTitle(task?.title || '');
+  },
+
+  _getProjectDisplayTitle(project) {
+    const client = String(project?.client || '').trim();
+    const name = String(project?.name || '').trim();
+    return client ? `${client} | ${name}` : name;
+  },
+
+  _normalizeProjectTitle(title) {
+    const rawTitle = String(title || '').trim();
+    if (!rawTitle) return '';
+    if (rawTitle.includes('|')) {
+      return rawTitle
+        .split('|')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(' | ');
+    }
+    return rawTitle.replace(/\s+[-\u2013\u2014]\s+/, ' | ');
   },
 
   _getPriorityPresentation(task, priority, isSet) {
@@ -766,18 +732,18 @@ const TaskCard = {
 
   _priorityInlineStyle(task, priority, isSet) {
     const styles = this._priorityDisplayStyles();
-    if (!isSet || priority === 0 || priority === null || priority === undefined) {
+    if (!isSet || priority === PRIORITY_NONE || priority === null || priority === undefined) {
       const clearTone = this._priorityStyleForToken('clear');
       return `color:${clearTone.color};background:${clearTone.background};border:1px solid ${clearTone.border};`;
     }
 
-    if (priority === -1) {
+    if (priority === PRIORITY_WAIT) {
       const waitTone = this._priorityStyleForToken('wait');
       return `color:${waitTone.color};background:${waitTone.background};border:1px solid ${waitTone.border};`;
     }
 
-    if (priority === -2) {
-      const customLabel = String(task?.priority_label || '').replace(/^cp:/, '');
+    if (priority === PRIORITY_CUSTOM) {
+      const customLabel = getCustomPriorityLabel(task?.priority_label);
       const customPriority = (AppState.get('customPriorities') || []).find((item) => item.label === customLabel);
       const customColor = customPriority?.color || styles.customDefault?.color || '#5C6B75';
       const background = this._withAlpha(customColor, 0.14, '#EEF1F4');
@@ -907,3 +873,4 @@ const TaskCard = {
     return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 };
+})(window);

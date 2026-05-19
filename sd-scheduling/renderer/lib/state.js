@@ -3,6 +3,12 @@
  * Components subscribe to state changes and re-render when data updates.
  */
 
+(function attachAppState(globalScope) {
+const {
+  PRIORITY_WAIT,
+  getPriorityMenuToken,
+} = globalScope.SchedulingPriority;
+
 const AppState = {
   _listeners: {},
   _batchDepth: 0,
@@ -36,6 +42,27 @@ const AppState = {
     this._data[key] = value;
     this._invalidateCaches(key);
     this._notify(key);
+  },
+
+  patchTask(task, options = {}) {
+    if (!task?.id) return null;
+
+    const index = this._data.tasks.findIndex((item) => item.id === task.id);
+    if (index === -1) return null;
+
+    const nextTask = { ...this._data.tasks[index], ...task };
+    this._data.tasks = [
+      ...this._data.tasks.slice(0, index),
+      nextTask,
+      ...this._data.tasks.slice(index + 1),
+    ];
+    this._invalidateCaches('tasks');
+
+    if (options.notify) {
+      this._notify('tasks');
+    }
+
+    return nextTask;
   },
 
   on(key, callback) {
@@ -222,6 +249,8 @@ const AppState = {
             const ap = this._prioritySortKey(a);
             const bp = this._prioritySortKey(b);
             if (ap !== bp) return ap - bp;
+            const clearCompare = this._compareClearedPriorityTasks(a, b);
+            if (clearCompare !== 0) return clearCompare;
             return a.sort_order - b.sort_order;
           })
       };
@@ -275,6 +304,10 @@ const AppState = {
 
   getUserById(id) {
     return this._data.users.find(u => u.id === id);
+  },
+
+  getProjectById(id) {
+    return this._data.projects.find(p => p.id === id);
   },
 
   getPTOForUser(userId) {
@@ -332,23 +365,45 @@ const AppState = {
       }
     }
 
-    let token = 'clear';
+    const token = getPriorityMenuToken(task, customPriorities);
     let offset = 0;
 
     if (typeof p === 'number' && p >= 1) {
-      token = 'numbered';
       offset = p;
-    } else if (p === -1) {
-      token = 'wait';
-    } else if (p === -2) {
-      const label = String(task?.priority_label || '').replace(/^cp:/, '');
-      const customPriority = customPriorities.find((item) => item.label === label);
-      token = customPriority ? `custom:${customPriority.id}` : 'clear';
     }
 
     const index = orderedTokens.indexOf(token);
     const base = (index >= 0 ? index : orderedTokens.length) * 100;
     return base + offset;
+  },
+
+  _compareClearedPriorityTasks(a, b) {
+    const isClearA = !a?.priority;
+    const isClearB = !b?.priority;
+    if (!isClearA || !isClearB) return 0;
+
+    if (a.due_date && b.due_date) {
+      const dueCompare = String(a.due_date).localeCompare(String(b.due_date));
+      if (dueCompare !== 0) return dueCompare;
+    } else if (a.due_date) {
+      return -1;
+    } else if (b.due_date) {
+      return 1;
+    }
+
+    return this._projectTitleSortKey(a).localeCompare(this._projectTitleSortKey(b), undefined, {
+      sensitivity: 'base',
+      numeric: true,
+    });
+  },
+
+  _projectTitleSortKey(task) {
+    const project = this.getProjectById(task?.project_id);
+    if (project) {
+      return `${project.client || ''} | ${project.name || ''}`.trim();
+    }
+
+    return String(task?.title || '').replace(/\s+[-\u2013\u2014]\s+/, ' | ').trim();
   },
 
   _matchesSelectedPartner(task, selectedPartnerId) {
@@ -367,3 +422,5 @@ const AppState = {
     }
   }
 };
+globalScope.AppState = AppState;
+})(window);

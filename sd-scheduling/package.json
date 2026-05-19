@@ -5,6 +5,7 @@
   "main": "main/index.js",
   "scripts": {
     "start": "electron .",
+    "test": "node ..\\scripts\\smoke-tests.js scheduling",
     "build": "electron-builder --win",
     "build:portable": "electron-builder --win portable"
   },
@@ -42,6 +43,12 @@
       "artifactName": "${productName} Portable ${version}.${ext}",
       "requestExecutionLevel": "user"
     },
+    "extraResources": [
+      {
+        "from": "assets/studiosync-main.ico",
+        "to": "studiosync-main.ico"
+      }
+    ],
     "files": [
       "main/**/*",
       "renderer/**/*",

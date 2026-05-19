@@ -225,21 +225,42 @@ const ContextMenu = {
         btn.appendChild(submenu);
 
         const positionSubmenu = () => {
-          requestAnimationFrame(() => {
-            const rect = submenu.getBoundingClientRect();
-            const overflowRight = rect.right > window.innerWidth - 8;
-            const overflowBottom = rect.bottom > window.innerHeight - 8;
-            btn.classList.toggle('open-left', overflowRight);
-            btn.classList.toggle('open-up', overflowBottom);
-          });
+          const previousDisplay = submenu.style.display;
+          const previousVisibility = submenu.style.visibility;
+          const previousPointerEvents = submenu.style.pointerEvents;
+
+          submenu.style.display = 'block';
+          submenu.style.visibility = 'hidden';
+          submenu.style.pointerEvents = 'none';
+
+          btn.classList.remove('open-left', 'open-up');
+
+          const btnRect = btn.getBoundingClientRect();
+          const submenuWidth = submenu.offsetWidth;
+          const submenuHeight = submenu.offsetHeight;
+          const overflowRight = (btnRect.right - 4 + submenuWidth) > (window.innerWidth - 8);
+          const overflowBottom = (btnRect.top - 6 + submenuHeight) > (window.innerHeight - 8);
+
+          btn.classList.toggle('open-left', overflowRight);
+          btn.classList.toggle('open-up', overflowBottom);
+
+          submenu.style.display = previousDisplay;
+          submenu.style.visibility = previousVisibility;
+          submenu.style.pointerEvents = previousPointerEvents;
         };
 
         btn.addEventListener('mouseenter', positionSubmenu);
         btn.addEventListener('focusin', positionSubmenu);
       } else {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
           this.dismiss();
-          if (item.action) item.action();
+          if (item.action) {
+            Promise.resolve(item.action()).catch((error) => {
+              console.error('Context menu action failed:', error);
+            });
+          }
         });
       }
 

@@ -10,6 +10,5 @@
 !macroend
 
 !macro customInstall
-  IfFileExists "$DESKTOP\StudioSync MyTasks.lnk" +2 0
-    CreateShortCut "$DESKTOP\StudioSync MyTasks.lnk" "$INSTDIR\StudioSync MyTasks.exe"
+  CreateShortCut "$DESKTOP\StudioSync MyTasks.lnk" "$INSTDIR\StudioSync MyTasks.exe" "" "$INSTDIR\StudioSync MyTasks.exe" 0
 !macroend

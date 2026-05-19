@@ -5,6 +5,7 @@
   "main": "main/index.js",
   "scripts": {
     "start": "electron .",
+    "test": "node ..\\scripts\\smoke-tests.js companion",
     "build": "electron-builder --win",
     "build:portable": "electron-builder --win portable",
     "postinstall": "electron-rebuild"

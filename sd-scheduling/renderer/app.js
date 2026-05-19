@@ -95,6 +95,7 @@ const App = {
   _backgroundRefreshInFlight: false,
   _backgroundRefreshReason: null,
   _focusAttemptTimer: null,
+  _inputRecoveryTimer: null,
 
   _nextFrame() {
     return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -323,6 +324,8 @@ const App = {
 
       const targetSummary = this._describeElement(editable);
       const point = { x: event.clientX, y: event.clientY };
+      this._recoverEditableInputState(editable, { targetSummary, point });
+      this._ensureEditableWindowFocus(editable, { targetSummary, point });
       this._logDiagnostics('editable-pointerdown', this._captureInteractionContext({
         target: targetSummary,
         point,
@@ -356,6 +359,57 @@ const App = {
         }));
       }, 180);
     }, true);
+  },
+
+  async _ensureEditableWindowFocus(editable, context = {}) {
+    if (!this._isTextEntryElement(editable)) return;
+    if (typeof document.hasFocus === 'function' && document.hasFocus()) return;
+    if (typeof window.api?.focusWindow !== 'function') return;
+
+    try {
+      await window.api.focusWindow();
+      if (document.contains(editable) && document.activeElement !== editable) {
+        editable.focus({ preventScroll: true });
+      }
+      this._logDiagnostics('editable-window-focus-assisted', this._captureInteractionContext(context));
+    } catch (error) {
+      this._logDiagnostics('editable-window-focus-failed', this._captureInteractionContext({
+        ...context,
+        error: error?.message || String(error),
+      }));
+    }
+  },
+
+  _recoverEditableInputState(editable, context = {}) {
+    if (!this._isTextEntryElement(editable)) return;
+
+    const hadStuckInteractionState = document.body.classList.contains('dragging')
+      || Boolean(document.querySelector('.panel-resizer.dragging'))
+      || document.body.style.cursor === 'grabbing'
+      || document.body.style.cursor === 'col-resize'
+      || document.body.style.userSelect === 'none';
+
+    if (hadStuckInteractionState) {
+      document.body.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.querySelectorAll('.drag-over, .dragging').forEach((element) => {
+        element.classList.remove('drag-over', 'dragging');
+      });
+      document.querySelectorAll('.ghost-drop, .drag-chip').forEach((element) => element.remove());
+      this._logDiagnostics('editable-recovered-interaction-state', this._captureInteractionContext(context));
+    }
+
+    clearTimeout(this._inputRecoveryTimer);
+    this._inputRecoveryTimer = setTimeout(() => {
+      if (!document.contains(editable) || document.activeElement !== editable) return;
+      if (editable.readOnly || editable.disabled) {
+        this._logDiagnostics('editable-blocked-state', this._captureInteractionContext({
+          ...context,
+          target: this._describeElement(editable),
+        }));
+      }
+    }, 250);
   },
 
   _getEditableTarget(target) {

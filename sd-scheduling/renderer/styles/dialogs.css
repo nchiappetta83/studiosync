@@ -481,6 +481,90 @@
   font-weight: 600;
 }
 
+.staff-delete-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(8px);
+  z-index: 5;
+}
+
+.staff-delete-dialog {
+  width: min(100%, 420px);
+  border-radius: 20px;
+  border: 1px solid rgba(120, 132, 161, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 28px 60px rgba(33, 40, 67, 0.18);
+  overflow: hidden;
+}
+
+.staff-delete-header {
+  padding: 22px 24px 12px;
+}
+
+.staff-delete-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.staff-delete-subtitle {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.staff-delete-body {
+  padding: 0 24px 12px;
+}
+
+.staff-delete-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.staff-delete-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.staff-delete-select {
+  width: 100%;
+}
+
+.staff-delete-note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.staff-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 24px 24px;
+}
+
+.btn-danger-ghost {
+  background: rgba(233, 76, 76, 0.1);
+  color: var(--danger);
+}
+
+.btn-danger-ghost:hover {
+  background: rgba(233, 76, 76, 0.16);
+}
+
 /* ── Settings Dialog ─────────────────────────────────── */
 
 .dialog-settings {

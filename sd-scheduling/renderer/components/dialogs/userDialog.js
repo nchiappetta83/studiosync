@@ -8,6 +8,7 @@ const UserDialog = {
   _activeTab: 'staff', // 'staff' or 'partners'
   _pendingRole: 'staff',
   _onEsc: null,
+  _deleteDialogCleanup: null,
 
   show() {
     const overlay = document.createElement('div');
@@ -166,6 +167,7 @@ const UserDialog = {
       this._onEsc = null;
     }
     if (this._overlay) {
+      this._dismissDeleteDialog();
       this._overlay.remove();
       this._overlay = null;
     }
@@ -296,18 +298,140 @@ const UserDialog = {
         const user = AppState.getUserById(btn.dataset.userId);
         if (!user) return;
 
-        if (confirm(`Remove ${user.display_name}? Reassign or clear any remaining tasks first.`)) {
-          const result = await window.api.deleteUser(user.id);
-          if (!result?.success) {
-            Toast.show(result?.error || 'Unable to remove this person yet.', 'error');
-            return;
-          }
-          await AppState.refresh();
-          this._refreshList();
-          Toast.show(`${user.display_name} removed`, 'success');
+        const impact = await window.api.getUserDeleteImpact(user.id);
+        const openTaskCount = Number(impact?.openTaskCount || 0);
+
+        if (openTaskCount > 0) {
+          this._showDeleteDialog(user, openTaskCount);
+          return;
+        }
+
+        if (confirm(`Remove ${user.display_name}?`)) {
+          await this._removeUser(user, { taskAction: 'none' });
         }
       });
     });
+  },
+
+  async _removeUser(user, options = {}) {
+    const result = await window.api.deleteUser({
+      userId: user.id,
+      ...options,
+    });
+    if (!result?.success) {
+      Toast.show(result?.error || 'Unable to remove this person yet.', 'error');
+      return false;
+    }
+    this._dismissDeleteDialog();
+    await AppState.refresh();
+    this._refreshList();
+    Toast.show(`${user.display_name} removed`, 'success');
+    return true;
+  },
+
+  _getDeleteReassignmentOptions(userId) {
+    const users = AppState.get('users') || [];
+    return users
+      .filter((user) => user.id !== userId && user.active !== 0 && user.role !== 'bootstrap')
+      .sort((left, right) => (left.display_name || '').localeCompare(right.display_name || ''));
+  },
+
+  _showDeleteDialog(user, openTaskCount) {
+    this._dismissDeleteDialog();
+
+    const reassignmentOptions = this._getDeleteReassignmentOptions(user.id);
+    const modal = document.createElement('div');
+    modal.className = 'staff-delete-overlay';
+    modal.innerHTML = `
+      <div class="staff-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="staff-delete-title">
+        <div class="staff-delete-header">
+          <div class="staff-delete-title" id="staff-delete-title">Remove ${this._esc(user.display_name)}</div>
+          <div class="staff-delete-subtitle">${this._esc(user.display_name)} has ${openTaskCount} open ${openTaskCount === 1 ? 'task' : 'tasks'}. What would you like to do?</div>
+        </div>
+        <div class="staff-delete-body">
+          <div class="staff-delete-row">
+            <label class="staff-delete-label" for="staff-delete-reassign">Reassign to</label>
+            <select class="select staff-delete-select" id="staff-delete-reassign">
+              <option value="">Select teammate...</option>
+              ${reassignmentOptions.map((candidate) => `<option value="${candidate.id}">${this._esc(candidate.display_name)}</option>`).join('')}
+            </select>
+          </div>
+          ${reassignmentOptions.length === 0 ? '<div class="staff-delete-note">No active teammate is available for reassignment right now.</div>' : ''}
+        </div>
+        <div class="staff-delete-actions">
+          <button class="btn btn-ghost" type="button" data-action="cancel-delete">Cancel</button>
+          <button class="btn btn-danger-ghost" type="button" data-action="delete-tasks">Delete Tasks</button>
+          <button class="btn btn-primary" type="button" data-action="reassign-tasks" ${reassignmentOptions.length === 0 ? 'disabled' : ''}>Reassign and Remove</button>
+        </div>
+      </div>
+    `;
+
+    this._overlay.appendChild(modal);
+
+    const close = () => {
+      modal.remove();
+      this._deleteDialogCleanup = null;
+    };
+    this._deleteDialogCleanup = close;
+
+    const reassignSelect = modal.querySelector('#staff-delete-reassign');
+    const reassignBtn = modal.querySelector('[data-action="reassign-tasks"]');
+    const deleteBtn = modal.querySelector('[data-action="delete-tasks"]');
+    const cancelBtn = modal.querySelector('[data-action="cancel-delete"]');
+
+    const syncReassignState = () => {
+      if (reassignBtn) reassignBtn.disabled = !reassignSelect?.value;
+    };
+    syncReassignState();
+
+    reassignSelect?.addEventListener('change', syncReassignState);
+    cancelBtn?.addEventListener('click', close);
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) close();
+    });
+
+    deleteBtn?.addEventListener('click', async () => {
+      deleteBtn.disabled = true;
+      if (reassignBtn) reassignBtn.disabled = true;
+      cancelBtn.disabled = true;
+      const success = await this._removeUser(user, { taskAction: 'delete' });
+      if (!success) {
+        deleteBtn.disabled = false;
+        cancelBtn.disabled = false;
+        syncReassignState();
+      }
+    });
+
+    reassignBtn?.addEventListener('click', async () => {
+      const reassignTo = reassignSelect?.value;
+      if (!reassignTo) return;
+      reassignBtn.disabled = true;
+      deleteBtn.disabled = true;
+      cancelBtn.disabled = true;
+      const success = await this._removeUser(user, {
+        taskAction: 'reassign',
+        reassignTo,
+      });
+      if (!success) {
+        deleteBtn.disabled = false;
+        cancelBtn.disabled = false;
+        syncReassignState();
+      }
+    });
+
+    setTimeout(() => {
+      if (reassignSelect && reassignmentOptions.length > 0) {
+        reassignSelect.focus();
+      } else {
+        deleteBtn?.focus();
+      }
+    }, 0);
+  },
+
+  _dismissDeleteDialog() {
+    if (typeof this._deleteDialogCleanup === 'function') {
+      this._deleteDialogCleanup();
+    }
   },
 
   _showAddForm() {

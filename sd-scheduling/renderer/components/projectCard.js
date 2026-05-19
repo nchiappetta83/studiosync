@@ -126,10 +126,7 @@ const ProjectCard = {
           if (!project) return;
 
           const newStatus = project.status === 'active' ? 'inactive' : 'active';
-          const activeOnly = document.getElementById('projects-active-only')?.checked ?? true;
-          ProjectPanel.prepareAnchorNearProject(projectId, {
-            preferNeighbor: activeOnly && newStatus !== 'active',
-          });
+          ProjectPanel.lockScrollPosition();
           await window.api.updateProject({ id: projectId, status: newStatus });
           AppState.refresh();
         });
@@ -172,7 +169,7 @@ const ProjectCard = {
       label: project.status === 'active' ? '✓ Active' : 'Set Active',
       action: async () => {
         if (project.status !== 'active') {
-          ProjectPanel.prepareAnchorNearProject(project.id);
+          ProjectPanel.lockScrollPosition();
           await window.api.updateProject({ id: project.id, status: 'active' });
           AppState.refresh();
         }
@@ -182,10 +179,7 @@ const ProjectCard = {
       label: project.status === 'inactive' ? '✓ Inactive' : 'Set Inactive',
       action: async () => {
         if (project.status !== 'inactive') {
-          const activeOnly = document.getElementById('projects-active-only')?.checked ?? true;
-          ProjectPanel.prepareAnchorNearProject(project.id, {
-            preferNeighbor: activeOnly,
-          });
+          ProjectPanel.lockScrollPosition();
           await window.api.updateProject({ id: project.id, status: 'inactive' });
           AppState.refresh();
         }

@@ -11,6 +11,8 @@ SD Apps/
   STRUCTURE.md                           # This file
   docs/
     signpath-setup.md                    # Future SignPath restoration notes
+  scripts/
+    smoke-tests.js                       # Lightweight Node smoke tests for fragile shared helpers
   .github/workflows/
     release-signpath.yml                 # Live GitHub release workflow
   sd-scheduling/                         # StudioSync dashboard app
@@ -34,6 +36,7 @@ sd-scheduling/
     excelImport.js                       # Excel import
     excelSync.js                         # Serialized Excel write-back for project changes
     export.js                            # PDF and HTML export
+    priority.js                          # Main-process priority constants and label helpers
   renderer/
     index.html                           # App shell
     app.js                               # Main renderer entry
@@ -42,6 +45,7 @@ sd-scheduling/
       toolbar.js                         # Search, filters, action buttons, and user/sync badge
       taskPanel.js                       # Staff-grouped task list
       taskCard.js                        # Individual task card UI
+      taskNotesEditor.js                 # Persistent inline task-note draft/save controller
       projectPanel.js                    # Project list, Current/Future tabs, and add-project defaults
       projectCard.js                     # Individual project cards and project context menu actions
       subTasks.js                        # Action Item rendering and toggles
@@ -57,6 +61,7 @@ sd-scheduling/
     lib/
       state.js                           # AppState store with batched refresh notifications
       dragDrop.js                        # Drag and drop engine
+      priority.js                        # Renderer priority constants, parsing, and display helpers
       mock.js                            # Browser-preview mock bridge
     styles/
       tokens.css
@@ -120,6 +125,20 @@ sd-companion/
     index.html                           # Compact login shell, top bar, dialogs, detail panel
     components/
       app.js                             # Main UI logic, project editing, shared comments, Action Items, and My Projects menus
+    lib/
+      actionItems.js                    # Action Item assignment parsing and representative-task selection
+      commentDisplay.js                 # Comment timestamp, scroll-state, and unread-jump helpers
+      contextMenu.js                     # Reusable nested context-menu creation and viewport positioning
+      html.js                            # Shared HTML and attribute escaping helpers
+      projectDisplay.js                  # Project partner parsing, sections, and task/project title display
+      permissions.js                     # Role/permission helpers for MyTasks actions
+      projectNotes.js                    # Project-note ordering, draft, dirty-state, and timestamp helpers
+      priority.js                        # Priority constants, parsing, and sort helpers
+      priorityPresentation.js            # Priority badge colors, labels, and inline style presentation
+      richNotes.js                       # Rich project-note rendering, link detection, and sanitizing helpers
+      taskDisplay.js                     # Task due-date, status, and overdue presentation helpers
+      taskOrdering.js                    # Scheduling-compatible shared task ordering
+      taskPayload.js                     # Shared/private task payload normalization
     styles/
       tokens.css                         # Shared design tokens
       companion.css                      # MyTasks-specific layout and responsive rules
