@@ -366,6 +366,7 @@ function testMyTasksLayoutGuards() {
   assert.match(appCode, /toggleTaskDetailPanel\(card\.dataset\.taskId\)/, 'Task card click handlers should use detail-pane toggle behavior');
   assert.match(appCode, /function getProjectPartners/, 'Task cards should have a defined project partner helper');
   assert.match(appCode, /function renderTaskStatusControl/, 'Task detail panel should have the status control renderer');
+  assert.match(appCode, /<button type="button" class="add-task-inline"/, 'Partner inline task creation should remain keyboard accessible');
   assert.match(mainCode, /function getAppIconPath/, 'MyTasks should resolve a packaged external app icon');
   assert.match(packageJson, /"extraResources"[\s\S]*studiosync-mytasks\.ico/, 'MyTasks installer should include the icon as an external resource');
   assert.match(installerScript, /resources\\assets\\studiosync-mytasks\.ico/, 'MyTasks desktop shortcut should point directly at the packaged icon');
@@ -376,6 +377,13 @@ function testMyTasksLayoutGuards() {
   assert.doesNotMatch(companionCss, /detail-slide-mode[\s\S]{0,260}\.detail-panel[\s\S]{0,260}position:\s*absolute/, 'Open slide detail mode should use the normal split-pane layout');
   assert.match(readRepoFile('sd-companion/renderer/styles/tokens.css'), /body\.theme-dark/, 'MyTasks should keep dark mode theme variables');
   assert.match(companionCss, /\.staff-section-tasks\s+\.task-card[\s\S]*min-width:\s*0/, 'Partner Staff Overview task cards should shrink safely');
+  assert.match(companionCss, /\.app-shell\.role-partner #view-staff-view[\s\S]*overflow-y:\s*hidden/, 'Partner Staff Overview should keep scrolling out of the outer view');
+  assert.match(companionCss, /\.app-shell\.role-partner \.staff-overview[\s\S]*overflow-y:\s*auto/, 'Partner Staff Overview should own the vertical scroll');
+  assert.match(companionCss, /\.app-shell\.role-partner \.staff-section-tasks[\s\S]*overflow-y:\s*visible/, 'Expanded Partner staff groups should not create nested scrollbars');
+  assert.match(companionCss, /\.add-task-inline\s*\{[\s\S]*?width:\s*auto/, 'Partner inline task creation should remain a compact button');
+  assert.match(companionCss, /\.detail-pane-toggle\s*\{[\s\S]*?width:\s*18px/, 'The shared Staff and Partner detail toggle should remain narrow');
+  assert.match(companionCss, /\.project-group\s*\{[\s\S]*?overflow:\s*hidden/, 'Partner project sections should own their visible frame');
+  assert.match(companionCss, /\.project-group-body\s*\{[\s\S]*?scrollbar-gutter:\s*stable/, 'Partner project section scrollbars should stay inside the frame');
   assert.doesNotMatch(companionCss, /margin-right:\s*-\d+px/, 'Negative horizontal offsets should not be used to hide overflow in MyTasks');
   assert.doesNotMatch(notesCss, /project-notes-overlay/, 'Standalone Project Notes CSS should not carry legacy overlay styles');
 }
