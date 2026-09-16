@@ -1,11 +1,4 @@
 (function attachMyTasksContextMenu(globalScope) {
-  function escapeHtml(value) {
-    if (!value) return '';
-    const div = document.createElement('div');
-    div.textContent = value;
-    return div.innerHTML;
-  }
-
   function positionMenu(menu, x, y) {
     menu.style.top = `${y}px`;
     menu.style.left = `${x}px`;
@@ -51,22 +44,37 @@
           continue;
         }
 
-        const btn = document.createElement(item.submenu ? 'div' : 'button');
-        if (!item.submenu) btn.type = 'button';
-        btn.className = `context-menu-item ${item.danger ? 'danger' : ''}${item.submenu ? ' has-submenu' : ''}`;
+        const isLabel = item.type === 'label';
+        const btn = document.createElement(item.submenu || isLabel ? 'div' : 'button');
+        if (!item.submenu && !isLabel) btn.type = 'button';
+        btn.className = `context-menu-item ${item.danger ? 'danger' : ''}${item.submenu ? ' has-submenu' : ''}${isLabel ? ' context-menu-info' : ''}`;
 
-        let iconHtml = '';
         if (item.icon) {
-          iconHtml = item.icon;
+          const iconTemplate = document.createElement('template');
+          iconTemplate.innerHTML = String(item.icon);
+          btn.appendChild(iconTemplate.content.cloneNode(true));
         } else if (item.color) {
-          iconHtml = `<span style="width:10px;height:10px;border-radius:50%;background:${item.color};flex-shrink:0;"></span>`;
+          const colorDot = document.createElement('span');
+          colorDot.style.width = '10px';
+          colorDot.style.height = '10px';
+          colorDot.style.borderRadius = '50%';
+          colorDot.style.background = item.color;
+          colorDot.style.flexShrink = '0';
+          btn.appendChild(colorDot);
         }
 
-        const chevronHtml = item.submenu
-          ? '<span class="context-menu-chevron" aria-hidden="true">&#8250;</span>'
-          : '';
+        const label = document.createElement('span');
+        label.className = 'context-menu-label';
+        label.textContent = item.label || '';
+        btn.appendChild(label);
 
-        btn.innerHTML = `${iconHtml}<span class="context-menu-label">${escapeHtml(item.label)}</span>${chevronHtml}`;
+        if (item.submenu) {
+          const chevron = document.createElement('span');
+          chevron.className = 'context-menu-chevron';
+          chevron.setAttribute('aria-hidden', 'true');
+          chevron.textContent = String.fromCharCode(8250);
+          btn.appendChild(chevron);
+        }
 
         if (item.submenu) {
           const submenu = document.createElement('div');
@@ -84,7 +92,7 @@
 
           btn.addEventListener('mouseenter', positionSubmenu);
           btn.addEventListener('focusin', positionSubmenu);
-        } else {
+        } else if (!isLabel) {
           btn.addEventListener('click', () => {
             this.dismiss();
             if (item.action) item.action();

@@ -6,8 +6,10 @@ const SyncEngine = require('./sync');
 const Auth = require('./auth');
 const UpdateManager = require('./updateManager');
 const { createLogger } = require('./logger');
+const { getExternalTargetAction } = require('./linkSecurity');
 
 let mainWindow = null;
+const projectNotesWindows = new Map();
 let db = null;
 let sync = null;
 let auth = null;
@@ -17,6 +19,7 @@ let hasShownTrayHint = false;
 let updateManager = null;
 let currentWindowMode = 'login';
 let saveWindowBoundsTimer = null;
+let saveProjectNotesWindowBoundsTimer = null;
 let logger = null;
 let runtimeStatus = {
   lastSyncAt: null,
@@ -44,8 +47,20 @@ const STAFF_APP_WINDOW_BOUNDS = {
   minHeight: 600,
 };
 
+const PROJECT_NOTES_WINDOW_BOUNDS = {
+  width: 940,
+  height: 680,
+  minWidth: 720,
+  minHeight: 520,
+};
+
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
+const APP_USER_MODEL_ID = 'com.studiosync.mytasks';
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+}
 
 function getPortableExecutablePath() {
   return process.env.PORTABLE_EXECUTABLE_FILE || null;
@@ -302,6 +317,9 @@ function resetLocalCache() {
 
 function notifyDataChanged() {
   if (mainWindow) mainWindow.webContents.send('data-updated');
+  for (const notesWindow of projectNotesWindows.values()) {
+    if (!notesWindow.isDestroyed()) notesWindow.webContents.send('data-updated');
+  }
 }
 
 function getAuthEntryState() {
@@ -383,6 +401,20 @@ function getPriorityDisplayStyles() {
   }
 }
 
+function getPriorityMenuOrder() {
+  if (!db) return [];
+
+  const rawValue = db.getGlobalSetting('priority_menu_order');
+  if (!rawValue) return [];
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string' && item.trim()) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
 function emitUpdatePrompt(result) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-available', result);
@@ -411,6 +443,7 @@ function getRuntimeStatus() {
     sharedDriveReachable: Boolean(sharedDrivePath && inspection.valid && fs.existsSync(inspection.resolvedPath || sharedDrivePath)),
     sharedDriveValid: Boolean(sharedDrivePath && inspection.valid),
     lastSyncAt: runtimeStatus.lastSyncAt,
+    syncFailures: sync?.getFailureSummary?.() || { count: 0, totalAttempts: 0, nextRetryAt: null },
     updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
     latestVersion: pendingUpdate?.latestVersion || lastUpdateResult?.latestVersion || null,
     launchOnStartup: getLaunchOnStartupState(),
@@ -426,17 +459,14 @@ function emitRuntimeStatus() {
 }
 
 async function openExternalTarget(rawValue) {
-  const target = String(rawValue || '').trim();
-  if (!target) return { success: false, error: 'No link provided.' };
-
-  const isWindowsPath = /^[a-zA-Z]:[\\/]/.test(target) || /^\\\\/.test(target);
-  const hasProtocol = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(target);
+  const targetAction = getExternalTargetAction(rawValue);
+  if (!targetAction.success) return targetAction;
 
   try {
-    if (!isWindowsPath && hasProtocol) {
-      await shell.openExternal(target);
+    if (targetAction.action === 'openExternal') {
+      await shell.openExternal(targetAction.target);
     } else {
-      const result = await shell.openPath(target);
+      const result = await shell.openPath(targetAction.target);
       if (result) return { success: false, error: result };
     }
     return { success: true };
@@ -450,7 +480,10 @@ function markSyncActivity() {
   emitRuntimeStatus();
 }
 
-function getTrayIconPath() {
+function getAppIconPath() {
+  const externalIconPath = path.join(process.resourcesPath || '', 'assets', 'studiosync-mytasks.ico');
+  if (app.isPackaged && fs.existsSync(externalIconPath)) return externalIconPath;
+
   return path.join(__dirname, '..', 'assets', 'studiosync-mytasks.ico');
 }
 
@@ -507,6 +540,99 @@ function saveCurrentAppWindowBounds() {
   const config = loadConfig() || {};
   config.appWindowBoundsByRole = config.appWindowBoundsByRole || {};
   config.appWindowBoundsByRole[role] = {
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+  };
+  saveConfig(config);
+}
+
+function isWindowBoundsVisible(bounds, minVisibleSize = 120) {
+  if (!bounds) return false;
+  const x = Math.round(Number(bounds.x));
+  const y = Math.round(Number(bounds.y));
+  const width = Math.round(Number(bounds.width));
+  const height = Math.round(Number(bounds.height));
+  if (![x, y, width, height].every(Number.isFinite)) return false;
+
+  const targetBounds = { x, y, width, height };
+  const display = screen.getDisplayMatching(targetBounds);
+  const workArea = display?.workArea;
+  if (!workArea) return false;
+
+  const visibleWidth = Math.min(x + width, workArea.x + workArea.width) - Math.max(x, workArea.x);
+  const visibleHeight = Math.min(y + height, workArea.y + workArea.height) - Math.max(y, workArea.y);
+  return visibleWidth >= minVisibleSize && visibleHeight >= minVisibleSize;
+}
+
+function clampBoundsToWorkArea(bounds, workArea, defaults) {
+  const width = Math.min(Math.max(Math.round(Number(bounds.width)) || defaults.width, defaults.minWidth), workArea.width);
+  const height = Math.min(Math.max(Math.round(Number(bounds.height)) || defaults.height, defaults.minHeight), workArea.height);
+  const x = Math.min(
+    Math.max(Math.round(Number(bounds.x)) || workArea.x, workArea.x),
+    workArea.x + workArea.width - width
+  );
+  const y = Math.min(
+    Math.max(Math.round(Number(bounds.y)) || workArea.y, workArea.y),
+    workArea.y + workArea.height - height
+  );
+
+  return { x, y, width, height };
+}
+
+function getDefaultProjectNotesWindowBounds() {
+  const sourceBounds = mainWindow && !mainWindow.isDestroyed()
+    ? (mainWindow.isMaximized() ? mainWindow.getNormalBounds() : mainWindow.getBounds())
+    : null;
+  const display = sourceBounds
+    ? screen.getDisplayMatching(sourceBounds)
+    : screen.getPrimaryDisplay();
+  const workArea = display.workArea;
+  const width = Math.min(PROJECT_NOTES_WINDOW_BOUNDS.width, workArea.width);
+  const height = Math.min(PROJECT_NOTES_WINDOW_BOUNDS.height, workArea.height);
+  const sourceCenterX = sourceBounds ? sourceBounds.x + (sourceBounds.width / 2) : workArea.x + (workArea.width / 2);
+  const sourceCenterY = sourceBounds ? sourceBounds.y + (sourceBounds.height / 2) : workArea.y + (workArea.height / 2);
+
+  return clampBoundsToWorkArea({
+    x: Math.round(sourceCenterX - (width / 2) + 32),
+    y: Math.round(sourceCenterY - (height / 2) + 32),
+    width,
+    height,
+  }, workArea, PROJECT_NOTES_WINDOW_BOUNDS);
+}
+
+function getSavedProjectNotesWindowBounds() {
+  const config = loadConfig() || {};
+  const savedBounds = config.projectNotesWindowBounds;
+  if (!savedBounds || !isWindowBoundsVisible(savedBounds, 160)) return null;
+
+  const display = screen.getDisplayMatching(savedBounds);
+  return clampBoundsToWorkArea(savedBounds, display.workArea, PROJECT_NOTES_WINDOW_BOUNDS);
+}
+
+function getProjectNotesWindowBounds() {
+  return getSavedProjectNotesWindowBounds() || getDefaultProjectNotesWindowBounds();
+}
+
+function scheduleSaveProjectNotesWindowBounds(notesWindow) {
+  if (!notesWindow || notesWindow.isDestroyed() || notesWindow.isMinimized() || notesWindow.isFullScreen()) return;
+
+  clearTimeout(saveProjectNotesWindowBoundsTimer);
+  saveProjectNotesWindowBoundsTimer = setTimeout(() => {
+    saveProjectNotesWindowBoundsTimer = null;
+    saveProjectNotesWindowBounds(notesWindow);
+  }, 200);
+}
+
+function saveProjectNotesWindowBounds(notesWindow) {
+  if (!notesWindow || notesWindow.isDestroyed() || notesWindow.isMinimized() || notesWindow.isFullScreen()) return;
+
+  const bounds = notesWindow.isMaximized() ? notesWindow.getNormalBounds() : notesWindow.getBounds();
+  if (!isWindowBoundsVisible(bounds, 160)) return;
+
+  const config = loadConfig() || {};
+  config.projectNotesWindowBounds = {
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
@@ -682,7 +808,7 @@ async function handlePulledSyncEvents(events = []) {
 function createTray() {
   if (tray) return;
 
-  tray = new Tray(getTrayIconPath());
+  tray = new Tray(getAppIconPath());
   tray.setToolTip('StudioSync MyTasks');
   tray.setContextMenu(Menu.buildFromTemplate([
     {
@@ -721,7 +847,7 @@ function createWindow() {
     minHeight: LOGIN_WINDOW_BOUNDS.minHeight,
     title: 'StudioSync MyTasks',
     autoHideMenuBar: true,
-    icon: getTrayIconPath(),
+    icon: getAppIconPath(),
     frame: false,
     webPreferences: {
       nodeIntegration: false,
@@ -771,6 +897,67 @@ function createWindow() {
   mainWindow.on('leave-full-screen', () => emitWindowState());
   mainWindow.on('move', () => scheduleSaveCurrentAppWindowBounds());
   mainWindow.on('resize', () => scheduleSaveCurrentAppWindowBounds());
+}
+
+function openProjectNotesWindow(projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) return false;
+
+  const existing = projectNotesWindows.get(id);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return true;
+  }
+
+  const notesBounds = getProjectNotesWindowBounds();
+  const notesWindow = new BrowserWindow({
+    x: notesBounds.x,
+    y: notesBounds.y,
+    width: notesBounds.width,
+    height: notesBounds.height,
+    minWidth: PROJECT_NOTES_WINDOW_BOUNDS.minWidth,
+    minHeight: PROJECT_NOTES_WINDOW_BOUNDS.minHeight,
+    title: 'Project Notes',
+    autoHideMenuBar: true,
+    icon: getAppIconPath(),
+    frame: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+
+  projectNotesWindows.set(id, notesWindow);
+  notesWindow.loadFile(path.join(__dirname, '..', 'renderer', 'project-notes.html'), {
+    query: { projectId: id },
+  });
+
+  notesWindow.on('move', () => scheduleSaveProjectNotesWindowBounds(notesWindow));
+  notesWindow.on('resize', () => scheduleSaveProjectNotesWindowBounds(notesWindow));
+
+  let isClosingNotesWindow = false;
+  notesWindow.on('close', (event) => {
+    if (isClosingNotesWindow || notesWindow.webContents.isDestroyed()) return;
+    event.preventDefault();
+    saveProjectNotesWindowBounds(notesWindow);
+    notesWindow.webContents.executeJavaScript('window.ProjectNotesWindow?.flushBeforeClose?.()')
+      .catch(() => null)
+      .finally(() => {
+        isClosingNotesWindow = true;
+        notesWindow.close();
+      });
+  });
+
+  notesWindow.on('closed', () => {
+    clearTimeout(saveProjectNotesWindowBoundsTimer);
+    saveProjectNotesWindowBoundsTimer = null;
+    projectNotesWindows.delete(id);
+  });
+
+  return true;
 }
 
 // ── IPC Handlers ───────────────────────────────────────
@@ -860,6 +1047,7 @@ function registerIPC() {
 
   ipcMain.handle('get-runtime-status', () => getRuntimeStatus());
   ipcMain.handle('open-link', (_e, value) => openExternalTarget(value));
+  ipcMain.handle('open-project-notes-window', (_e, projectId) => openProjectNotesWindow(projectId));
 
   ipcMain.handle('initialize-app', async (_e, sharedPath) => {
     try {
@@ -880,11 +1068,11 @@ function registerIPC() {
       saveConfig(config);
 
       const localDbPath = getLocalDbPath();
-      db = new Database(localDbPath);
+      db = new Database(localDbPath, logger);
       db.initialize();
 
       auth = new Auth(db);
-      sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'companion');
+      sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'companion', logger);
       sync.initialize();
       markSyncActivity();
       sync.startPolling((events) => {
@@ -895,7 +1083,7 @@ function registerIPC() {
         handlePulledSyncEvents(events).catch((err) => {
           console.error('Sync event handling failed:', err.message);
         });
-      });
+      }, () => emitRuntimeStatus());
 
       if (updateManager) {
         updateManager.start();
@@ -1171,123 +1359,135 @@ function registerIPC() {
     if (!db) return [];
     return db.getCustomPriorities();
   });
+  ipcMain.handle('get-priority-menu-order', () => getPriorityMenuOrder());
   ipcMain.handle('get-priority-display-styles', () => getPriorityDisplayStyles());
 
   // Sync
   ipcMain.handle('force-sync', async () => {
     if (!sync) return false;
-    const events = sync.pull();
+    const events = sync.retryFailedFiles();
     if (events.length === 0) {
       markSyncActivity();
     }
     await handlePulledSyncEvents(events);
+    emitRuntimeStatus();
     return true;
   });
 }
 
 // ── App Lifecycle ──────────────────────────────────────
 
-app.whenReady().then(async () => {
-  logger?.info('app-ready', { pid: process.pid });
-  app.setAppUserModelId('com.studiosync.mytasks');
-  applyLaunchOnStartupPreference(getLaunchOnStartupPreference(), { persist: false });
-  registerIPC();
-  createTray();
-  createWindow();
-  updateManager = new UpdateManager({
-    app,
-    dialog,
-    loadConfig,
-    saveConfig,
-    getDb: () => db,
-    getMainWindow: () => mainWindow,
-    appKey: 'companion',
-    productName: 'StudioSync MyTasks',
-    installerBaseName: 'StudioSync MyTasks Setup',
-    onPrompt: (result) => emitUpdatePrompt(result),
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    restoreMainWindow();
   });
 
-  // Try to auto-initialize from saved config
-  const config = loadConfig();
-  if (config && config.sharedDrivePath) {
-    try {
-      const inspection = inspectSharedDrivePath(config.sharedDrivePath);
-      if (!inspection.valid) throw new Error(inspection.reason);
+  app.whenReady().then(async () => {
+    logger?.info('app-ready', { pid: process.pid });
+    app.setAppUserModelId(APP_USER_MODEL_ID);
+    applyLaunchOnStartupPreference(getLaunchOnStartupPreference(), { persist: false });
+    registerIPC();
+    createTray();
+    createWindow();
+    updateManager = new UpdateManager({
+      app,
+      dialog,
+      loadConfig,
+      saveConfig,
+      getDb: () => db,
+      getMainWindow: () => mainWindow,
+      appKey: 'companion',
+      productName: 'StudioSync MyTasks',
+      installerBaseName: 'StudioSync MyTasks Setup',
+      onPrompt: (result) => emitUpdatePrompt(result),
+    });
 
-      const resolvedSharedPath = inspection.resolvedPath;
-      if (resolvedSharedPath !== config.sharedDrivePath) {
-        config.sharedDrivePath = resolvedSharedPath;
-        saveConfig(config);
-      }
+    // Try to auto-initialize from saved config
+    const config = loadConfig();
+    if (config && config.sharedDrivePath) {
+      try {
+        const inspection = inspectSharedDrivePath(config.sharedDrivePath);
+        if (!inspection.valid) throw new Error(inspection.reason);
 
-      const localDbPath = getLocalDbPath();
-      db = new Database(localDbPath);
-      db.initialize();
+        const resolvedSharedPath = inspection.resolvedPath;
+        if (resolvedSharedPath !== config.sharedDrivePath) {
+          config.sharedDrivePath = resolvedSharedPath;
+          saveConfig(config);
+        }
 
-      auth = new Auth(db);
-      if (config.loggedInUsername) {
-        auth.setUsername(config.loggedInUsername);
-        if (!auth.getCurrentUser()) {
-          runtimeStatus.startupIssue = {
-            type: 'remembered-user-missing',
-            username: config.loggedInUsername,
-          };
-          auth.setUsername(null);
-          if (sync) sync.setUsername('unknown');
+        const localDbPath = getLocalDbPath();
+        db = new Database(localDbPath, logger);
+        db.initialize();
+
+        auth = new Auth(db);
+        if (config.loggedInUsername) {
+          auth.setUsername(config.loggedInUsername);
+          if (!auth.getCurrentUser()) {
+            runtimeStatus.startupIssue = {
+              type: 'remembered-user-missing',
+              username: config.loggedInUsername,
+            };
+            auth.setUsername(null);
+            if (sync) sync.setUsername('unknown');
+          } else {
+            runtimeStatus.startupIssue = null;
+          }
         } else {
           runtimeStatus.startupIssue = null;
         }
-      } else {
-        runtimeStatus.startupIssue = null;
-      }
 
-      sync = new SyncEngine(db, resolvedSharedPath, config.loggedInUsername || 'unknown', 'companion');
-      sync.initialize();
-      markSyncActivity();
-      sync.startPolling((events) => {
-        if (!events.length) {
-          markSyncActivity();
-          return;
+        sync = new SyncEngine(db, resolvedSharedPath, config.loggedInUsername || 'unknown', 'companion', logger);
+        sync.initialize();
+        markSyncActivity();
+        sync.startPolling((events) => {
+          if (!events.length) {
+            markSyncActivity();
+            return;
+          }
+          handlePulledSyncEvents(events).catch((err) => {
+            console.error('Sync event handling failed:', err.message);
+          });
+        }, () => emitRuntimeStatus());
+        if (updateManager) {
+          updateManager.start();
+          await updateManager.checkForUpdates({ promptIfAvailable: true });
         }
-        handlePulledSyncEvents(events).catch((err) => {
-          console.error('Sync event handling failed:', err.message);
-        });
-      });
-      if (updateManager) {
-        updateManager.start();
-        await updateManager.checkForUpdates({ promptIfAvailable: true });
+        emitRuntimeStatus();
+      } catch (err) {
+        closeRuntime();
+        runtimeStatus.startupIssue = {
+          type: 'shared-drive-invalid',
+          reason: err.message,
+        };
+        emitRuntimeStatus();
+        console.error('Failed to initialize:', err.message);
       }
-      emitRuntimeStatus();
-    } catch (err) {
-      closeRuntime();
-      runtimeStatus.startupIssue = {
-        type: 'shared-drive-invalid',
-        reason: err.message,
-      };
-      emitRuntimeStatus();
-      console.error('Failed to initialize:', err.message);
     }
-  }
-});
+  });
 
-app.on('window-all-closed', () => {
-  logger?.info('window-all-closed');
-  if (!isQuitting) return;
-  if (updateManager) updateManager.stop();
-  if (sync) sync.stopPolling();
-  if (db) db.close();
-  app.quit();
-});
+  app.on('window-all-closed', () => {
+    logger?.info('window-all-closed');
+    if (!isQuitting) return;
+    if (updateManager) updateManager.stop();
+    if (sync) sync.stopPolling();
+    if (db) db.close();
+    app.quit();
+  });
 
-app.on('activate', () => {
-  if (mainWindow === null) {
-    createWindow();
-  } else {
-    restoreMainWindow();
-  }
-});
+  app.on('activate', () => {
+    if (mainWindow === null) {
+      createWindow();
+    } else {
+      restoreMainWindow();
+    }
+  });
 
-app.on('before-quit', () => {
-  logger?.info('before-quit');
-  isQuitting = true;
-});
+  app.on('before-quit', () => {
+    logger?.info('before-quit');
+    isQuitting = true;
+  });
+}

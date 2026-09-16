@@ -1,20 +1,19 @@
 /**
- * Toolbar component — search, filter, print, manage users, current user badge.
+ * Toolbar component - search, print, settings, current user badge.
  */
 
 const Toolbar = {
   init() {
     this._searchInput = document.getElementById('search-input');
-    this._filterBtn = document.getElementById('btn-filter');
-    this._filterBadge = document.getElementById('filter-badge');
     this._printBtn = document.getElementById('btn-print');
-    this._manageUsersBtn = document.getElementById('btn-manage-users');
     this._settingsBtn = document.getElementById('btn-settings');
+    this._carryoverReviewBtn = document.getElementById('btn-carryover-review');
+    this._carryoverReviewCount = document.getElementById('carryover-review-count');
     this._userBadge = document.getElementById('current-user-badge');
     this._syncIndicator = document.getElementById('sync-indicator');
     this._syncStatusText = document.getElementById('sync-status-text');
+    this._lastRuntimeStatus = null;
 
-    // Search with debounce
     let searchTimeout;
     this._searchInput.addEventListener('input', (e) => {
       clearTimeout(searchTimeout);
@@ -23,7 +22,6 @@ const Toolbar = {
       }, 200);
     });
 
-    // Clear search on Escape
     this._searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         this._searchInput.value = '';
@@ -32,29 +30,26 @@ const Toolbar = {
       }
     });
 
-    // Print button
     this._printBtn.addEventListener('click', () => {
       PrintDialog.show();
     });
 
-    // Manage users button
-    this._manageUsersBtn.addEventListener('click', () => {
-      UserDialog.show();
-    });
-
-    // Settings button
     this._settingsBtn.addEventListener('click', () => {
       SettingsDialog.show();
     });
 
-    // Filter button
-    this._filterBtn.addEventListener('click', (e) => {
-      this._showFilterMenu(e);
+    this._syncIndicator?.addEventListener('click', (event) => this._showSyncMenu(event));
+
+    this._carryoverReviewBtn?.addEventListener('click', () => {
+      AppState.set('carryoverReviewMode', !AppState.get('carryoverReviewMode'));
     });
 
-    // Update user badge when current user changes
     AppState.on('currentUser', () => this._updateUserBadge());
+    AppState.on('tasks', () => this._updateCarryoverReviewButton());
+    AppState.on('selectedPartnerId', () => this._updateCarryoverReviewButton());
+    AppState.on('carryoverReviewMode', () => this._updateCarryoverReviewButton());
     this._updateUserBadge();
+    this._updateCarryoverReviewButton();
     this._bindRuntimeStatus();
   },
 
@@ -71,37 +66,28 @@ const Toolbar = {
     name.textContent = user.display_name;
   },
 
-  _showFilterMenu(e) {
-    const menu = ContextMenu.create([
-      { label: 'All Priorities', action: () => this._setFilter('priority', null) },
-      { divider: true },
-      { label: 'Priority 1 — Urgent', action: () => this._setFilter('priority', 1), color: 'var(--priority-1)' },
-      { label: 'Priority 2 — High', action: () => this._setFilter('priority', 2), color: 'var(--priority-2)' },
-      { label: 'Priority 3 — Normal', action: () => this._setFilter('priority', 3), color: 'var(--priority-3)' },
-      { label: 'Priority 4 — Low', action: () => this._setFilter('priority', 4), color: 'var(--priority-4)' },
-    ]);
-
-    const rect = this._filterBtn.getBoundingClientRect();
-    menu.style.top = (rect.bottom + 4) + 'px';
-    menu.style.right = (window.innerWidth - rect.right) + 'px';
-    menu.style.left = 'auto';
+  _getCarryoverTasks() {
+    const tasks = AppState.get('tasks') || [];
+    const selectedPartnerId = AppState.get('selectedPartnerId');
+    return tasks.filter((task) => {
+      if ((task.confirmed ?? 1) !== 0) return false;
+      if (!selectedPartnerId) return true;
+      return AppState._matchesSelectedPartner(task, selectedPartnerId);
+    });
   },
 
-  _setFilter(type, value) {
-    // Simple priority filter — stored in state
-    AppState.set('filterPriority', value);
-    this._updateFilterBadge();
-  },
+  _updateCarryoverReviewButton() {
+    if (!this._carryoverReviewBtn || !this._carryoverReviewCount) return;
 
-  _updateFilterBadge() {
-    const priority = AppState.get('filterPriority');
-    if (priority !== null && priority !== undefined) {
-      this._filterBadge.textContent = '1';
-      this._filterBadge.classList.remove('hidden');
-      this._filterBtn.classList.add('filter-active');
-    } else {
-      this._filterBadge.classList.add('hidden');
-      this._filterBtn.classList.remove('filter-active');
+    const count = this._getCarryoverTasks().length;
+    const isActive = AppState.get('carryoverReviewMode') === true;
+    this._carryoverReviewBtn.classList.toggle('hidden', count === 0);
+    this._carryoverReviewBtn.classList.toggle('filter-active', isActive);
+    this._carryoverReviewBtn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    this._carryoverReviewCount.textContent = String(count);
+
+    if (count === 0 && isActive) {
+      AppState.set('carryoverReviewMode', false);
     }
   },
 
@@ -116,6 +102,7 @@ const Toolbar = {
 
   _applyRuntimeStatus(status) {
     if (!this._syncIndicator || !this._syncStatusText) return;
+    this._lastRuntimeStatus = status || null;
 
     const syncText = this._formatRuntimeTimestamp(status?.lastSyncAt, 'No recent sync');
     this._syncStatusText.textContent = syncText;
@@ -144,6 +131,89 @@ const Toolbar = {
     const date = new Date(isoStr);
     if (Number.isNaN(date.getTime())) return fallback;
     return `Synced ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  },
+
+  _buildRuntimeStatusMenuItems(status) {
+    const items = [
+      { type: 'label', label: this._formatRuntimeTimestamp(status?.lastSyncAt, 'No recent sync') },
+      { type: 'label', label: `Shared folder: ${status?.sharedDriveReachable ? 'reachable' : status?.sharedDrivePath ? 'unavailable' : 'not configured'}` },
+    ];
+
+    if (status?.sharedDrivePath) {
+      items.push({ type: 'label', label: status.sharedDrivePath });
+    }
+
+    items.push({
+      type: 'label',
+      label: `Excel updated: ${status?.lastExcelWriteAt ? this._formatRuntimeTimestamp(status.lastExcelWriteAt, 'Never').replace('Synced ', '') : 'Never'}`,
+    });
+
+    if (status?.excelPath) {
+      items.push({ type: 'label', label: status.excelPath });
+    }
+
+    if (status?.updateAvailable && status?.latestVersion) {
+      items.push({ type: 'label', label: `Update available: ${status.latestVersion}` });
+    }
+
+    items.push({ divider: true });
+    return items;
+  },
+
+  _showSyncMenu(event) {
+    if (!this._syncIndicator) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const items = [
+      ...this._buildRuntimeStatusMenuItems(this._lastRuntimeStatus),
+      {
+        label: 'Sync Now',
+        action: async () => {
+          try {
+            this.showSyncing();
+            await window.api.forceSync();
+            this._applyRuntimeStatus(await window.api.getRuntimeStatus());
+          } catch (_) {
+            this.showSyncError();
+          }
+        }
+      },
+      {
+        label: 'Refresh Excel',
+        action: async () => {
+          try {
+            this.showSyncing();
+            const result = await window.api.refreshExcel();
+            if (result && !result.error) {
+              await AppState.refresh();
+              Toast.show(`Excel refreshed: ${result.imported || 0} new, ${result.updated || 0} updated`, 'success');
+            } else if (result?.error) {
+              Toast.show(result.error, 'error');
+            }
+            this._applyRuntimeStatus(await window.api.getRuntimeStatus());
+          } catch (_) {
+            this.showSyncError();
+          }
+        }
+      },
+    ];
+
+    const menu = ContextMenu.create(items);
+    const rect = this._syncIndicator.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 8}px`;
+    menu.style.left = `${Math.max(8, rect.right - 180)}px`;
+
+    requestAnimationFrame(() => {
+      const menuRect = menu.getBoundingClientRect();
+      if (menuRect.right > window.innerWidth - 8) {
+        menu.style.left = `${Math.max(8, window.innerWidth - menuRect.width - 8)}px`;
+      }
+      if (menuRect.bottom > window.innerHeight - 8) {
+        menu.style.top = `${Math.max(8, rect.top - menuRect.height - 8)}px`;
+      }
+    });
   },
 
   showSyncing() {
@@ -183,7 +253,6 @@ const ContextMenu = {
     document.body.appendChild(menu);
     this._current = menu;
 
-    // Dismiss on click outside
     setTimeout(() => {
       document.addEventListener('click', this._onOutsideClick);
       document.addEventListener('keydown', this._onEscape);
@@ -201,22 +270,42 @@ const ContextMenu = {
         continue;
       }
 
-      const btn = document.createElement(item.submenu ? 'div' : 'button');
-      if (!item.submenu) btn.type = 'button';
-      btn.className = `context-menu-item ${item.danger ? 'danger' : ''}${item.submenu ? ' has-submenu' : ''}`;
+      const isLabel = item.type === 'label';
+      const btn = document.createElement(item.submenu || isLabel ? 'div' : 'button');
+      if (!item.submenu && !isLabel) btn.type = 'button';
+      btn.className = `context-menu-item ${item.danger ? 'danger' : ''}${item.submenu ? ' has-submenu' : ''}${isLabel ? ' context-menu-info' : ''}`;
 
       let iconHtml = '';
       if (item.icon) {
         iconHtml = item.icon;
-      } else if (item.color) {
-        iconHtml = `<span style="width:10px;height:10px;border-radius:50%;background:${item.color};flex-shrink:0;"></span>`;
       }
 
-      const chevronHtml = item.submenu
-        ? '<span class="context-menu-chevron" aria-hidden="true">&#8250;</span>'
-        : '';
+      if (iconHtml) {
+        const icon = document.createElement('span');
+        icon.innerHTML = iconHtml;
+        btn.appendChild(icon);
+      } else if (item.color) {
+        const dot = document.createElement('span');
+        dot.style.width = '10px';
+        dot.style.height = '10px';
+        dot.style.borderRadius = '50%';
+        dot.style.background = item.color;
+        dot.style.flexShrink = '0';
+        btn.appendChild(dot);
+      }
 
-      btn.innerHTML = `${iconHtml}<span class="context-menu-label">${item.label}</span>${chevronHtml}`;
+      const label = document.createElement('span');
+      label.className = 'context-menu-label';
+      label.textContent = item.label || '';
+      btn.appendChild(label);
+
+      if (item.submenu) {
+        const chevron = document.createElement('span');
+        chevron.className = 'context-menu-chevron';
+        chevron.setAttribute('aria-hidden', 'true');
+        chevron.innerHTML = '&#8250;';
+        btn.appendChild(chevron);
+      }
 
       if (item.submenu) {
         const submenu = document.createElement('div');
@@ -251,7 +340,7 @@ const ContextMenu = {
 
         btn.addEventListener('mouseenter', positionSubmenu);
         btn.addEventListener('focusin', positionSubmenu);
-      } else {
+      } else if (!isLabel) {
         btn.addEventListener('pointerdown', (event) => {
           event.preventDefault();
           event.stopPropagation();

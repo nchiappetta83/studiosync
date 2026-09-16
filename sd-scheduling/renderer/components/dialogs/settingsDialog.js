@@ -4,7 +4,7 @@
 
 const SettingsDialog = {
   _overlay: null,
-  _activeSection: 'roles',
+  _activeSection: 'staff',
   _onEsc: null,
 
   // SVG icons for up/down arrows
@@ -12,6 +12,7 @@ const SettingsDialog = {
   _downArrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><polyline points="6 9 12 15 18 9"></polyline></svg>',
 
   show() {
+    this._activeSection = 'staff';
     const overlay = document.createElement('div');
     overlay.className = 'dialog-overlay';
     this._overlay = overlay;
@@ -21,8 +22,12 @@ const SettingsDialog = {
         <div class="settings-layout">
           <nav class="settings-nav">
             <div class="settings-nav-title">Settings</div>
-            <button class="settings-nav-item active" data-section="roles">
+            <button class="settings-nav-item active" data-section="staff">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Manage Staff
+            </button>
+            <button class="settings-nav-item" data-section="roles">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               Staff Roles
             </button>
             <button class="settings-nav-item" data-section="priorities">
@@ -59,6 +64,7 @@ const SettingsDialog = {
       btn.addEventListener('click', () => {
         overlay.querySelectorAll('.settings-nav-item').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+        UserDialog.detachEmbedded?.();
         this._activeSection = btn.dataset.section;
         this._renderSection();
       });
@@ -78,6 +84,7 @@ const SettingsDialog = {
   },
 
   _close() {
+    UserDialog.detachEmbedded?.();
     if (this._onEsc) {
       document.removeEventListener('keydown', this._onEsc);
       this._onEsc = null;
@@ -90,7 +97,9 @@ const SettingsDialog = {
 
   _renderSection() {
     const content = this._overlay.querySelector('#settings-content');
+    UserDialog.detachEmbedded?.();
     switch (this._activeSection) {
+      case 'staff': return UserDialog.showEmbedded(content);
       case 'roles': return this._renderRoles(content);
       case 'priorities': return this._renderPriorities(content);
       case 'paths': return this._renderPaths(content);
@@ -205,11 +214,16 @@ const SettingsDialog = {
         const id = btn.dataset.id;
         const role = AppState.getBusinessRoleById(id);
         if (!role) return;
-        if (confirm(`Delete role "${role.name}"? Staff with this role will have it cleared.`)) {
-          await window.api.deleteBusinessRole(id);
-          await AppState.refresh();
-          this._renderRoles(container);
-        }
+        const confirmed = await ConfirmDialog.show({
+          title: 'Delete role?',
+          message: `Delete role "${role.name}"? Staff with this role will have it cleared.`,
+          confirmLabel: 'Delete',
+          tone: 'danger',
+        });
+        if (!confirmed) return;
+        await window.api.deleteBusinessRole(id);
+        await AppState.refresh();
+        this._renderRoles(container);
       });
     });
   },
@@ -235,11 +249,12 @@ const SettingsDialog = {
   _renderPriorities(container) {
     const priorities = AppState.get('customPriorities') || [];
     const rows = this._buildPriorityOrderRows(priorities);
+    const carryoverTokens = new Set(AppState.get('priorityCarryoverTokens') || []);
 
     container.innerHTML = `
       <div class="settings-section">
         <h2 class="settings-section-title">Priorities</h2>
-        <p class="settings-section-desc">Set the order shown in priority menus. Numbered priority is represented as one line here, then expands to the right number of slots on each staff list.</p>
+        <p class="settings-section-desc">Set the order shown in priority menus. Use carry over to choose which priorities stay on tasks during the weekly rollover.</p>
         <div class="settings-list" id="settings-priorities-list">
           ${rows.map((row, i) => `
               <div class="settings-list-item" data-token="${row.token}">
@@ -250,6 +265,17 @@ const SettingsDialog = {
                 ${row.swatch}
                 <span class="settings-list-label">${this._esc(row.label)}</span>
                 <div class="settings-list-actions">
+                  ${row.carryoverToken ? `
+                  <label class="settings-priority-carryover" title="Keep ${this._esc(row.label)} on tasks during weekly rollover">
+                    <input
+                      type="checkbox"
+                      data-action="priority-carryover"
+                      data-token="${this._esc(row.carryoverToken)}"
+                      ${carryoverTokens.has(row.carryoverToken) ? 'checked' : ''}
+                    >
+                    <span>Carry over</span>
+                  </label>
+                  ` : ''}
                   ${row.styleKey ? `
                   <input
                     type="color"
@@ -281,6 +307,10 @@ const SettingsDialog = {
         <div class="settings-add-row">
           <input type="color" id="settings-priority-color" value="#4D4AD5" style="width:36px;height:36px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;">
           <input type="text" class="input" id="settings-priority-input" placeholder="e.g. Rush" style="flex:1;">
+          <label class="settings-priority-carryover settings-priority-carryover-add" title="Keep this priority on tasks during weekly rollover">
+            <input type="checkbox" id="settings-priority-carryover" checked>
+            <span>Carry over</span>
+          </label>
           <button class="btn btn-primary btn-sm" id="settings-priority-add">Add Priority</button>
         </div>
       </div>
@@ -290,11 +320,15 @@ const SettingsDialog = {
     const addBtn = container.querySelector('#settings-priority-add');
     const input = container.querySelector('#settings-priority-input');
     const colorInput = container.querySelector('#settings-priority-color');
+    const carryoverInput = container.querySelector('#settings-priority-carryover');
     const doAdd = async () => {
       const label = input.value.trim();
       if (!label) { input.style.borderColor = 'var(--danger)'; return; }
       input.style.borderColor = '';
-      await window.api.createCustomPriority({ label, color: colorInput.value });
+      const priority = await window.api.createCustomPriority({ label, color: colorInput.value });
+      if (priority?.id) {
+        await this._setPriorityCarryoverToken(`custom:${priority.id}`, carryoverInput?.checked !== false, { refresh: false });
+      }
       await AppState.refresh();
       input.value = '';
       this._renderPriorities(container);
@@ -317,9 +351,15 @@ const SettingsDialog = {
         const pri = (AppState.get('customPriorities') || []).find(p => p.id === id);
         if (!pri) return;
         const item = btn.closest('.settings-list-item');
+        const carryoverToken = `custom:${pri.id}`;
+        const isCarryover = (AppState.get('priorityCarryoverTokens') || []).includes(carryoverToken);
         item.innerHTML = `
           <input type="color" id="edit-priority-color" value="${pri.color}" style="width:36px;height:36px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;">
           <input type="text" class="input settings-inline-edit" id="edit-priority-label" value="${this._esc(pri.label)}" style="flex:1;">
+          <label class="settings-priority-carryover" title="Keep this priority on tasks during weekly rollover">
+            <input type="checkbox" id="edit-priority-carryover" ${isCarryover ? 'checked' : ''}>
+            <span>Carry over</span>
+          </label>
           <div class="settings-list-actions">
             <button class="btn btn-ghost btn-sm" id="edit-priority-cancel">Cancel</button>
             <button class="btn btn-primary btn-sm" id="edit-priority-save">Save</button>
@@ -334,7 +374,9 @@ const SettingsDialog = {
           const newLabel = labelInput.value.trim();
           if (!newLabel) return;
           const newColor = item.querySelector('#edit-priority-color').value;
+          const shouldCarryover = item.querySelector('#edit-priority-carryover')?.checked === true;
           await window.api.updateCustomPriority({ id, label: newLabel, color: newColor });
+          await this._setPriorityCarryoverToken(carryoverToken, shouldCarryover, { refresh: false });
           await AppState.refresh();
           this._renderPriorities(container);
         });
@@ -351,11 +393,17 @@ const SettingsDialog = {
         const id = btn.dataset.id;
         const pri = (AppState.get('customPriorities') || []).find(p => p.id === id);
         if (!pri) return;
-        if (confirm(`Delete priority "${pri.label}"?`)) {
-          await window.api.deleteCustomPriority(id);
-          await AppState.refresh();
-          this._renderPriorities(container);
-        }
+        const confirmed = await ConfirmDialog.show({
+          title: 'Delete priority?',
+          message: `Delete priority "${pri.label}"?`,
+          confirmLabel: 'Delete',
+          tone: 'danger',
+        });
+        if (!confirmed) return;
+        await this._setPriorityCarryoverToken(`custom:${id}`, false, { refresh: false });
+        await window.api.deleteCustomPriority(id);
+        await AppState.refresh();
+        this._renderPriorities(container);
       });
     });
 
@@ -366,6 +414,29 @@ const SettingsDialog = {
         this._renderPriorities(container);
       });
     });
+
+    container.querySelectorAll('[data-action="priority-carryover"]').forEach((input) => {
+      input.addEventListener('change', async () => {
+        await this._setPriorityCarryoverToken(input.dataset.token, input.checked, { refresh: true });
+        this._renderPriorities(container);
+      });
+    });
+  },
+
+  async _setPriorityCarryoverToken(token, enabled, options = {}) {
+    if (!token) return;
+
+    const tokens = new Set(AppState.get('priorityCarryoverTokens') || []);
+    if (enabled) {
+      tokens.add(token);
+    } else {
+      tokens.delete(token);
+    }
+
+    await window.api.setPriorityCarryoverTokens([...tokens]);
+    if (options.refresh !== false) {
+      await AppState.refresh();
+    }
   },
 
   async _movePriority(rows, token, direction, container) {
@@ -419,6 +490,7 @@ const SettingsDialog = {
         editable: false,
         styleKey: 'numbered',
         color: styles.numbered.color,
+        carryoverToken: 'numbered',
       };
     }
 
@@ -430,6 +502,7 @@ const SettingsDialog = {
         editable: false,
         styleKey: 'wait',
         color: styles.wait.color,
+        carryoverToken: 'wait',
       };
     }
 
@@ -455,6 +528,7 @@ const SettingsDialog = {
         label: priority.label,
         swatch: `<span class="settings-priority-dot" style="background:${priority.color}"></span>`,
         editable: true,
+        carryoverToken: token,
       };
     }
 

@@ -43,6 +43,7 @@ const TaskPanel = {
     AppState.on('searchQuery', this._renderListener);
     AppState.on('pto', this._renderListener);
     AppState.on('filterPriority', this._renderListener);
+    AppState.on('carryoverReviewMode', this._renderListener);
     AppState.on('customPriorities', this._renderListener);
     AppState.on('priorityMenuOrder', this._renderListener);
     AppState.on('priorityDisplayStyles', this._renderListener);
@@ -80,6 +81,7 @@ const TaskPanel = {
     const users = AppState.get('users') || [];
     const searchQuery = AppState.get('searchQuery')?.toLowerCase() || '';
     const filterPriority = AppState.get('filterPriority');
+    const carryoverReviewMode = AppState.get('carryoverReviewMode') === true;
 
     // Update header
     if (selectedPartnerId) {
@@ -120,18 +122,31 @@ const TaskPanel = {
 
     sortedUsers = [...sortedUsers].sort((a, b) => a.display_name.localeCompare(b.display_name));
 
+    const getTaskSearchText = (task, user) => {
+      const project = AppState.getProjectById(task.project_id);
+      return [
+        task.title,
+        task.notes,
+        project?.client,
+        project?.name,
+        project?.notes,
+        user?.display_name,
+      ].filter(Boolean).join(' ').toLowerCase();
+    };
+
     for (const user of sortedUsers) {
       const group = groups[user.id];
       if (!group) continue;
 
       let tasks = group.tasks;
 
+      if (carryoverReviewMode) {
+        tasks = tasks.filter(t => (t.confirmed ?? 1) === 0);
+      }
+
       // Apply search filter
       if (searchQuery) {
-        tasks = tasks.filter(t =>
-          t.title.toLowerCase().includes(searchQuery) ||
-          (t.notes && t.notes.toLowerCase().includes(searchQuery))
-        );
+        tasks = tasks.filter(t => getTaskSearchText(t, user).includes(searchQuery));
       }
 
       // Apply priority filter
@@ -165,7 +180,7 @@ const TaskPanel = {
       `;
 
       if (tasks.length === 0) {
-        html += `<div class="empty-section">No tasks assigned</div>`;
+        html += `<div class="empty-section">${carryoverReviewMode ? 'No carryover tasks to review' : 'No tasks assigned'}</div>`;
       } else {
         for (const task of tasks) {
           html += taskCard.render(task);
@@ -190,7 +205,9 @@ const TaskPanel = {
       `;
     }
 
-    this._subtitle.textContent = `${dateStr} \u2014 ${totalTasks} tasks scheduled`;
+    this._subtitle.textContent = carryoverReviewMode
+      ? `${dateStr} \u2014 ${totalTasks} carryover task${totalTasks !== 1 ? 's' : ''} to review`
+      : `${dateStr} \u2014 ${totalTasks} tasks scheduled`;
     this._container.innerHTML = html;
     this._renderStaffRail(sortedUsers);
     requestAnimationFrame(() => this._updateRailThumb());
@@ -274,7 +291,7 @@ const TaskPanel = {
     const viewHeight = this._scroller.clientHeight;
     const contentHeight = this._scroller.scrollHeight;
     const maxScrollTop = Math.max(0, contentHeight - viewHeight);
-    const currentSection = sections.find((section) => section.offsetTop + section.offsetHeight > viewTop) || sections[sections.length - 1];
+    const currentSection = this._getCurrentVisibleStaffSection(sections) || sections[sections.length - 1];
 
     if (!currentSection) {
       thumb.style.opacity = '0';
@@ -299,6 +316,32 @@ const TaskPanel = {
 
     thumb.style.top = `${thumbTop}px`;
     thumb.style.height = `${thumbHeight}px`;
+  },
+
+  _getCurrentVisibleStaffSection(sections) {
+    if (!this._scroller || !Array.isArray(sections) || sections.length === 0) return null;
+
+    const scrollerRect = this._scroller.getBoundingClientRect();
+    const paddingTop = this._getScrollPaddingTop();
+    const visibleEdgeY = scrollerRect.top + paddingTop + 4;
+    const maxScrollTop = Math.max(0, this._scroller.scrollHeight - this._scroller.clientHeight);
+    const isAtBottom = this._scroller.scrollTop >= maxScrollTop - 1;
+
+    if (isAtBottom) {
+      for (let i = sections.length - 1; i >= 0; i -= 1) {
+        if (sections[i].getBoundingClientRect().top < scrollerRect.bottom) {
+          return sections[i];
+        }
+      }
+    }
+
+    return sections.find((section) => section.getBoundingClientRect().bottom > visibleEdgeY) || null;
+  },
+
+  _getScrollPaddingTop() {
+    if (!this._scroller) return 0;
+    const style = window.getComputedStyle(this._scroller);
+    return parseFloat(style.paddingTop) || 0;
   },
 
   _jumpToStaff(userId) {

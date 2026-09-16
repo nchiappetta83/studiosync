@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:;">
+  <title>Project Notes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/companion.css">
+  <link rel="stylesheet" href="styles/project-notes.css">
+  <link rel="stylesheet" href="styles/interaction-system.css">
+</head>
+<body class="project-notes-window">
+  <main class="project-notes-window-shell">
+    <header class="project-notes-window-header">
+      <div>
+        <h1 class="project-notes-window-title">Project Notes</h1>
+        <p class="project-notes-window-subtitle" id="project-notes-window-subtitle"></p>
+      </div>
+    </header>
+    <div class="project-notes-layout project-notes-window-layout">
+      <aside class="project-notes-sidebar">
+        <div class="project-notes-sidebar-header">
+          <div class="project-notes-sidebar-title">Shared Notes</div>
+          <button class="project-notes-add-btn" id="project-notes-add" type="button" aria-label="Add new note">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+              <path d="M14 3v5h5"/>
+              <path d="M12 12v5"/>
+              <path d="M9.5 14.5h5"/>
+            </svg>
+          </button>
+        </div>
+        <div class="project-notes-sidebar-list" id="project-notes-list"></div>
+      </aside>
+      <section class="project-notes-main" id="project-notes-main"></section>
+    </div>
+  </main>
+
+  <script src="lib/html.js"></script>
+  <script src="lib/confirmDialog.js"></script>
+  <script src="lib/richNotes.js"></script>
+  <script src="lib/projectNotes.js"></script>
+  <script src="components/projectNotesWindow.js"></script>
+</body>
+</html>

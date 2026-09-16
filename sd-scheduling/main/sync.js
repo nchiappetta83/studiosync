@@ -55,7 +55,7 @@ const EVENT_VALIDATORS = {
 };
 
 class SyncEngine {
-  constructor(db, sharedDrivePath, username, source = 'scheduling') {
+  constructor(db, sharedDrivePath, username, source = 'scheduling', logger = null) {
     this.db = db;
     this.sharedDrivePath = sharedDrivePath;
     this.username = username || 'unknown';
@@ -72,6 +72,7 @@ class SyncEngine {
     this.processedFiles = new Set();
     this.processedFilesLoaded = false;
     this.failedFiles = new Map();
+    this.logger = logger;
   }
 
   initialize() {
@@ -220,7 +221,7 @@ class SyncEngine {
       }
 
       if (removed > 0) {
-        console.log(`Sync cleanup: removed ${removed} old sync file(s)`);
+        this.logger?.info('Sync cleanup removed old sync files', { removed });
       }
     } catch (err) {
       console.error('Sync cleanup error:', err.message);

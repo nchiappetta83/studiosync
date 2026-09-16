@@ -3,12 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:;">
   <title>StudioSync MyTasks</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="styles/companion.css">
+  <link rel="stylesheet" href="styles/project-notes.css">
+  <link rel="stylesheet" href="styles/interaction-system.css">
 </head>
 <body>
   <!-- ── Login / Auto-detect ────────────────────────── -->
@@ -61,6 +64,7 @@
           <div id="sync-indicator" class="sync-indicator" title="Synced">
             <div class="sync-dot"></div>
           </div>
+          <span id="sync-status-text" class="sync-status-text">Sync ready</span>
           <span class="user-avatar" id="user-avatar"></span>
           <span class="user-name" id="user-name"></span>
           <span class="user-role-badge" id="user-role-badge"></span>
@@ -86,6 +90,18 @@
       </div>
     </header>
 
+    <!-- Sync error banner -->
+    <div class="sync-banner hidden" id="sync-banner" role="status">
+      <svg class="sync-banner-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+        <line x1="12" y1="9" x2="12" y2="13"></line>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </svg>
+      <span class="sync-banner-text" id="sync-banner-text">Can't reach the shared sync folder. Your changes are saved locally and will sync once it's back.</span>
+      <button class="sync-banner-retry" id="sync-banner-retry" type="button">Retry</button>
+      <button class="sync-banner-dismiss" id="sync-banner-dismiss" type="button" aria-label="Dismiss">&times;</button>
+    </div>
+
     <!-- Content Area -->
     <div class="content">
       <!-- Sidebar: staff list (partner only) -->
@@ -106,10 +122,10 @@
       <!-- Main Panel -->
       <main class="main-panel" id="main-panel">
         <!-- Tab bar (partner view) -->
-        <div class="tab-bar hidden" id="tab-bar">
-          <button class="tab" data-tab="staff-view">Staff Overview</button>
-          <button class="tab active" data-tab="my-tasks">My Tasks</button>
-          <button class="tab" data-tab="my-projects">My Projects</button>
+        <div class="tab-bar hidden" id="tab-bar" role="tablist" aria-label="Workspace views">
+          <button class="tab" data-tab="staff-view" role="tab" aria-selected="false" tabindex="-1">Staff Overview</button>
+          <button class="tab active" data-tab="my-tasks" role="tab" aria-selected="true">My Tasks</button>
+          <button class="tab" data-tab="my-projects" role="tab" aria-selected="false" tabindex="-1">My Projects</button>
         </div>
 
         <!-- My Tasks View -->
@@ -121,11 +137,19 @@
 
           <div class="view-header">
             <h2 class="view-title">My Tasks</h2>
-            <span class="private-info-icon hidden" id="my-tasks-private-badge" title="All Tasks Listed Are Private And Not Visible To Staff">
+            <span class="private-info-note hidden" id="my-tasks-private-badge" tabindex="0" aria-label="Tasks added here are private to you">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <span class="private-info-popover">Tasks added here are private to you</span>
             </span>
-            <span class="view-count" id="my-task-count">0 tasks</span>
             <div class="view-header-spacer"></div>
+            <label class="my-task-search" title="Search tasks">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"></circle>
+                <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
+              </svg>
+              <input type="text" id="my-task-search-input" placeholder="Search tasks...">
+              <button type="button" id="my-task-search-clear" class="my-task-search-clear hidden" aria-label="Clear search" title="Clear search">&times;</button>
+            </label>
             <button class="btn btn-accent btn-sm hidden" id="add-private-task-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Task
@@ -158,13 +182,40 @@
 
         <!-- Staff Overview (partner only) -->
         <div class="view hidden" id="view-staff-view">
+          <div class="staff-overview-toolbar">
+            <div class="staff-overview-heading">
+              <h2 class="view-title">Staff Overview</h2>
+              <span class="view-count" id="staff-overview-count">0 tasks</span>
+            </div>
+            <div class="view-header-spacer"></div>
+            <button class="staff-focus-btn hidden" id="staff-due-today-toggle" type="button" aria-pressed="false">
+              Due Today
+              <span id="staff-due-today-count">0</span>
+            </button>
+            <label class="my-task-search staff-overview-search" title="Search staff tasks">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"></circle>
+                <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
+              </svg>
+              <input type="text" id="staff-overview-search-input" placeholder="Search staff tasks...">
+              <button type="button" id="staff-overview-search-clear" class="my-task-search-clear hidden" aria-label="Clear search" title="Clear search">&times;</button>
+            </label>
+          </div>
           <div class="staff-overview" id="staff-overview">
             <!-- Staff sections rendered by JS -->
           </div>
         </div>
       </main>
 
-      <!-- Detail Panel (always visible) -->
+      <div class="detail-pane-toggle-rail" id="detail-pane-toggle-rail">
+        <button class="detail-pane-toggle" id="detail-pane-toggle" type="button" aria-label="Collapse details" title="Collapse details" aria-expanded="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Detail Panel -->
       <aside class="detail-panel" id="detail-panel">
         <div class="detail-header" id="detail-header">
           <h3 class="detail-title" id="detail-title">Task Details</h3>
@@ -178,26 +229,104 @@
       </aside>
     </div>
 
+    <!-- Preferences -->
+    <div class="dialog-overlay hidden" id="preferences-overlay">
+      <div class="dialog-card preferences-card">
+        <div class="dialog-header preferences-header">
+          <div>
+            <h3 class="dialog-title">Preferences</h3>
+            <p class="dialog-subtitle" id="preferences-subtitle">MyTasks settings for this computer.</p>
+          </div>
+          <button class="detail-close" id="preferences-close" type="button" aria-label="Close preferences">&times;</button>
+        </div>
+        <div class="dialog-body preferences-body">
+          <section class="preferences-section" id="preferences-style-section">
+            <div class="preferences-section-header">
+              <div>
+                <div class="preferences-section-title">Appearance</div>
+                <div class="preferences-section-copy">Choose how MyTasks feels while you work.</div>
+              </div>
+            </div>
+
+            <div class="preferences-group">
+              <div class="preferences-group-label">Accent color</div>
+              <div class="accent-choice-row" id="accent-options"></div>
+            </div>
+
+            <div class="preferences-group" id="preferences-detail-mode-group">
+              <div class="preferences-group-label">Details pane</div>
+              <div class="preference-choice-grid two-col" id="detail-pane-mode-options"></div>
+            </div>
+
+            <div class="preferences-group">
+              <div class="preferences-group-label">Theme</div>
+              <div class="preference-choice-grid three-col" id="theme-options"></div>
+            </div>
+          </section>
+
+          <section class="preferences-section">
+            <div class="preferences-section-header">
+              <div>
+                <div class="preferences-section-title">Sync & Data</div>
+                <div class="preferences-section-copy" id="preferences-sync-summary">Sync status loading...</div>
+              </div>
+              <button class="btn btn-ghost btn-sm" id="preferences-refresh-sync" type="button">Refresh</button>
+            </div>
+            <div class="preferences-status-list" id="preferences-sync-details"></div>
+            <div class="preferences-action-row">
+              <button class="btn btn-primary btn-sm" id="preferences-sync-now" type="button">Sync Now</button>
+              <button class="btn btn-ghost btn-sm" id="preferences-check-updates" type="button">Check for Updates</button>
+            </div>
+          </section>
+
+          <section class="preferences-section">
+            <div class="preferences-section-header">
+              <div>
+                <div class="preferences-section-title">App</div>
+                <div class="preferences-section-copy" id="preferences-user-summary">Signed in to MyTasks.</div>
+              </div>
+            </div>
+            <label class="preferences-toggle-row hidden" id="preferences-startup-row">
+              <input type="checkbox" id="preferences-startup-toggle">
+              <span>
+                <span class="preferences-toggle-title">Launch on Windows startup</span>
+                <span class="preferences-toggle-copy">Open MyTasks automatically when you sign in.</span>
+              </span>
+            </label>
+            <div class="preferences-action-row">
+              <button class="btn btn-ghost btn-sm" id="preferences-sign-out" type="button">Sign Out</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
     <!-- Add Task Dialog (project picker) -->
     <div class="dialog-overlay hidden" id="add-task-overlay">
       <div class="dialog-card">
         <div class="dialog-header">
           <h3 class="dialog-title" id="add-task-title">Add Task</h3>
-          <button class="detail-close" id="add-task-close">&times;</button>
+          <button class="detail-close" id="add-task-close" type="button" aria-label="Close add task dialog">&times;</button>
         </div>
         <div class="dialog-body">
           <p class="dialog-subtitle" id="add-task-subtitle"></p>
 
-          <div class="form-group">
-            <label>Project</label>
-            <div class="project-picker" id="project-picker">
-              <!-- Project list rendered by JS -->
+          <div class="form-group add-task-title-group">
+            <label>Task Title</label>
+            <div class="task-search-field">
+              <svg class="task-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"></circle>
+                <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
+              </svg>
+              <input type="text" class="input" id="add-task-title-input" placeholder="Task title / search projects...">
+              <button class="task-search-clear hidden" id="add-task-title-clear" type="button" aria-label="Clear selected project" title="Clear selected project">&times;</button>
             </div>
           </div>
 
           <div class="form-group">
-            <label>Task Title</label>
-            <input type="text" class="input" id="add-task-title-input" placeholder="Task title...">
+            <div class="project-picker" id="project-picker">
+              <!-- Project list rendered by JS -->
+            </div>
           </div>
 
           <div class="form-group">
@@ -228,7 +357,7 @@
       <div class="dialog-card">
         <div class="dialog-header">
           <h3 class="dialog-title">Add Project</h3>
-          <button class="detail-close" id="add-pp-close">&times;</button>
+          <button class="detail-close" id="add-pp-close" type="button" aria-label="Close add project dialog">&times;</button>
         </div>
         <div class="dialog-body">
           <p class="dialog-subtitle">This project will be added to the project list and synced to the Excel file.</p>
@@ -263,47 +392,12 @@
       </div>
     </div>
 
-    <!-- Project Notes Dialog -->
-    <div class="dialog-overlay hidden" id="project-notes-overlay">
-      <div class="dialog-card project-notes-dialog-card">
-        <div class="dialog-header">
-          <div>
-            <h3 class="dialog-title" id="project-notes-title">Project Notes</h3>
-            <p class="dialog-subtitle project-notes-dialog-subtitle" id="project-notes-subtitle"></p>
-          </div>
-          <button class="detail-close" id="project-notes-close">&times;</button>
-        </div>
-        <div class="dialog-body project-notes-dialog-body">
-          <div class="project-notes-layout">
-            <aside class="project-notes-sidebar">
-              <div class="project-notes-sidebar-header">
-                <div class="project-notes-sidebar-title">Shared Notes</div>
-                <button class="project-notes-add-btn" id="project-notes-add" type="button" aria-label="Add new note">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
-                    <path d="M14 3v5h5"/>
-                    <path d="M12 12v5"/>
-                    <path d="M9.5 14.5h5"/>
-                  </svg>
-                </button>
-              </div>
-              <div class="project-notes-sidebar-list" id="project-notes-list"></div>
-            </aside>
-            <section class="project-notes-main" id="project-notes-main"></section>
-          </div>
-        </div>
-        <div class="dialog-footer">
-          <button class="btn btn-primary" id="project-notes-save" type="button">Close</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Add Subtask Dialog -->
     <div class="dialog-overlay hidden" id="add-subtask-overlay">
       <div class="dialog-card" style="max-width:400px">
         <div class="dialog-header">
           <h3 class="dialog-title">Add Action Item</h3>
-          <button class="detail-close" id="add-subtask-close">&times;</button>
+          <button class="detail-close" id="add-subtask-close" type="button" aria-label="Close action item dialog">&times;</button>
         </div>
         <div class="dialog-body">
           <p class="dialog-subtitle" id="add-subtask-subtitle"></p>
@@ -355,6 +449,9 @@
   </div>
 
   <script src="lib/html.js"></script>
+  <script src="lib/toast.js"></script>
+  <script src="lib/modalManager.js"></script>
+  <script src="lib/confirmDialog.js"></script>
   <script src="lib/priority.js"></script>
   <script src="lib/priorityPresentation.js"></script>
   <script src="lib/permissions.js"></script>
@@ -363,6 +460,7 @@
   <script src="lib/contextMenu.js"></script>
   <script src="lib/projectNotes.js"></script>
   <script src="lib/projectDisplay.js"></script>
+  <script src="lib/projectFolderLink.js"></script>
   <script src="lib/actionItems.js"></script>
   <script src="lib/taskDisplay.js"></script>
   <script src="lib/taskOrdering.js"></script>

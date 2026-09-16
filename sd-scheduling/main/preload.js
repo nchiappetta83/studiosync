@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('api', {
   reorderCustomPriorities: (orders) => ipcRenderer.invoke('reorder-custom-priorities', orders),
   getPriorityMenuOrder:   ()      => ipcRenderer.invoke('get-priority-menu-order'),
   setPriorityMenuOrder:   (order) => ipcRenderer.invoke('set-priority-menu-order', order),
+  getPriorityCarryoverTokens: ()   => ipcRenderer.invoke('get-priority-carryover-tokens'),
+  setPriorityCarryoverTokens: (tokens) => ipcRenderer.invoke('set-priority-carryover-tokens', tokens),
   getPriorityDisplayStyles: ()    => ipcRenderer.invoke('get-priority-display-styles'),
   setPriorityDisplayStyles: (styles) => ipcRenderer.invoke('set-priority-display-styles', styles),
 

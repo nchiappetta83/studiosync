@@ -12,6 +12,7 @@ const DragDrop = {
   // Stable bound references for add/removeEventListener
   _boundMouseMove: null,
   _boundMouseUp: null,
+  _boundCancel: null,
 
   start(event, project) {
     this._active = true;
@@ -28,10 +29,12 @@ const DragDrop = {
     // Create stable bound references
     this._boundMouseMove = (e) => this._onMouseMove(e);
     this._boundMouseUp = (e) => this._onMouseUp(e);
+    this._boundCancel = () => this._cleanup();
 
     // Add global listeners
     document.addEventListener('mousemove', this._boundMouseMove);
     document.addEventListener('mouseup', this._boundMouseUp);
+    window.addEventListener('blur', this._boundCancel);
     document.body.style.cursor = 'grabbing';
     document.body.classList.add('dragging');
   },
@@ -184,6 +187,10 @@ const DragDrop = {
       document.removeEventListener('mouseup', this._boundMouseUp);
       this._boundMouseUp = null;
     }
+    if (this._boundCancel) {
+      window.removeEventListener('blur', this._boundCancel);
+      this._boundCancel = null;
+    }
     document.body.style.cursor = '';
     document.body.classList.remove('dragging');
 
@@ -204,6 +211,7 @@ const TaskDrag = {
   _currentDropTarget: null,
   _boundMouseMove: null,
   _boundMouseUp: null,
+  _boundCancel: null,
   _sourceCard: null,
 
   start(event, task, sourceCard) {
@@ -225,9 +233,11 @@ const TaskDrag = {
 
     this._boundMouseMove = (e) => this._onMouseMove(e);
     this._boundMouseUp = (e) => this._onMouseUp(e);
+    this._boundCancel = () => this._cleanup();
 
     document.addEventListener('mousemove', this._boundMouseMove);
     document.addEventListener('mouseup', this._boundMouseUp);
+    window.addEventListener('blur', this._boundCancel);
     document.body.style.cursor = 'grabbing';
     document.body.classList.add('dragging');
   },
@@ -421,7 +431,14 @@ const TaskDrag = {
 
     document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
     if (this._boundMouseMove) { document.removeEventListener('mousemove', this._boundMouseMove); this._boundMouseMove = null; }
-    if (this._boundMouseUp) { document.removeEventListener('mouseup', this._boundMouseUp); this._boundMouseUp = null; }
+    if (this._boundMouseUp) {
+      document.removeEventListener('mouseup', this._boundMouseUp);
+      this._boundMouseUp = null;
+    }
+    if (this._boundCancel) {
+      window.removeEventListener('blur', this._boundCancel);
+      this._boundCancel = null;
+    }
     document.body.style.cursor = '';
     document.body.classList.remove('dragging');
     this._currentDropTarget = null;
@@ -446,23 +463,37 @@ const Toast = {
   show(message, type = 'info', duration = 3000) {
     this._ensureContainer();
 
-    const icons = {
-      success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>',
-      error: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>',
-      info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>'
-    };
-
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span>${message}</span>`;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    const icon = document.createElement('span');
+    icon.className = 'toast-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    text.className = 'toast-copy';
+    text.textContent = message || '';
+    const dismiss = document.createElement('button');
+    dismiss.className = 'toast-dismiss';
+    dismiss.type = 'button';
+    dismiss.setAttribute('aria-label', 'Dismiss notification');
+    dismiss.textContent = '\u00d7';
 
-    this._container.appendChild(toast);
-
-    setTimeout(() => {
+    let timeoutId = null;
+    const close = () => {
+      if (!toast.isConnected) return;
+      if (timeoutId) clearTimeout(timeoutId);
       toast.style.opacity = '0';
-      toast.style.transform = 'translateY(8px)';
-      toast.style.transition = 'opacity 0.2s, transform 0.2s';
-      setTimeout(() => toast.remove(), 200);
-    }, duration);
+      toast.style.transform = 'translateY(6px)';
+      toast.style.transition = 'opacity 0.18s, transform 0.18s';
+      setTimeout(() => toast.remove(), 180);
+    };
+
+    dismiss.addEventListener('click', close);
+    toast.append(icon, text, dismiss);
+
+    this._container.prepend(toast);
+    [...this._container.children].slice(4).forEach((item) => item.remove());
+
+    timeoutId = setTimeout(close, duration);
   }
 };

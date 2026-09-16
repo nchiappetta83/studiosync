@@ -1,6 +1,6 @@
 {
   "name": "sd-companion",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "StudioSync MyTasks - Role-based task viewer",
   "main": "main/index.js",
   "scripts": {
@@ -14,12 +14,12 @@
   "license": "MIT",
   "private": true,
   "dependencies": {
-    "better-sqlite3": "^11.6.0",
-    "uuid": "^10.0.0"
+    "better-sqlite3": "^13.0.1",
+    "uuid": "11.1.1"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.studiosync.mytasks",
@@ -34,6 +34,9 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/studiosync-mytasks.ico",
+      "uninstallerIcon": "assets/studiosync-mytasks.ico",
+      "installerHeaderIcon": "assets/studiosync-mytasks.ico",
       "include": "build/installer.nsh",
       "createDesktopShortcut": false,
       "shortcutName": "StudioSync MyTasks"
@@ -46,6 +49,15 @@
       "main/**/*",
       "renderer/**/*",
       "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/studiosync-mytasks.ico",
+        "to": "assets/studiosync-mytasks.ico"
+      }
     ]
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   }
 }

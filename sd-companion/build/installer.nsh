@@ -10,5 +10,5 @@
 !macroend
 
 !macro customInstall
-  CreateShortCut "$DESKTOP\StudioSync MyTasks.lnk" "$INSTDIR\StudioSync MyTasks.exe" "" "$INSTDIR\StudioSync MyTasks.exe" 0
+  CreateShortCut "$DESKTOP\StudioSync MyTasks.lnk" "$INSTDIR\StudioSync MyTasks.exe" "" "$INSTDIR\resources\assets\studiosync-mytasks.ico" 0
 !macroend

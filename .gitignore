@@ -20,6 +20,8 @@ office-installers/
 office-portables/
 office-server-launcher/
 office-unpacked-zips/
+office-test-builds/
+dependency-backups/
 
 # Local reference artifacts in this workspace
 *.pdf

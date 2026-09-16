@@ -1,27 +1,32 @@
 (function () {
-  function sortTasksLikeScheduling(tasks, getPrioritySortKey) {
-    const prioritySort = typeof getPrioritySortKey === 'function'
-      ? getPrioritySortKey
+  function sortTasksLikeScheduling(tasks, options = {}) {
+    const config = typeof options === 'function'
+      ? { getPrioritySortKey: (task) => options(task?.priority) }
+      : (options || {});
+    const prioritySort = typeof config.getPrioritySortKey === 'function'
+      ? config.getPrioritySortKey
       : (priority) => priority ?? Number.MAX_SAFE_INTEGER;
+    const compareClearedPriorityTasks = typeof config.compareClearedPriorityTasks === 'function'
+      ? config.compareClearedPriorityTasks
+      : null;
 
     return [...tasks].sort((a, b) => {
       const ac = a.confirmed ?? 1;
       const bc = b.confirmed ?? 1;
       if (ac !== bc) return bc - ac;
 
-      if (a.completed !== b.completed) return a.completed ? 1 : -1;
-
-      const ap = prioritySort(a.priority);
-      const bp = prioritySort(b.priority);
+      const ap = prioritySort(a);
+      const bp = prioritySort(b);
       if (ap !== bp) return ap - bp;
+
+      if (compareClearedPriorityTasks) {
+        const clearCompare = compareClearedPriorityTasks(a, b);
+        if (clearCompare !== 0) return clearCompare;
+      }
 
       const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
       const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
       if (ao !== bo) return ao - bo;
-
-      if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
-      if (a.due_date) return -1;
-      if (b.due_date) return 1;
 
       return (a.title || '').localeCompare(b.title || '');
     });

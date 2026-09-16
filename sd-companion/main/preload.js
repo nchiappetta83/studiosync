@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('api', {
   // PTO
   getPTO:             ()          => ipcRenderer.invoke('get-pto'),
   getCustomPriorities: ()         => ipcRenderer.invoke('get-custom-priorities'),
+  getPriorityMenuOrder: ()        => ipcRenderer.invoke('get-priority-menu-order'),
   getPriorityDisplayStyles: ()    => ipcRenderer.invoke('get-priority-display-styles'),
 
   // Config & setup
@@ -69,6 +70,7 @@ contextBridge.exposeInMainWorld('api', {
   getWindowState:     ()          => ipcRenderer.invoke('get-window-state'),
   getRuntimeStatus:   ()          => ipcRenderer.invoke('get-runtime-status'),
   openLink:           (value)     => ipcRenderer.invoke('open-link', value),
+  openProjectNotesWindow: (projectId) => ipcRenderer.invoke('open-project-notes-window', projectId),
   setWindowMode:      (mode)      => ipcRenderer.invoke('set-window-mode', mode),
   selectFolder:       ()          => ipcRenderer.invoke('select-folder'),
   initializeApp:      (path)      => ipcRenderer.invoke('initialize-app', path),

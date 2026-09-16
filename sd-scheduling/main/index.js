@@ -468,7 +468,7 @@ function scheduleAutoExport() {
       const exportFile = path.join(config.exportPath, 'Weekly List.html');
       const engine = new ExportEngine(db);
       engine.exportHTML(exportFile, { reloadInterval: config.htmlReloadInterval || 60 });
-      console.log('Auto-export: Updated', exportFile);
+      logger?.info('Auto-export updated', { exportFile });
     } catch (err) {
       console.error('Auto-export failed:', err.message);
     }
@@ -540,6 +540,33 @@ function setPriorityMenuOrder(order = []) {
   return normalized;
 }
 
+function getPriorityCarryoverTokens() {
+  if (!db) return [];
+
+  const rawValue = db.getGlobalSetting('priority_carryover_tokens');
+  if (!rawValue) {
+    return db.getCustomPriorities().map((priority) => `custom:${priority.id}`);
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string' && item.trim()) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function setPriorityCarryoverTokens(tokens = []) {
+  if (!db) return [];
+
+  const normalized = Array.isArray(tokens)
+    ? tokens.filter((item) => typeof item === 'string' && item.trim())
+    : [];
+
+  db.setGlobalSetting('priority_carryover_tokens', JSON.stringify(normalized));
+  return normalized;
+}
+
 function getPriorityDisplayStyles() {
   if (!db) return {};
 
@@ -573,7 +600,7 @@ function getAuthEntryState() {
     return {
       screen: 'connect',
       title: 'Connect',
-      subtitle: 'Connect to your team\'s shared drive to get started.',
+      subtitle: 'Select the StudioSync folder or its data folder to connect.',
       error: '',
       reason: 'missing-shared-path',
     };
@@ -584,7 +611,7 @@ function getAuthEntryState() {
     return {
       screen: 'connect',
       title: 'Connect',
-      subtitle: 'Connect to your team\'s shared drive to get started.',
+      subtitle: 'Select the StudioSync folder or its data folder to connect.',
       error: runtimeStatus.startupIssue?.reason || inspection.reason || 'Could not connect to shared drive. Please re-select the folder.',
       reason: 'shared-drive-invalid',
     };
@@ -918,7 +945,10 @@ async function runStartupExcelRefresh(config) {
     const importer = new ExcelImport(db);
     const result = await importer.import(config.excelPath);
     if (result.imported > 0 || result.updated > 0) {
-      console.log(`Excel auto-refresh: ${result.imported} new, ${result.updated} updated`);
+      logger?.info('Excel auto-refresh completed', {
+        imported: result.imported,
+        updated: result.updated,
+      });
       notifyDataChanged('startup-excel-refresh', {
         imported: result.imported || 0,
         updated: result.updated || 0,
@@ -961,12 +991,12 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
     }
 
     const localDbPath = getLocalDbPath();
-    db = new Database(localDbPath);
+    db = new Database(localDbPath, logger);
     db.initialize();
     excelSync = new ExcelSync(db);
     auth = new Auth(db);
 
-    sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'scheduling');
+    sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'scheduling', logger);
     const originalPushEvent = sync.pushEvent.bind(sync);
     sync.pushEvent = (type, data) => {
       const result = originalPushEvent(type, data);
@@ -1197,7 +1227,12 @@ function registerIPC() {
 
   ipcMain.handle('window-focus', () => {
     if (!mainWindow) return false;
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
     mainWindow.focus();
+    mainWindow.webContents.focus();
     return true;
   });
 
@@ -1440,6 +1475,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('get-priority-menu-order', () => getPriorityMenuOrder());
+  ipcMain.handle('get-priority-carryover-tokens', () => getPriorityCarryoverTokens());
   ipcMain.handle('get-priority-display-styles', () => getPriorityDisplayStyles());
 
   ipcMain.handle('set-priority-menu-order', (_e, order) => {
@@ -1452,6 +1488,18 @@ function registerIPC() {
     }
     notifyDataChanged();
     return nextOrder;
+  });
+
+  ipcMain.handle('set-priority-carryover-tokens', (_e, tokens) => {
+    const nextTokens = setPriorityCarryoverTokens(tokens);
+    if (sync) {
+      sync.pushEvent('setting-updated', {
+        key: 'priority_carryover_tokens',
+        value: JSON.stringify(nextTokens),
+      });
+    }
+    notifyDataChanged('priority-carryover-updated');
+    return nextTokens;
   });
 
   ipcMain.handle('set-priority-display-styles', (_e, styles) => {

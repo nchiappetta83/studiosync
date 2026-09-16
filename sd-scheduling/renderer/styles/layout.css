@@ -468,6 +468,21 @@ body.window-resizing .projects-panel {
   color: var(--accent);
 }
 
+.toolbar-btn-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+  color: currentColor;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .filter-badge {
   position: absolute;
   top: 0;
@@ -509,11 +524,11 @@ body.window-resizing .projects-panel {
 .user-avatar-small {
   width: 26px;
   height: 26px;
-  border-radius: 50%;
+  border-radius: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: #FFFFFF;
 }
@@ -529,7 +544,7 @@ body.window-resizing .projects-panel {
   align-items: center;
   justify-content: center;
   padding: 0;
-  cursor: default;
+  cursor: pointer;
 }
 
 .sync-status-text {
@@ -652,6 +667,15 @@ body.window-resizing .projects-panel {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(247, 249, 251, 0.94) 100%);
 }
 
+.tasks-panel > .panel-header {
+  padding-top: 15px;
+  padding-bottom: 7px;
+}
+
+.tasks-panel > .panel-header .panel-header-left {
+  gap: 2px;
+}
+
 .panel-header-left {
   display: flex;
   flex-direction: column;
@@ -667,10 +691,11 @@ body.window-resizing .projects-panel {
 
 .panel-title {
   font-family: var(--font-display);
-  font-size: 28px;
-  font-weight: 800;
+  font-size: 18px;
+  font-weight: 500;
   color: var(--text-primary);
-  letter-spacing: -0.3px;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .panel-subtitle {
@@ -687,13 +712,13 @@ body.window-resizing .projects-panel {
 .tasks-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 14px 20px 28px;
+  padding: 14px 14px 22px 28px;
 }
 
 .tasks-container {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 14px;
   min-width: 0;
 }
 
@@ -798,32 +823,37 @@ body.window-resizing .projects-panel {
 /* ── Staff Section Headers (in task list) ──────────────── */
 
 .staff-section {
-  margin-bottom: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(228, 234, 240, 0.84);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(42, 52, 57, 0.025);
+  overflow: hidden;
 }
 
 .staff-section-header {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 16px 0 10px;
-  border-top: 1px solid var(--border);
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(228, 234, 240, 0.76);
+  background: rgba(247, 249, 251, 0.74);
 }
 
 .staff-section:first-child .staff-section-header {
-  padding-top: 8px;
+  padding-top: 10px;
 }
 
 .staff-section-name {
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .staff-section-menu {
   margin-left: auto;
-  padding: 4px 8px;
+  padding: 2px 7px;
   border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   font-size: 18px;
@@ -839,11 +869,11 @@ body.window-resizing .projects-panel {
 .staff-tasks {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .empty-section {
-  padding: 12px 16px;
+  padding: 14px 16px;
   font-size: 12px;
   color: var(--text-tertiary);
   font-style: italic;
@@ -879,7 +909,7 @@ body.window-resizing .projects-panel {
 .projects-panel {
   flex: 2;
   min-width: 380px;
-  background: var(--bg-secondary);
+  background: rgba(250, 251, 252, 0.95);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -893,15 +923,15 @@ body.window-resizing .projects-panel {
 }
 
 .projects-title {
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .projects-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--border);
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(228, 234, 240, 0.72);
   flex-shrink: 0;
   background: rgba(255, 255, 255, 0.45);
 }
@@ -1033,13 +1063,18 @@ body.window-resizing .projects-panel {
 .projects-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 20px 16px;
+  padding: 12px 18px 16px;
 }
 
 .projects-container {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(228, 234, 240, 0.84);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(42, 52, 57, 0.025);
 }
 
 /* ── Alpha Strip ──────────────────────────────────────── */

@@ -15,6 +15,8 @@ const AlphaStrip = {
   _dotFrac: 0.0,
   _showDot: false,
   _resizeObserver: null,
+  _smoothScrollRafId: null,
+  _lockedDotLetter: null,
 
   init() {
     this._el = document.getElementById('alpha-strip');
@@ -64,6 +66,14 @@ const AlphaStrip = {
       });
     }, { passive: true });
 
+    const releaseDotLock = () => {
+      this._lockedDotLetter = null;
+    };
+    this._scrollEl.addEventListener('wheel', releaseDotLock, { passive: true });
+    this._scrollEl.addEventListener('pointerdown', releaseDotLock, { passive: true });
+    this._scrollEl.addEventListener('touchstart', releaseDotLock, { passive: true });
+    this._scrollEl.addEventListener('keydown', releaseDotLock);
+
     // Re-paint on resize
     this._resizeObserver = new ResizeObserver(() => this._paint());
     this._resizeObserver.observe(this._el);
@@ -74,9 +84,9 @@ const AlphaStrip = {
   update(projects) {
     this._activeLetters.clear();
     for (const p of projects) {
-      const client = (p.client || '').trim();
-      if (!client) continue;
-      const first = client[0].toUpperCase();
+      const title = (p.client ? `${p.client} | ${p.name || ''}` : p.name || '').trim();
+      if (!title) continue;
+      const first = title[0].toUpperCase();
       if (/\d/.test(first)) {
         this._activeLetters.add('#');
       } else if (/[A-Z]/.test(first)) {
@@ -208,6 +218,12 @@ const AlphaStrip = {
   },
 
   _updateDotFromScroll() {
+    if (this._lockedDotLetter && this._activeLetters.has(this._lockedDotLetter)) {
+      this._setDotToLetter(this._lockedDotLetter);
+      return;
+    }
+    this._lockedDotLetter = null;
+
     const container = document.getElementById('projects-container');
     const scrollEl = this._scrollEl;
     if (!container || !scrollEl) {
@@ -223,14 +239,31 @@ const AlphaStrip = {
       return;
     }
 
-    const viewTop = scrollEl.scrollTop + 4;
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const paddingTop = this._getScrollPaddingTop(scrollEl);
+    const visibleEdgeY = scrollRect.top + paddingTop + 4;
+    const viewScrollTop = scrollEl.scrollTop + 4;
 
-    // Find the first visible card
+    // Find the first visible card. At the bottom of the list, later letter groups
+    // cannot always reach the top edge, so use the last visible card instead.
     let visibleIdx = -1;
-    for (let i = 0; i < cards.length; i++) {
-      if (cards[i].offsetTop + cards[i].offsetHeight > viewTop) {
-        visibleIdx = i;
-        break;
+    const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+    const isAtBottom = scrollEl.scrollTop >= maxScroll - 1;
+
+    if (isAtBottom) {
+      const visibleBottomY = scrollRect.bottom;
+      for (let i = cards.length - 1; i >= 0; i--) {
+        if (cards[i].getBoundingClientRect().top < visibleBottomY) {
+          visibleIdx = i;
+          break;
+        }
+      }
+    } else {
+      for (let i = 0; i < cards.length; i++) {
+        if (cards[i].getBoundingClientRect().bottom > visibleEdgeY) {
+          visibleIdx = i;
+          break;
+        }
       }
     }
     if (visibleIdx < 0) {
@@ -247,10 +280,10 @@ const AlphaStrip = {
     }
 
     // Find the top of the current letter group and the top of the next letter group
-    let groupStart = cards[visibleIdx].offsetTop;
+    let groupStart = this._getCardScrollTop(cards[visibleIdx], scrollEl, paddingTop);
     for (let i = visibleIdx - 1; i >= 0; i--) {
       if (this._getCardLetter(cards[i]) === currentLetter) {
-        groupStart = cards[i].offsetTop;
+        groupStart = this._getCardScrollTop(cards[i], scrollEl, paddingTop);
       } else break;
     }
 
@@ -258,7 +291,7 @@ const AlphaStrip = {
     let nextGroupStart = null;
     for (let i = visibleIdx + 1; i < cards.length; i++) {
       if (this._getCardLetter(cards[i]) !== currentLetter) {
-        nextGroupStart = cards[i].offsetTop;
+        nextGroupStart = this._getCardScrollTop(cards[i], scrollEl, paddingTop);
         break;
       }
     }
@@ -268,7 +301,7 @@ const AlphaStrip = {
     if (nextGroupStart !== null) {
       const groupHeight = nextGroupStart - groupStart;
       if (groupHeight > 0) {
-        frac = Math.max(0, Math.min(1, (viewTop - groupStart) / groupHeight));
+        frac = Math.max(0, Math.min(1, (viewScrollTop - groupStart) / groupHeight));
       }
     }
 
@@ -285,17 +318,10 @@ const AlphaStrip = {
 
     const cards = container.querySelectorAll('.project-card');
     for (const card of cards) {
-      const titleEl = card.querySelector('.project-card-title');
-      if (!titleEl) continue;
-      const title = titleEl.textContent.trim();
-      if (!title) continue;
-
-      const first = title[0].toUpperCase();
-      const match = (letter === '#' && /\d/.test(first)) || (first === letter);
-
-      if (match) {
-        const cardTop = card.offsetTop;
-        scrollEl.scrollTo({ top: cardTop - 4, behavior: 'smooth' });
+      if (this._getCardLetter(card) === letter) {
+        this._lockedDotLetter = letter;
+        this._setDotToLetter(letter);
+        this._scrollCardToTop(card, scrollEl);
 
         // Brief highlight
         card.classList.add('alpha-highlight');
@@ -303,5 +329,56 @@ const AlphaStrip = {
         return;
       }
     }
+  },
+
+  _setDotToLetter(letter) {
+    this._dotLetter = letter;
+    this._dotFrac = 0;
+    this._showDot = true;
+    this._paint();
+  },
+
+  _scrollCardToTop(card, scrollEl) {
+    const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+    const nextScrollTop = this._getCardScrollTop(card, scrollEl);
+    const targetScrollTop = Math.max(0, Math.min(nextScrollTop, maxScroll));
+
+    scrollEl.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+    this._settleSmoothScroll(scrollEl, targetScrollTop);
+  },
+
+  _getScrollPaddingTop(scrollEl) {
+    const style = window.getComputedStyle(scrollEl);
+    return parseFloat(style.paddingTop) || 0;
+  },
+
+  _getCardScrollTop(card, scrollEl, paddingTop = this._getScrollPaddingTop(scrollEl)) {
+    const cardRect = card.getBoundingClientRect();
+    const scrollRect = scrollEl.getBoundingClientRect();
+    return scrollEl.scrollTop + (cardRect.top - scrollRect.top) - paddingTop;
+  },
+
+  _settleSmoothScroll(scrollEl, targetScrollTop) {
+    if (this._smoothScrollRafId) {
+      cancelAnimationFrame(this._smoothScrollRafId);
+      this._smoothScrollRafId = null;
+    }
+
+    const startedAt = performance.now();
+    const settle = () => {
+      const elapsed = performance.now() - startedAt;
+      const distance = Math.abs(scrollEl.scrollTop - targetScrollTop);
+
+      if (distance <= 1 || elapsed > 900) {
+        scrollEl.scrollTop = targetScrollTop;
+        this._smoothScrollRafId = null;
+        this._updateDotFromScroll();
+        return;
+      }
+
+      this._smoothScrollRafId = requestAnimationFrame(settle);
+    };
+
+    this._smoothScrollRafId = requestAnimationFrame(settle);
   }
 };

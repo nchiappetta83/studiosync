@@ -14,6 +14,7 @@ const UserDialog = {
     const overlay = document.createElement('div');
     overlay.className = 'dialog-overlay';
     this._overlay = overlay;
+    this._embedded = false;
 
     overlay.innerHTML = `
       <div class="dialog dialog-staff">
@@ -161,6 +162,128 @@ const UserDialog = {
     this._renderBootstrapPanel();
   },
 
+  showEmbedded(container) {
+    if (!container) return;
+    this._dismissDeleteDialog();
+    this._overlay = container;
+    this._embedded = true;
+
+    container.innerHTML = `
+      <div class="settings-section settings-staff-section">
+        <h2 class="settings-section-title">Manage Staff</h2>
+        <p class="settings-section-desc">Add or manage team members and partners.</p>
+        <div id="bootstrap-admin-panel"></div>
+        <div class="staff-tabs">
+          <button class="staff-tab active" data-tab="staff">Staff</button>
+          <button class="staff-tab" data-tab="partners">Partners</button>
+        </div>
+        <div class="staff-list-container">
+          <div class="staff-list" id="staff-list"></div>
+          <button class="btn btn-ghost btn-sm staff-add-btn" id="staff-add-btn">+ Add Staff</button>
+        </div>
+        <div class="staff-add-form hidden" id="staff-add-form">
+          <div class="staff-form-header">
+            <span class="staff-form-title" id="staff-form-title">Add Staff</span>
+          </div>
+          <div class="staff-form-body">
+            <div class="staff-form-row">
+              <div class="form-group" style="flex:1;">
+                <label>First Name</label>
+                <input type="text" class="input" id="staff-first-name" placeholder="e.g. John">
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label>Last Name</label>
+                <input type="text" class="input" id="staff-last-name" placeholder="e.g. Smith">
+              </div>
+            </div>
+            <div class="staff-username-preview" id="staff-username-preview">
+              Username: <strong>—</strong>
+            </div>
+            <div class="form-group" id="staff-role-group">
+              <label>Role</label>
+              <select class="select" id="staff-business-role">
+                <option value="">— No role assigned —</option>
+              </select>
+            </div>
+            <div class="form-group" id="staff-admin-group" style="margin-top:4px;">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input type="checkbox" id="staff-admin-access">
+                <span>Admin Access</span>
+              </label>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">
+                Allows this staff member to access admin-only controls in the app.
+              </div>
+            </div>
+            <div class="form-group" id="staff-self-assign-group" style="margin-top:4px;">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input type="checkbox" id="staff-self-assign">
+                <span>Can Add Tasks In MyTasks</span>
+              </label>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">
+                Lets this staff member add project-linked tasks and action items to their own MyTasks list.
+              </div>
+            </div>
+            <input type="hidden" id="staff-edit-id" value="">
+            <div class="staff-form-actions">
+              <button class="btn btn-ghost" id="staff-form-cancel">Cancel</button>
+              <button class="btn btn-primary" id="staff-form-save">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.querySelectorAll('.staff-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        container.querySelectorAll('.staff-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        this._activeTab = tab.dataset.tab;
+        this._hideForm();
+        this._refreshList();
+        this._updateAddButton();
+      });
+    });
+
+    container.querySelector('#staff-add-btn').addEventListener('click', () => {
+      this._showAddForm();
+    });
+    container.querySelector('#staff-form-cancel').addEventListener('click', () => {
+      this._hideForm();
+    });
+    container.querySelector('#staff-form-save').addEventListener('click', () => {
+      this._saveForm();
+    });
+
+    const firstInput = container.querySelector('#staff-first-name');
+    const lastInput = container.querySelector('#staff-last-name');
+    const updatePreview = () => {
+      const first = firstInput.value.trim();
+      const last = lastInput.value.trim();
+      const preview = container.querySelector('#staff-username-preview strong');
+      preview.textContent = first && last
+        ? (first[0] + last).toLowerCase().replace(/\s+/g, '')
+        : '—';
+    };
+    firstInput.addEventListener('input', updatePreview);
+    lastInput.addEventListener('input', updatePreview);
+    [firstInput, lastInput].forEach(input => {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this._saveForm();
+      });
+    });
+
+    this._refreshList();
+    this._updateAddButton();
+    this._renderBootstrapPanel();
+  },
+
+  detachEmbedded() {
+    if (!this._embedded) return;
+    this._dismissDeleteDialog();
+    this._overlay = null;
+    this._embedded = false;
+  },
+
   _close() {
     if (this._onEsc) {
       document.removeEventListener('keydown', this._onEsc);
@@ -306,9 +429,14 @@ const UserDialog = {
           return;
         }
 
-        if (confirm(`Remove ${user.display_name}?`)) {
-          await this._removeUser(user, { taskAction: 'none' });
-        }
+        const confirmed = await ConfirmDialog.show({
+          title: 'Remove staff member?',
+          message: `Remove ${user.display_name}?`,
+          confirmLabel: 'Remove',
+          tone: 'danger',
+        });
+        if (!confirmed) return;
+        await this._removeUser(user, { taskAction: 'none' });
       });
     });
   },
@@ -467,7 +595,7 @@ const UserDialog = {
 
     listContainer.classList.add('hidden');
     form.classList.remove('hidden');
-    this._overlay.querySelector('#staff-list-footer').classList.add('hidden');
+    this._overlay.querySelector('#staff-list-footer')?.classList.add('hidden');
 
     this._overlay.querySelector('#staff-first-name').focus();
   },
@@ -512,7 +640,7 @@ const UserDialog = {
 
     listContainer.classList.add('hidden');
     form.classList.remove('hidden');
-    this._overlay.querySelector('#staff-list-footer').classList.add('hidden');
+    this._overlay.querySelector('#staff-list-footer')?.classList.add('hidden');
 
     this._overlay.querySelector('#staff-first-name').focus();
   },
@@ -555,7 +683,7 @@ const UserDialog = {
 
     listContainer.classList.add('hidden');
     form.classList.remove('hidden');
-    this._overlay.querySelector('#staff-list-footer').classList.add('hidden');
+    this._overlay.querySelector('#staff-list-footer')?.classList.add('hidden');
     this._overlay.querySelector('#staff-first-name').focus();
   },
 
@@ -564,7 +692,7 @@ const UserDialog = {
     const listContainer = this._overlay.querySelector('.staff-list-container');
     form.classList.add('hidden');
     listContainer.classList.remove('hidden');
-    this._overlay.querySelector('#staff-list-footer').classList.remove('hidden');
+    this._overlay.querySelector('#staff-list-footer')?.classList.remove('hidden');
   },
 
   _populateRoleDropdown(selectedId) {

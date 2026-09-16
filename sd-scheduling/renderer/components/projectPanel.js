@@ -9,6 +9,7 @@ const ProjectPanel = {
   _pendingScrollProjectId: null,
   _lockedScrollTop: null,
   _scrollLockUntil: 0,
+  _lastProjectListSignature: null,
 
   init() {
     this._container = document.getElementById('projects-container');
@@ -177,9 +178,15 @@ const ProjectPanel = {
 
   render() {
     const scrollLock = this._getActiveScrollLock();
-    const scrollAnchor = scrollLock || this._pendingScrollAnchor || this._captureScrollAnchor();
+    const pendingScrollAnchor = this._pendingScrollAnchor;
     this._pendingScrollAnchor = null;
     const projects = this._getFilteredProjects();
+    const projectListSignature = this._getProjectListSignature(projects);
+    const sameProjectList = this._lastProjectListSignature === projectListSignature;
+    const scrollAnchor = scrollLock
+      || pendingScrollAnchor
+      || (sameProjectList ? this._captureExactScrollPosition() : this._captureScrollAnchor());
+    this._lastProjectListSignature = projectListSignature;
 
     if (projects.length === 0) {
       const tab = AppState.get('projectTab');
@@ -260,6 +267,20 @@ const ProjectPanel = {
       mode: 'scroll-lock',
       scrollTop: this._lockedScrollTop,
     };
+  },
+
+  _captureExactScrollPosition() {
+    if (!this._scroller) return null;
+
+    return {
+      mode: 'scroll-lock',
+      scrollTop: this._scroller.scrollTop,
+    };
+  },
+
+  _getProjectListSignature(projects) {
+    if (!Array.isArray(projects)) return '';
+    return projects.map((project) => String(project.id)).join('|');
   },
 
   _buildAnchorForCard(card, cards, scrollerRect) {

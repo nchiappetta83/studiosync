@@ -92,7 +92,12 @@ jobs:
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title $tag --notes "StudioSync installers and win-unpacked download packages."
+            $notesPath = "docs/releases/$tag.md"
+            if (Test-Path $notesPath) {
+              gh release create $tag --title "StudioSync $($tag.TrimStart('v'))" --notes-file $notesPath
+            } else {
+              gh release create $tag --title "StudioSync $($tag.TrimStart('v'))" --generate-notes
+            }
           }
 
           $files = @(

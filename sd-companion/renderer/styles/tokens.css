@@ -20,6 +20,14 @@
   --accent:           #4D4AD5;
   --accent-hover:     #3F3CC4;
   --accent-light:     #EDEDFB;
+  --accent-rgb:       77, 74, 213;
+  --accent-text-strong: #3C3489;
+  --accent-hover-bg: rgba(77, 74, 213, 0.04);
+  --accent-active-bg: rgba(77, 74, 213, 0.08);
+  --accent-hover-border: rgba(77, 74, 213, 0.24);
+  --accent-active-border: rgba(77, 74, 213, 0.35);
+  --accent-active-shadow: rgba(77, 74, 213, 0.1);
+  --accent-focus-ring: rgba(77, 74, 213, 0.1);
 
   /* Priority colors */
   --priority-1:       #D95F5F;
@@ -43,6 +51,9 @@
   /* Borders */
   --border:           #E4EAF0;
   --border-light:     #F0F4F7;
+  --border-rgb:       228, 234, 240;
+  --bg-rgb:           247, 249, 251;
+  --bg-card-rgb:      255, 255, 255;
 
   /* Badges */
   --badge-bg:         #2EAD7F;
@@ -139,6 +150,60 @@ input::placeholder, textarea::placeholder {
 
 .hidden {
   display: none !important;
+}
+
+body.theme-dark {
+  --bg: #24272D;
+  --bg-secondary: #292D34;
+  --bg-tertiary: #333842;
+  --bg-card: #2B3038;
+  --bg-card-hover: #323842;
+  --sidebar: #1F232A;
+  --sidebar-hover: #2A2F38;
+  --sidebar-selected: #332F52;
+  --sidebar-pill: #2F3540;
+  --sidebar-text: #EEF1F5;
+  --sidebar-text-secondary: #A5AFBD;
+  --accent: #8B7DFF;
+  --accent-hover: #A095FF;
+  --accent-light: rgba(139, 125, 255, 0.18);
+  --accent-rgb: 139, 125, 255;
+  --accent-text-strong: #C9C3FF;
+  --accent-hover-bg: rgba(139, 125, 255, 0.08);
+  --accent-active-bg: rgba(139, 125, 255, 0.14);
+  --accent-hover-border: rgba(139, 125, 255, 0.32);
+  --accent-active-border: rgba(139, 125, 255, 0.42);
+  --accent-active-shadow: rgba(139, 125, 255, 0.12);
+  --accent-focus-ring: rgba(139, 125, 255, 0.16);
+  --text-primary: #EEF1F5;
+  --text-secondary: #C2C9D4;
+  --text-tertiary: #929CAA;
+  --border: #3C434E;
+  --border-light: #343A44;
+  --border-rgb: 60, 67, 78;
+  --bg-rgb: 36, 39, 45;
+  --bg-card-rgb: 43, 48, 56;
+  --pto-bg: rgba(212, 136, 58, 0.18);
+  --pto-text: #F2B16D;
+  --danger: #EF8585;
+  --success: #58CFA8;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-card-lg: 0 10px 24px rgba(0, 0, 0, 0.22);
+  --shadow-dropdown: 0 16px 42px rgba(0, 0, 0, 0.36);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.44);
+}
+
+body.theme-dark,
+body.theme-dark .login-screen {
+  background: var(--bg);
+}
+
+body.theme-dark input,
+body.theme-dark textarea,
+body.theme-dark select {
+  background: var(--bg-card);
+  border-color: var(--border);
+  color: var(--text-primary);
 }
 
 .btn {

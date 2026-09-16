@@ -140,7 +140,7 @@ const App = {
       const mod = e.ctrlKey || e.metaKey;
 
       // Ctrl+F — focus search
-      if (mod && e.key === 'f') {
+      if (mod && (e.key === 'f' || e.key === 'k')) {
         e.preventDefault();
         document.getElementById('search-input')?.focus();
       }
@@ -363,7 +363,6 @@ const App = {
 
   async _ensureEditableWindowFocus(editable, context = {}) {
     if (!this._isTextEntryElement(editable)) return;
-    if (typeof document.hasFocus === 'function' && document.hasFocus()) return;
     if (typeof window.api?.focusWindow !== 'function') return;
 
     try {
@@ -633,11 +632,11 @@ const App = {
     const subtitleEl = document.querySelector('#setup-screen .setup-subtitle');
 
     if (subtitleEl) {
-      subtitleEl.textContent = options.subtitle || 'Connect to your team\'s shared drive to get started.';
+      subtitleEl.textContent = options.subtitle || 'Select the StudioSync folder or its data folder to connect.';
     }
     pathEl.textContent = '';
     errorEl.textContent = options.error || '';
-    selectBtn.textContent = 'Select Shared Folder';
+    selectBtn.textContent = 'Select Shared Drive Folder';
     selectBtn.disabled = false;
 
     selectBtn.onclick = async () => {
@@ -661,7 +660,7 @@ const App = {
         }
       } else {
         errorEl.textContent = result.error || 'Failed to connect.';
-        selectBtn.textContent = 'Select Shared Folder';
+        selectBtn.textContent = 'Select Shared Drive Folder';
         selectBtn.disabled = false;
       }
     };

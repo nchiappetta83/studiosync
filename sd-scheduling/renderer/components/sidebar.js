@@ -287,13 +287,18 @@ const Sidebar = {
           label: 'Clear All Tasks',
           danger: true,
           action: async () => {
-            if (confirm(`Remove all ${userTasks.length} tasks for ${user.display_name}?`)) {
-              for (const task of userTasks) {
-                await window.api.deleteTask(task.id);
-              }
-              AppState.refresh();
-              Toast.show('Tasks cleared', 'success');
+            const confirmed = await ConfirmDialog.show({
+              title: 'Clear all tasks?',
+              message: `Remove all ${userTasks.length} tasks for ${user.display_name}?`,
+              confirmLabel: 'Clear tasks',
+              tone: 'danger',
+            });
+            if (!confirmed) return;
+            for (const task of userTasks) {
+              await window.api.deleteTask(task.id);
             }
+            AppState.refresh();
+            Toast.show('Tasks cleared', 'success');
           }
         });
       }

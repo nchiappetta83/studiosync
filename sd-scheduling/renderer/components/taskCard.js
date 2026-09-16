@@ -2,7 +2,7 @@
  * TaskCard â€” renders individual task cards matching V4 behavior.
  *
  * Layout:
- *   TOP ROW:  [Priority pill] [Task name] [Due date] [ðŸ“…] [Ã—]
+ *   TOP ROW:  [Priority pill] [Task name] [Due date] [date picker]
  *   BOTTOM:   [Notes (italic, indented)]
  *
  * Interactions (partner only):
@@ -10,7 +10,6 @@
  *   - Due date: click to type inline, ðŸ“… to open calendar picker
  *   - Task name: double-click â†’ edit dialog
  *   - Notes: click to edit inline
- *   - Ã— : delete (shown on hover)
  *   - Drag: mousedown+move â†’ drag to another staff member
  *   - Right-click: context menu with edit, priority, move-to, delete
  */
@@ -49,19 +48,28 @@ globalScope.TaskCard = {
       ? globalScope.TaskNotesEditor.getDisplayValue(task)
       : (task.notes || '');
 
-    // Confirmed / Last Week status (V4 weekly rollover)
+    // Confirmed / carryover status (weekly rollover)
     const isConfirmed = task.confirmed !== 0;
-    const lastWeekClass = isConfirmed ? '' : 'task-last-week';
-    const lastWeekOverlay = (!isConfirmed && isPartner)
-      ? '<span class="task-last-week-overlay">Last Week</span>'
+    const carryoverClass = isConfirmed ? '' : 'task-carryover';
+    const carryoverBadge = !isConfirmed
+      ? '<span class="task-carryover-badge" title="Carried over from last week">Carryover</span>'
       : '';
-    const keepBtn = (!isConfirmed && isPartner) ?
-      `<button class="task-keep-btn" data-task-id="${task.id}" title="Confirm task for this week">Keep</button>` : '';
+    const keepBtn = (!isConfirmed && isPartner)
+      ? `<button type="button" class="task-rollover-action-btn task-keep-btn" data-task-id="${task.id}" title="Keep carryover task" aria-label="Keep carryover task">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 6 9 17l-5-5"></path>
+          </svg>
+        </button>`
+      : '';
     const carryDeleteBtn = (!isConfirmed && isPartner)
-      ? `<button class="task-carry-delete-btn" data-task-id="${task.id}" title="Delete carry-over task">Delete</button>`
+      ? `<button type="button" class="task-rollover-action-btn task-carry-delete-btn" data-task-id="${task.id}" title="Delete carryover task" aria-label="Delete carryover task">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12"></path>
+          </svg>
+        </button>`
       : '';
     const rolloverActions = (!isConfirmed && isPartner) ? `
-      <div class="task-rollover-actions">
+      <div class="task-rollover-actions" aria-label="Carryover actions">
         ${keepBtn}
         ${carryDeleteBtn}
       </div>
@@ -73,14 +81,14 @@ globalScope.TaskCard = {
     // Partner initials badge
     const partnerHtml = this._renderPartnerBadge(task);
 
-    // Delete button (visible on hover for partners)
-    const deleteBtn = isPartner
-      ? `<span class="task-delete-btn" data-task-id="${task.id}" title="Delete task">&times;</span>`
-      : '';
-
     // Calendar icon (partner only)
-    const calIcon = isPartner
-      ? `<span class="task-cal-icon" data-task-id="${task.id}" title="Pick from calendar">&#x1F4C5;</span>`
+    const calIcon = isPartner && !dueDisplay
+      ? `<span class="task-cal-icon" data-task-id="${task.id}" title="Pick from calendar" aria-label="Pick due date">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="5" width="16" height="15" rx="2"></rect>
+            <path d="M8 3v4M16 3v4M4 10h16"></path>
+          </svg>
+        </span>`
       : '';
 
     // Priority badge â€” custom priorities get inline color from their definition
@@ -92,26 +100,25 @@ globalScope.TaskCard = {
     const dueCursor = isPartner ? 'cursor:pointer;' : '';
     const dueHtml = dueDisplay
       ? `<span class="task-due-label ${dueColor}" data-task-id="${task.id}" style="${dueCursor}">${this._escapeHtml(dueDisplay)}</span>`
-      : (isPartner ? `<span class="task-due-label due-none" data-task-id="${task.id}" style="${dueCursor}">No due date</span>` : '');
+      : '';
 
     return `
-      <div class="task-card ${completedClass} ${lastWeekClass} ${isPartner ? 'task-card-draggable' : ''}" data-task-id="${task.id}">
-        ${rolloverActions}
-        ${lastWeekOverlay}
+      <div class="task-card ${completedClass} ${carryoverClass} ${isPartner ? 'task-card-draggable' : ''}" data-task-id="${task.id}">
         <div class="task-card-main">
           ${priorityBadge}
           <div class="task-title-group">
+            ${carryoverBadge}
             <div class="task-title">${this._escapeHtml(displayTitle)}</div>
             ${isConfirmed ? completeBtn : ''}
           </div>
           ${dueHtml}
           ${calIcon}
-          ${deleteBtn}
+          ${partnerHtml}
+          ${rolloverActions}
         </div>
         <div class="task-card-bottom">
           <input type="text" class="task-notes-input ${canEditNotes ? 'task-notes-input-editable' : ''}" data-task-id="${task.id}"
             value="${this._escapeAttr(notesVal)}" placeholder="Note" ${canEditNotes ? '' : 'readonly'}>
-          ${partnerHtml}
         </div>
       </div>
     `;
@@ -154,10 +161,11 @@ globalScope.TaskCard = {
           const task = AppState.get('tasks').find(t => t.id === taskId);
           if (!task) return;
 
-          if (confirm(`Delete '${task.title}' from carry-over?`)) {
-            await window.api.deleteTask(taskId);
-            await AppState.refresh();
-          }
+          const shouldDelete = await this._confirmCarryoverDelete(task);
+          if (!shouldDelete) return;
+
+          await window.api.deleteTask(taskId);
+          await AppState.refresh();
         });
       });
     }
@@ -197,7 +205,7 @@ globalScope.TaskCard = {
       container.querySelectorAll('.task-card').forEach(card => {
         card.addEventListener('dblclick', (e) => {
           if (e.target.tagName === 'INPUT' || e.target.closest('.task-priority-pill') ||
-              e.target.closest('.task-cal-icon') || e.target.closest('.task-delete-btn') ||
+              e.target.closest('.task-cal-icon') ||
               e.target.closest('.task-partner-badge') || e.target.closest('.task-keep-btn') ||
               e.target.closest('.task-carry-delete-btn') ||
               e.target.closest('.task-complete-btn') ||
@@ -229,7 +237,7 @@ globalScope.TaskCard = {
 
         card.addEventListener('mousedown', (e) => {
           if (e.target.tagName === 'INPUT' || e.target.closest('.task-priority-pill') ||
-              e.target.closest('.task-cal-icon') || e.target.closest('.task-delete-btn') ||
+              e.target.closest('.task-cal-icon') ||
               e.target.closest('.task-keep-btn') || e.target.closest('.task-carry-delete-btn') ||
               e.target.closest('.task-complete-btn') ||
               e.button !== 0) return;
@@ -269,21 +277,6 @@ globalScope.TaskCard = {
         globalScope.TaskNotesEditor.bindInput(input);
       }
     });
-
-    // â”€â”€ Delete button â”€â”€
-    if (isPartner) {
-      container.querySelectorAll('.task-delete-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const taskId = btn.dataset.taskId;
-          const task = AppState.get('tasks').find(t => t.id === taskId);
-          if (task && confirm(`Delete '${task.title}'?`)) {
-            await window.api.deleteTask(taskId);
-            AppState.refresh();
-          }
-        });
-      });
-    }
   },
 
   // â”€â”€ Priority Menu (V4 style) â”€â”€
@@ -315,14 +308,13 @@ globalScope.TaskCard = {
       // Color dot for numbered priorities
       if (item.type === 'priority' && typeof item.value === 'number') {
         const color = this._numericPriorityTone(item.value).color;
-        btn.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>${item.label}`;
+        this._appendPriorityMenuDot(btn, color);
       } else if (item.value === 'w') {
-        btn.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--priority-w);flex-shrink:0;"></span>${item.label}`;
+        this._appendPriorityMenuDot(btn, 'var(--priority-w)');
       } else if (item.type === 'custom') {
-        btn.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${item.color};flex-shrink:0;"></span>${item.label}`;
-      } else {
-        btn.textContent = item.label;
+        this._appendPriorityMenuDot(btn, item.color);
       }
+      btn.appendChild(document.createTextNode(item.label || ''));
 
       btn.addEventListener('click', async () => {
         menu.remove();
@@ -358,6 +350,60 @@ globalScope.TaskCard = {
       }
     };
     setTimeout(() => document.addEventListener('click', dismiss), 0);
+  },
+
+  _appendPriorityMenuDot(button, color) {
+    const dot = document.createElement('span');
+    dot.style.width = '8px';
+    dot.style.height = '8px';
+    dot.style.borderRadius = '50%';
+    dot.style.background = color;
+    dot.style.flexShrink = '0';
+    button.appendChild(dot);
+  },
+
+  async _confirmCarryoverDelete(task) {
+    if (this._shouldSkipCarryoverDeleteConfirm()) {
+      return true;
+    }
+
+    const result = await ConfirmDialog.showWithCheckbox({
+      title: 'Delete carryover task?',
+      subtitle: 'This removes the task from Dashboard.',
+      message: `Delete "${task.title || 'this task'}" from carryover?`,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+      checkbox: {
+        label: "Don't ask again for carryover deletes",
+        help: 'Future carryover delete clicks will delete immediately on this computer.',
+      },
+    });
+
+    if (result.confirmed && result.checked) {
+      this._setSkipCarryoverDeleteConfirm(true);
+    }
+
+    return result.confirmed;
+  },
+
+  _shouldSkipCarryoverDeleteConfirm() {
+    try {
+      return localStorage.getItem('studiosync.skipCarryoverDeleteConfirm') === '1';
+    } catch (_error) {
+      return false;
+    }
+  },
+
+  _setSkipCarryoverDeleteConfirm(value) {
+    try {
+      if (value) {
+        localStorage.setItem('studiosync.skipCarryoverDeleteConfirm', '1');
+      } else {
+        localStorage.removeItem('studiosync.skipCarryoverDeleteConfirm');
+      }
+    } catch (_error) {
+      // Ignore storage failures; the delete action can still continue.
+    }
   },
 
   // â”€â”€ Task Right-Click Context Menu (V4 style) â”€â”€
@@ -417,10 +463,15 @@ globalScope.TaskCard = {
       label: 'Delete Task',
       danger: true,
       action: async () => {
-        if (confirm(`Delete '${task.title}'?`)) {
-          await window.api.deleteTask(task.id);
-          await AppState.refresh();
-        }
+        const confirmed = await ConfirmDialog.show({
+          title: 'Delete task?',
+          message: `Delete "${task.title || 'this task'}"?`,
+          confirmLabel: 'Delete',
+          tone: 'danger',
+        });
+        if (!confirmed) return;
+        await window.api.deleteTask(task.id);
+        await AppState.refresh();
       }
     });
 

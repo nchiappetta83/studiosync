@@ -11,6 +11,7 @@ SD Apps/
   STRUCTURE.md                           # This file
   docs/
     signpath-setup.md                    # Future SignPath restoration notes
+    app-boundaries.md                    # Dashboard/MyTasks deployable boundary and mirrored-code notes
   scripts/
     smoke-tests.js                       # Lightweight Node smoke tests for fragile shared helpers
   .github/workflows/

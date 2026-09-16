@@ -6,12 +6,22 @@
 
 StudioSync is a two-app Windows scheduling system for small production and professional-services teams that need a clear daily board in the office and a lighter personal workspace on each desktop.
 
-Latest public release: [v1.0.4](https://github.com/nchiappetta83/studiosync/releases/tag/v1.0.4)
+Latest public release: [v1.2.0](https://github.com/nchiappetta83/studiosync/releases/tag/v1.2.0)
 
 - `StudioSync` is the main dashboard used to plan work, manage people, import projects, and publish office-wide updates.
 - `StudioSync MyTasks` is the companion app used by partners and staff to track assigned work, add follow-up notes, and stay in sync with the main board.
 
 Both apps are Electron-based, store data locally in SQLite, synchronize through a shared-drive event system instead of a central server database, and now keep local runtime logs for troubleshooting.
+
+## What's new in 1.2.0
+
+- A shared interaction system now keeps buttons, menus, dialogs, form controls, focus states, notifications, and destructive actions visually consistent across StudioSync and MyTasks.
+- MyTasks task and project details can be opened or collapsed directly from the divider in both staff and partner workflows.
+- MyTasks now exposes sync failures, retries damaged shared-drive events with backoff, and provides an explicit recovery action.
+- Task completion includes immediate feedback and Undo, while saves and background actions use consistent pending, success, warning, and error states.
+- Partner project editing protects unsaved changes during navigation and background refreshes.
+- Keyboard navigation, modal focus management, validation, and accessible tab/menu states have been expanded throughout the apps.
+- Both apps now use a single-instance desktop lifecycle to avoid duplicate background process groups.
 
 ## Product overview
 
@@ -154,7 +164,7 @@ GitHub Actions is configured in [`.github/workflows/release-signpath.yml`](.gith
 3. package both `win-unpacked` folders as zip downloads
 4. publish the unsigned installers and win-unpacked zip packages to the GitHub release for version tags
 
-Push a tag like `v1.0.4` to publish the current unsigned release assets. Keep the SignPath setup notes below if you want to restore signed releases later.
+Push a tag like `v1.2.0` to publish the current unsigned release assets. Version-specific notes under `docs/releases/` are used when present; otherwise GitHub generates notes automatically. Keep the SignPath setup notes below if you want to restore signed releases later.
 
 The interactive installers currently force current-user install mode and seed default locations under `C:\SD Apps\StudioSync` and `C:\SD Apps\StudioSync MyTasks`.
 

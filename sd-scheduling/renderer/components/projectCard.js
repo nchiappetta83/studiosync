@@ -7,7 +7,7 @@ const ProjectCard = {
     const isPartner = AppState.isPartner();
     const statusLabel = project.status === 'active' ? 'ACTIVE' : 'INACTIVE';
     const statusClass = project.status === 'active' ? 'badge-active' : 'badge-inactive';
-    const statusDotColor = project.status === 'active' ? 'var(--badge-bg)' : 'var(--text-tertiary)';
+    const statusDotColor = project.status === 'active' ? 'var(--success)' : 'var(--text-tertiary)';
 
     // Partner badge
     const partnerLabel = this._getProjectPartnerLabel(project);
@@ -248,11 +248,17 @@ const ProjectCard = {
       label: 'Delete Project',
       danger: true,
       action: async () => {
-        if (confirm(`Delete project "${project.client ? project.client + ' — ' : ''}${project.name}"?`)) {
-          await window.api.deleteProject(project.id);
-          AppState.refresh();
-          Toast.show('Project deleted', 'success');
-        }
+        const projectName = project.client ? `${project.client} | ${project.name}` : project.name;
+        const confirmed = await ConfirmDialog.show({
+          title: 'Delete project?',
+          message: `Delete project "${projectName}"?`,
+          confirmLabel: 'Delete',
+          tone: 'danger',
+        });
+        if (!confirmed) return;
+        await window.api.deleteProject(project.id);
+        AppState.refresh();
+        Toast.show('Project deleted', 'success');
       }
     });
 

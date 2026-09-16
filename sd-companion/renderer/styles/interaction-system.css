@@ -1,0 +1,432 @@
+/* Shared StudioSync interaction language. Keep mirrored in MyTasks. */
+
+:root {
+  --ui-control-height: 34px;
+  --ui-control-height-sm: 30px;
+  --ui-control-radius: 6px;
+  --ui-surface-radius: 8px;
+  --ui-border-strong: #D7DEE6;
+  --ui-focus-ring: rgba(77, 74, 213, 0.18);
+  --ui-danger-bg: #FFF1F1;
+  --ui-danger-hover: #FFE5E5;
+  --ui-menu-shadow: 0 10px 28px rgba(27, 36, 42, 0.16), 0 2px 8px rgba(27, 36, 42, 0.08);
+  --ui-dialog-shadow: 0 24px 64px rgba(27, 36, 42, 0.24), 0 4px 14px rgba(27, 36, 42, 0.1);
+  --bg-rgb: 247, 249, 251;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
+  --font-body: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
+}
+
+body.theme-dark {
+  --ui-border-strong: #4A525F;
+  --ui-focus-ring: rgba(139, 125, 255, 0.22);
+  --ui-danger-bg: rgba(217, 95, 95, 0.14);
+  --ui-danger-hover: rgba(217, 95, 95, 0.22);
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="menuitem"]:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input,
+textarea,
+.input,
+.select {
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-control-radius);
+  transition: border-color var(--duration), box-shadow var(--duration), background var(--duration);
+}
+
+input:focus,
+textarea:focus,
+.input:focus,
+.select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ui-focus-ring);
+}
+
+.input,
+.select {
+  min-height: 36px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.btn {
+  min-height: var(--ui-control-height);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-control-radius);
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  box-shadow: none;
+  transition: background var(--duration), border-color var(--duration), color var(--duration), box-shadow var(--duration);
+}
+
+.btn:active {
+  transform: none;
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  box-shadow: 0 1px 2px rgba(31, 36, 42, 0.14);
+}
+
+.btn-primary:hover {
+  box-shadow: 0 2px 5px rgba(31, 36, 42, 0.18);
+}
+
+.btn-accent {
+  border-color: rgba(77, 74, 213, 0.16);
+}
+
+.btn-ghost {
+  border-color: transparent;
+}
+
+.btn-danger {
+  border-color: rgba(217, 95, 95, 0.16);
+  background: var(--ui-danger-bg);
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  border-color: rgba(217, 95, 95, 0.26);
+  background: var(--ui-danger-hover);
+}
+
+.btn-sm {
+  min-height: var(--ui-control-height-sm);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.icon-btn,
+.toolbar-btn,
+.task-action-btn,
+.task-card-menu-btn,
+.settings-arrow-btn,
+.detail-link-menu-btn,
+.detail-close,
+.dialog-task-search-clear {
+  border-radius: var(--ui-control-radius);
+}
+
+.context-menu {
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-surface-radius);
+  box-shadow: var(--ui-menu-shadow);
+  transform-origin: top left;
+}
+
+.context-menu-item {
+  min-height: 34px;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.25;
+}
+
+.context-menu-item:hover,
+.context-menu-item:focus-visible {
+  background: var(--bg-secondary);
+  outline: none;
+}
+
+.context-menu-item.danger:hover,
+.context-menu-item.danger:focus-visible {
+  background: var(--ui-danger-bg);
+}
+
+.context-menu-item.context-menu-info {
+  min-height: 28px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  font-size: 11px;
+}
+
+.context-menu-item svg {
+  width: 16px;
+  height: 16px;
+}
+
+.context-menu-divider {
+  margin: 4px 6px;
+}
+
+.context-menu-chevron {
+  font-size: 16px;
+}
+
+.dialog-overlay {
+  background: rgba(24, 31, 36, 0.52);
+  backdrop-filter: none;
+}
+
+.dialog,
+.dialog-card {
+  width: min(500px, calc(100vw - 40px));
+  max-width: 500px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-surface-radius);
+  box-shadow: var(--ui-dialog-shadow);
+}
+
+.dialog-wide {
+  width: min(620px, calc(100vw - 40px));
+  max-width: 620px;
+}
+
+.dialog-settings {
+  width: min(700px, calc(100vw - 40px));
+  max-width: 700px;
+}
+
+.preferences-card {
+  width: min(760px, calc(100vw - 40px));
+  max-width: 760px;
+}
+
+.dialog-staff {
+  width: min(460px, calc(100vw - 40px));
+  max-width: 460px;
+}
+
+.dialog-pto {
+  width: min(360px, calc(100vw - 40px));
+  max-width: 360px;
+}
+
+.update-dialog,
+.update-dialog-card {
+  width: min(520px, calc(100vw - 40px));
+  max-width: 520px;
+}
+
+.dialog-header {
+  padding: 20px 20px 0;
+}
+
+.dialog-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.3;
+}
+
+.dialog-subtitle {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dialog-confirm-copy {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dialog-body {
+  padding: 16px 20px 20px;
+}
+
+.dialog-footer {
+  min-height: 58px;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-light);
+  border-radius: 0 0 var(--ui-surface-radius) var(--ui-surface-radius);
+  background: rgba(var(--bg-rgb), 0.52);
+}
+
+.dialog-confirm,
+.confirm-dialog-card {
+  width: min(420px, calc(100vw - 40px));
+  max-width: 420px;
+}
+
+.detail-close {
+  width: 30px;
+  height: 30px;
+}
+
+.toast-container,
+.toast-region {
+  right: 16px;
+  bottom: 16px;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  align-items: flex-end;
+}
+
+.toast,
+.app-toast {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-surface-radius);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: var(--ui-menu-shadow);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toast-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  font-size: 0;
+  background: var(--text-tertiary);
+}
+
+.toast.toast-success .toast-icon { background: var(--success); }
+.toast.toast-error .toast-icon { background: var(--danger); }
+.toast.toast-info .toast-icon { background: var(--accent); }
+
+.toast-copy,
+.app-toast-copy {
+  min-width: 0;
+  flex: 1;
+  line-height: 1.35;
+}
+
+.toast-dismiss,
+.app-toast-dismiss {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border: 0;
+  border-radius: var(--ui-control-radius);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.toast-dismiss:hover,
+.toast-dismiss:focus-visible,
+.app-toast-dismiss:hover,
+.app-toast-dismiss:focus-visible {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.setup-screen,
+.login-screen {
+  background: var(--bg);
+}
+
+.setup-card,
+.login-card {
+  width: min(380px, calc(100vw - 40px));
+  max-width: 380px;
+  padding-left: 28px;
+  padding-right: 28px;
+}
+
+.setup-icon,
+.login-logo {
+  width: 144px;
+  height: 144px;
+  margin: 0 auto 12px;
+}
+
+.setup-logo,
+.setup-logo-hero,
+.setup-logo-auth,
+.login-logo-mark {
+  width: 144px;
+  height: 144px;
+  transform: none;
+}
+
+.setup-brand-group,
+.login-brand-group {
+  margin-top: -4px;
+  margin-bottom: 24px;
+}
+
+.setup-brand-name,
+.login-brand-suite {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: 0;
+  -webkit-text-stroke: 0;
+  text-shadow: none;
+}
+
+.setup-brand-product,
+.login-brand-name {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+
+.setup-title,
+.login-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.setup-subtitle,
+.login-subtitle {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-submit-btn {
+  min-height: 40px;
+  border-radius: var(--ui-control-radius);
+  box-shadow: 0 1px 2px rgba(31, 36, 42, 0.14);
+  font-weight: 600;
+}
+
+.auth-submit-btn:hover {
+  transform: none;
+  box-shadow: 0 2px 5px rgba(31, 36, 42, 0.18);
+}
+
+.setup-error:not(:empty),
+.login-error:not(:empty) {
+  margin-top: 16px;
+  padding: 9px 11px;
+  border: 1px solid rgba(217, 95, 95, 0.18);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--ui-control-radius);
+  background: var(--ui-danger-bg);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-menu,
+  .dialog,
+  .dialog-card,
+  .toast,
+  .app-toast {
+    animation: none !important;
+    transition: none !important;
+  }
+}

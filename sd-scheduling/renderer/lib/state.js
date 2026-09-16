@@ -9,6 +9,29 @@ const {
   getPriorityMenuToken,
 } = globalScope.SchedulingPriority;
 
+const DASHBOARD_VIEW_PREFS_KEY = 'dashboard:view-prefs';
+const DASHBOARD_VIEW_PREF_KEYS = new Set([
+  'selectedStaffId',
+  'selectedPartnerId',
+  'projectTab',
+  'sidebarSort',
+  'filterPriority',
+  'carryoverReviewMode',
+]);
+
+function readDashboardViewPrefs() {
+  try {
+    const raw = globalScope.localStorage?.getItem(DASHBOARD_VIEW_PREFS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+const dashboardViewPrefs = readDashboardViewPrefs();
+
 const AppState = {
   _listeners: {},
   _batchDepth: 0,
@@ -25,13 +48,15 @@ const AppState = {
     businessRoles: [],
     customPriorities: [],
     priorityMenuOrder: [],
+    priorityCarryoverTokens: [],
     priorityDisplayStyles: {},
-    selectedStaffId: 'all',  // 'all', a user ID, or an array of user IDs
-    selectedPartnerId: null, // null or a partner user ID (filters projects)
-    projectTab: 'active',    // 'active', 'inactive', 'all'
+    selectedStaffId: dashboardViewPrefs.selectedStaffId ?? 'all',  // 'all', a user ID, or an array of user IDs
+    selectedPartnerId: dashboardViewPrefs.selectedPartnerId ?? null, // null or a partner user ID (filters projects)
+    projectTab: dashboardViewPrefs.projectTab ?? 'active',    // 'active', 'inactive', 'all'
     searchQuery: '',
-    sidebarSort: 'name',     // 'name' (A-Z) or 'role'
-    filterPriority: null,    // null or a priority number
+    sidebarSort: dashboardViewPrefs.sidebarSort ?? 'name',     // 'name' (A-Z) or 'role'
+    filterPriority: dashboardViewPrefs.filterPriority ?? null,    // null or a priority number
+    carryoverReviewMode: dashboardViewPrefs.carryoverReviewMode === true,
   },
 
   get(key) {
@@ -40,6 +65,7 @@ const AppState = {
 
   set(key, value) {
     this._data[key] = value;
+    this._persistViewPreference(key);
     this._invalidateCaches(key);
     this._notify(key);
   },
@@ -136,6 +162,50 @@ const AppState = {
     }
   },
 
+  _persistViewPreference(key) {
+    if (!DASHBOARD_VIEW_PREF_KEYS.has(key)) return;
+    try {
+      const nextPrefs = {};
+      for (const prefKey of DASHBOARD_VIEW_PREF_KEYS) {
+        nextPrefs[prefKey] = this._data[prefKey];
+      }
+      globalScope.localStorage?.setItem(DASHBOARD_VIEW_PREFS_KEY, JSON.stringify(nextPrefs));
+    } catch (_) {}
+  },
+
+  _persistAllViewPreferences() {
+    this._persistViewPreference('selectedStaffId');
+  },
+
+  _sanitizeViewPreferences() {
+    const userIds = new Set((this._data.users || []).map((user) => user.id));
+    const partnerIds = new Set((this._data.users || [])
+      .filter((user) => user.role === 'partner' || user.is_admin === 1)
+      .map((user) => user.id));
+
+    if (Array.isArray(this._data.selectedStaffId)) {
+      const selectedStaffIds = this._data.selectedStaffId.filter((userId) => userIds.has(userId));
+      this._data.selectedStaffId = selectedStaffIds.length ? selectedStaffIds : 'all';
+    } else if (this._data.selectedStaffId !== 'all' && !userIds.has(this._data.selectedStaffId)) {
+      this._data.selectedStaffId = 'all';
+    }
+
+    if (this._data.selectedPartnerId && !partnerIds.has(this._data.selectedPartnerId)) {
+      this._data.selectedPartnerId = null;
+    }
+
+    if (!['active', 'future', 'inactive', 'all'].includes(this._data.projectTab)) {
+      this._data.projectTab = 'active';
+    }
+
+    if (!['name', 'role'].includes(this._data.sidebarSort)) {
+      this._data.sidebarSort = 'name';
+    }
+
+    this._data.carryoverReviewMode = this._data.carryoverReviewMode === true;
+    this._persistAllViewPreferences();
+  },
+
   /**
    * Reload all data from the backend
    */
@@ -151,7 +221,7 @@ const AppState = {
     }
 
     this._refreshPromise = (async () => {
-      const [users, tasks, projects, pto, currentUser, businessRoles, customPriorities, priorityMenuOrder, priorityDisplayStyles] = await Promise.all([
+      const [users, tasks, projects, pto, currentUser, businessRoles, customPriorities, priorityMenuOrder, priorityCarryoverTokens, priorityDisplayStyles] = await Promise.all([
         window.api.getUsers(),
         window.api.getTasks({}),
         window.api.getProjects(),
@@ -160,6 +230,7 @@ const AppState = {
         window.api.getBusinessRoles(),
         window.api.getCustomPriorities(),
         window.api.getPriorityMenuOrder(),
+        window.api.getPriorityCarryoverTokens(),
         window.api.getPriorityDisplayStyles()
       ]);
 
@@ -172,9 +243,11 @@ const AppState = {
         this._data.businessRoles = businessRoles;
         this._data.customPriorities = customPriorities;
         this._data.priorityMenuOrder = Array.isArray(priorityMenuOrder) ? priorityMenuOrder : [];
+        this._data.priorityCarryoverTokens = Array.isArray(priorityCarryoverTokens) ? priorityCarryoverTokens : [];
         this._data.priorityDisplayStyles = priorityDisplayStyles && typeof priorityDisplayStyles === 'object'
           ? priorityDisplayStyles
           : {};
+        this._sanitizeViewPreferences();
         this._tasksByStaffCache = null;
 
         this._notify('users');
@@ -185,6 +258,7 @@ const AppState = {
         this._notify('businessRoles');
         this._notify('customPriorities');
         this._notify('priorityMenuOrder');
+        this._notify('priorityCarryoverTokens');
         this._notify('priorityDisplayStyles');
       });
     })();

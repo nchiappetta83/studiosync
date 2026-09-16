@@ -109,11 +109,11 @@
 .sidebar-avatar {
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 700;
   color: #FFFFFF;
   flex-shrink: 0;

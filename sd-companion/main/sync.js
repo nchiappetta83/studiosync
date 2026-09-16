@@ -55,7 +55,7 @@ const EVENT_VALIDATORS = {
 };
 
 class SyncEngine {
-  constructor(db, sharedDrivePath, username, source = 'companion') {
+  constructor(db, sharedDrivePath, username, source = 'companion', logger = null) {
     this.db = db;
     this.sharedDrivePath = sharedDrivePath;
     this.username = username || 'unknown';
@@ -72,6 +72,32 @@ class SyncEngine {
     this.processedFiles = new Set();
     this.processedFilesLoaded = false;
     this.failedFiles = new Map();
+    this.logger = logger;
+  }
+
+  getFailureSummary() {
+    const failures = [...this.failedFiles.entries()].map(([filename, state]) => ({
+      filename,
+      attempts: state.attempts,
+      error: state.error,
+      nextRetryAt: state.nextRetryAt,
+    }));
+
+    return {
+      count: failures.length,
+      totalAttempts: failures.reduce((total, failure) => total + failure.attempts, 0),
+      nextRetryAt: failures.reduce((next, failure) => {
+        if (!failure.nextRetryAt) return next;
+        return next === null ? failure.nextRetryAt : Math.min(next, failure.nextRetryAt);
+      }, null),
+    };
+  }
+
+  retryFailedFiles() {
+    for (const state of this.failedFiles.values()) {
+      state.nextRetryAt = 0;
+    }
+    return this.pull();
   }
 
   initialize() {
@@ -86,12 +112,15 @@ class SyncEngine {
     this._maybeCleanup();
   }
 
-  startPolling(onUpdate) {
+  startPolling(onUpdate, onStatusChange) {
     this.stopPolling();
     this.pollInterval = setInterval(() => {
       try {
+        const previousFailureState = JSON.stringify(this.getFailureSummary());
         const appliedEvents = this.pull();
         this._maybeCleanup();
+        const failureSummary = this.getFailureSummary();
+        if (JSON.stringify(failureSummary) !== previousFailureState && onStatusChange) onStatusChange(failureSummary);
         if (appliedEvents.length > 0 && onUpdate) onUpdate(appliedEvents);
       } catch (err) {
         console.error('Sync pull error:', err.message);
@@ -140,7 +169,12 @@ class SyncEngine {
       return [];
     }
 
-    const pendingFiles = files.filter(({ file }) => !this.processedFiles.has(file));
+    const now = Date.now();
+    const pendingFiles = files.filter(({ file }) => {
+      if (this.processedFiles.has(file)) return false;
+      const failure = this.failedFiles.get(file);
+      return !failure || failure.nextRetryAt <= now;
+    });
     if (pendingFiles.length === 0) return [];
 
     const appliedEvents = [];
@@ -227,7 +261,7 @@ class SyncEngine {
       }
 
       if (removed > 0) {
-        console.log(`Sync cleanup: removed ${removed} old sync file(s)`);
+        this.logger?.info('Sync cleanup removed old sync files', { removed });
       }
     } catch (err) {
       console.error('Sync cleanup error:', err.message);
@@ -306,10 +340,16 @@ class SyncEngine {
   }
 
   _recordFailure(filename, err) {
-    const attempts = (this.failedFiles.get(filename) || 0) + 1;
-    this.failedFiles.set(filename, attempts);
+    const previous = this.failedFiles.get(filename);
+    const attempts = (previous?.attempts || 0) + 1;
+    const retryDelay = Math.min(30 * 1000 * (2 ** Math.min(attempts - 1, 5)), 15 * 60 * 1000);
+    this.failedFiles.set(filename, {
+      attempts,
+      error: err?.message || String(err),
+      nextRetryAt: Date.now() + retryDelay,
+    });
 
-    if (attempts === 1 || attempts % 12 === 0) {
+    if (attempts === 1 || attempts % 6 === 0) {
       console.error(`Error processing event ${filename}:`, err.message);
     }
   }

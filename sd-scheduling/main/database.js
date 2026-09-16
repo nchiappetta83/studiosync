@@ -4,15 +4,17 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const {
   PRIORITY_NONE,
+  PRIORITY_WAIT,
   PRIORITY_CUSTOM,
   buildCustomPriorityLabel,
 } = require('./priority');
 const DB_SCHEMA_VERSION = 13;
 
 class Database {
-  constructor(dbPath) {
+  constructor(dbPath, logger = null) {
     this.dbPath = dbPath;
     this.db = null;
+    this.logger = logger;
   }
 
   initialize() {
@@ -65,7 +67,7 @@ class Database {
   _rebuildUsersTableForVersion8() {
     const backupPath = this._createMigrationBackup('pre-v8-users-rebuild');
     if (backupPath) {
-      console.log(`Database backup created before v8 migration: ${backupPath}`);
+      this.logger?.info('Database backup created before v8 migration', { backupPath });
     }
 
     this.db.pragma('foreign_keys = OFF');
@@ -473,6 +475,49 @@ class Database {
 
   setUpdateFolderPath(folderPath) {
     return this.setGlobalSetting('update_folder_path', folderPath);
+  }
+
+  getPriorityCarryoverTokens() {
+    const rawValue = this.getGlobalSetting('priority_carryover_tokens');
+    if (!rawValue) return null;
+
+    try {
+      const parsed = JSON.parse(rawValue);
+      return Array.isArray(parsed)
+        ? parsed.filter((item) => typeof item === 'string' && item.trim())
+        : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  _getCustomPriorityCarryoverLabels(tokenSet) {
+    if (!tokenSet) return null;
+
+    const labels = new Set();
+    const priorities = this.getCustomPriorities();
+    for (const priority of priorities) {
+      if (tokenSet.has(`custom:${priority.id}`)) {
+        labels.add(buildCustomPriorityLabel(priority.label));
+      }
+    }
+    return labels;
+  }
+
+  _shouldCarryTaskPriority(task, tokenSet, customPriorityLabels) {
+    if (!task) return false;
+    const priority = Number(task.priority);
+
+    if (!tokenSet) {
+      return priority === PRIORITY_CUSTOM;
+    }
+
+    if (priority >= 1) return tokenSet.has('numbered');
+    if (priority === PRIORITY_WAIT) return tokenSet.has('wait');
+    if (priority === PRIORITY_CUSTOM) {
+      return customPriorityLabels?.has(task.priority_label) || false;
+    }
+    return false;
   }
 
   // ── Business Roles ────────────────────────────────────
@@ -1084,20 +1129,16 @@ class Database {
   performWeeklyRollover(weekStr = null) {
     const transaction = this.db.transaction(() => {
       this.db.prepare('DELETE FROM tasks WHERE completed = 1').run();
-      // Move all tasks into carry-over review state for the new week.
-      // Keep due dates only if they land in the new week or later.
-      this.db.prepare(`
+      const carryoverTokens = this.getPriorityCarryoverTokens();
+      const carryoverTokenSet = carryoverTokens ? new Set(carryoverTokens) : null;
+      const customCarryoverLabels = this._getCustomPriorityCarryoverLabels(carryoverTokenSet);
+      const tasks = this.db.prepare('SELECT id, priority, priority_label FROM tasks').all();
+      const updateTask = this.db.prepare(`
         UPDATE tasks
         SET category = 'last_week',
             confirmed = 0,
-            priority = CASE
-              WHEN priority = ${PRIORITY_CUSTOM} THEN priority
-              ELSE ${PRIORITY_NONE}
-            END,
-            priority_label = CASE
-              WHEN priority = ${PRIORITY_CUSTOM} THEN priority_label
-              ELSE NULL
-            END,
+            priority = ?,
+            priority_label = ?,
             completed = 0,
             status = 'not_started',
             due_date = CASE
@@ -1105,7 +1146,23 @@ class Database {
               WHEN ? IS NULL THEN due_date
               ELSE NULL
             END
-      `).run(weekStr, weekStr, weekStr);
+        WHERE id = ?
+      `);
+
+      // Move all tasks into carry-over review state for the new week.
+      // Keep due dates only if they land in the new week or later.
+      for (const task of tasks) {
+        const shouldCarryPriority = this._shouldCarryTaskPriority(task, carryoverTokenSet, customCarryoverLabels);
+        updateTask.run(
+          shouldCarryPriority ? task.priority : PRIORITY_NONE,
+          shouldCarryPriority ? task.priority_label : null,
+          weekStr,
+          weekStr,
+          weekStr,
+          task.id
+        );
+      }
+
       // Clear all PTO dates
       this.db.exec(`DELETE FROM staff_pto_dates`);
     });
@@ -1113,23 +1170,28 @@ class Database {
   }
 
   confirmTask(taskId) {
+    const task = this.getTaskById(taskId);
+    if (!task) return null;
+    const carryoverTokens = this.getPriorityCarryoverTokens();
+    const carryoverTokenSet = carryoverTokens ? new Set(carryoverTokens) : null;
+    const customCarryoverLabels = this._getCustomPriorityCarryoverLabels(carryoverTokenSet);
+    const shouldCarryPriority = this._shouldCarryTaskPriority(task, carryoverTokenSet, customCarryoverLabels);
+
     this.db.prepare(`
       UPDATE tasks
       SET confirmed = 1,
           completed = 0,
-          priority = CASE
-            WHEN priority = ${PRIORITY_CUSTOM} THEN priority
-            ELSE ${PRIORITY_NONE}
-          END,
-          priority_label = CASE
-            WHEN priority = ${PRIORITY_CUSTOM} THEN priority_label
-            ELSE NULL
-          END,
+          priority = ?,
+          priority_label = ?,
           category = 'current',
           created_at = datetime('now'),
           updated_at = datetime('now')
       WHERE id = ?
-    `).run(taskId);
+    `).run(
+      shouldCarryPriority ? task.priority : PRIORITY_NONE,
+      shouldCarryPriority ? task.priority_label : null,
+      taskId
+    );
     return this.getTaskById(taskId);
   }
 
