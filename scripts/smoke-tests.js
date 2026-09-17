@@ -368,8 +368,11 @@ function testMyTasksLayoutGuards() {
   assert.match(appCode, /function renderTaskStatusControl/, 'Task detail panel should have the status control renderer');
   assert.match(appCode, /<button type="button" class="add-task-inline"/, 'Partner inline task creation should remain keyboard accessible');
   assert.match(mainCode, /function getAppIconPath/, 'MyTasks should resolve a packaged external app icon');
+  assert.match(mainCode, /function repairWindowsShortcutIdentity/, 'MyTasks should repair Windows shortcut identity metadata');
+  assert.match(mainCode, /appUserModelId:\s*APP_USER_MODEL_ID/, 'MyTasks shortcuts should match the runtime AppUserModelID');
   assert.match(packageJson, /"extraResources"[\s\S]*studiosync-mytasks\.ico/, 'MyTasks installer should include the icon as an external resource');
   assert.match(installerScript, /resources\\assets\\studiosync-mytasks\.ico/, 'MyTasks desktop shortcut should point directly at the packaged icon');
+  assert.match(installerScript, /WinShell::SetLnkAUMI[\s\S]*\$\{APP_ID\}/, 'MyTasks installer should associate its desktop shortcut with the app identity');
   assert.match(notesWindowCode, /applyStoredThemePreference/, 'Project Notes should inherit the MyTasks theme preference');
   assert.match(appCode, /getVisibleTaskCardsForActiveTab/, 'Task-card keyboard navigation should remain wired');
   assert.match(companionCss, /#view-staff-view[\s\S]*overflow-x:\s*hidden/, 'Staff Overview should guard against horizontal scrolling');

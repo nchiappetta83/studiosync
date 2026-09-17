@@ -487,6 +487,39 @@ function getAppIconPath() {
   return path.join(__dirname, '..', 'assets', 'studiosync-mytasks.ico');
 }
 
+function repairWindowsShortcutIdentity() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+
+  const executablePath = app.getPath('exe');
+  const shortcutPaths = [
+    path.join(app.getPath('desktop'), 'StudioSync MyTasks.lnk'),
+    process.env.APPDATA
+      ? path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'StudioSync MyTasks.lnk')
+      : null,
+    process.env.PROGRAMDATA
+      ? path.join(process.env.PROGRAMDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'StudioSync MyTasks.lnk')
+      : null,
+  ].filter(Boolean);
+
+  for (const shortcutPath of shortcutPaths) {
+    if (!fs.existsSync(shortcutPath)) continue;
+
+    try {
+      const shortcut = shell.readShortcutLink(shortcutPath);
+      if (path.resolve(shortcut.target).toLowerCase() !== path.resolve(executablePath).toLowerCase()) continue;
+
+      shell.writeShortcutLink(shortcutPath, 'update', {
+        ...shortcut,
+        appUserModelId: APP_USER_MODEL_ID,
+        icon: getAppIconPath(),
+        iconIndex: 0,
+      });
+    } catch (error) {
+      logger?.warn('shortcut-identity-repair-failed', { shortcutPath, error: error.message });
+    }
+  }
+}
+
 function getCurrentAppWindowRole() {
   const currentUser = auth?.getCurrentUser?.() || null;
   return currentUser?.role === 'staff' ? 'staff' : 'partner';
@@ -1389,6 +1422,7 @@ if (!gotSingleInstanceLock) {
   app.whenReady().then(async () => {
     logger?.info('app-ready', { pid: process.pid });
     app.setAppUserModelId(APP_USER_MODEL_ID);
+    repairWindowsShortcutIdentity();
     applyLaunchOnStartupPreference(getLaunchOnStartupPreference(), { persist: false });
     registerIPC();
     createTray();

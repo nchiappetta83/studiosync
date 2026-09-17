@@ -11,4 +11,5 @@
 
 !macro customInstall
   CreateShortCut "$DESKTOP\StudioSync MyTasks.lnk" "$INSTDIR\StudioSync MyTasks.exe" "" "$INSTDIR\resources\assets\studiosync-mytasks.ico" 0
+  WinShell::SetLnkAUMI "$DESKTOP\StudioSync MyTasks.lnk" "${APP_ID}"
 !macroend
