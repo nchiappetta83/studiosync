@@ -36,14 +36,23 @@
   }
 
   function getVisibleRepresentativeTasks(tasks, userId, getActionItems, sortTasks) {
-    const visibleTasks = (Array.isArray(tasks) ? tasks : []).filter((task) => {
+    const allTasks = Array.isArray(tasks) ? tasks : [];
+    // A person can have more than one task on the same project.  Collapsing
+    // those into one card made a task disappear based on its due-date sort
+    // order, including an overdue task assigned during a Tuesday meeting.
+    // Keep every directly assigned task visible; only action-item-only work
+    // needs a representative parent task.
+    const directTasks = allTasks.filter((task) => task?.assigned_to === userId);
+    const directTaskThreadKeys = new Set(directTasks.map(getTaskThreadKey));
+    const actionItemTasks = allTasks.filter((task) => {
       if (!task || !userId) return false;
-      if (task.assigned_to === userId) return true;
+      if (task.assigned_to === userId) return false;
+      if (directTaskThreadKeys.has(getTaskThreadKey(task))) return false;
       return (getActionItems(task) || []).some((subtask) => getSubtaskAssigneeIds(subtask).includes(userId));
     });
 
     const tasksByThread = new Map();
-    for (const task of visibleTasks) {
+    for (const task of actionItemTasks) {
       const key = getTaskThreadKey(task);
       if (!tasksByThread.has(key)) {
         tasksByThread.set(key, []);
@@ -51,9 +60,12 @@
       tasksByThread.get(key).push(task);
     }
 
-    return Array.from(tasksByThread.values())
+    const actionItemRepresentatives = Array.from(tasksByThread.values())
       .map((threadTasks) => chooseRepresentativeTaskForUser(threadTasks, userId, sortTasks))
       .filter(Boolean);
+
+    const visibleTasks = [...directTasks, ...actionItemRepresentatives];
+    return typeof sortTasks === 'function' ? sortTasks(visibleTasks) : visibleTasks;
   }
 
   globalScope.MyTasksActionItems = {

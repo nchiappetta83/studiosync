@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld('api', {
   getRuntimeStatus: ()          => ipcRenderer.invoke('get-runtime-status'),
   setWindowMode:    (mode)      => ipcRenderer.invoke('set-window-mode', mode),
   selectFolder:     ()          => ipcRenderer.invoke('select-folder'),
+  getBackupFolderPath: ()       => ipcRenderer.invoke('get-backup-folder-path'),
+  setBackupFolderPath: (path)   => ipcRenderer.invoke('set-backup-folder-path', path),
+  createDashboardBackup: ()     => ipcRenderer.invoke('create-dashboard-backup'),
+  inspectDashboardBackup: (path) => ipcRenderer.invoke('inspect-dashboard-backup', path),
+  restoreDashboardBackup: (path) => ipcRenderer.invoke('restore-dashboard-backup', path),
   initializeApp:    (path)      => ipcRenderer.invoke('initialize-app', path),
   resumeApp:        (path)      => ipcRenderer.invoke('resume-app', path),
 
@@ -56,6 +61,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // Tasks
   getTasks:         (filters)   => ipcRenderer.invoke('get-tasks', filters),
+  getTaskActivity:  (taskId)    => ipcRenderer.invoke('get-task-activity', taskId),
+  getProjectActivity: (projectId) => ipcRenderer.invoke('get-project-activity', projectId),
   createTask:       (data)      => ipcRenderer.invoke('create-task', data),
   updateTask:       (data)      => ipcRenderer.invoke('update-task', data),
   deleteTask:       (id)        => ipcRenderer.invoke('delete-task', id),
@@ -107,6 +114,8 @@ contextBridge.exposeInMainWorld('api', {
   performRollover:  ()          => ipcRenderer.invoke('perform-rollover'),
   initRolloverWeek: ()          => ipcRenderer.invoke('init-rollover-week'),
   consumeRolloverNotice: ()     => ipcRenderer.invoke('consume-rollover-notice'),
+  getRolloverPublicationState: () => ipcRenderer.invoke('get-rollover-publication-state'),
+  publishRolloverChanges: ()    => ipcRenderer.invoke('publish-rollover-changes'),
   confirmTask:      (id)        => ipcRenderer.invoke('confirm-task', id),
 
   // Sync
@@ -115,6 +124,13 @@ contextBridge.exposeInMainWorld('api', {
   writeLog:         (entry)     => ipcRenderer.invoke('write-log', entry),
   getDiagnosticsPath: ()        => ipcRenderer.invoke('get-diagnostics-path'),
   logDiagnostics:   (entry)     => ipcRenderer.invoke('log-diagnostics', entry),
+  openProjectActivityWindow: (projectId) => ipcRenderer.invoke('open-project-activity-window', projectId),
+  getDeviceTrustStatus: () => ipcRenderer.invoke('get-device-trust-status'),
+  getPendingDeviceEnrollments: () => ipcRenderer.invoke('get-pending-device-enrollments'),
+  getTrustedDevices: () => ipcRenderer.invoke('get-trusted-devices'),
+  approveDeviceEnrollment: (deviceId) => ipcRenderer.invoke('approve-device-enrollment', deviceId),
+  revokeTrustedDevice: (deviceId) => ipcRenderer.invoke('revoke-trusted-device', deviceId),
+  setSignedEventEnforcement: (enabled) => ipcRenderer.invoke('set-signed-event-enforcement', enabled),
 
   // Event listeners
   onDataUpdated:    (callback)  => {

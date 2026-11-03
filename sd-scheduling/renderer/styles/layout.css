@@ -7,6 +7,72 @@
   overflow: hidden;
 }
 
+/* Authoritative rollover publication can take a moment on a shared drive. */
+.rollover-publishing-active .app-shell {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.rollover-publishing-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 23, 32, 0.22);
+  backdrop-filter: blur(2px);
+}
+
+.rollover-publishing-overlay.hidden {
+  display: none;
+}
+
+.rollover-publishing-card {
+  width: min(390px, 100%);
+  padding: 31px 34px;
+  text-align: center;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.24);
+}
+
+.rollover-publishing-spinner {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 18px;
+  border: 3px solid rgba(77, 74, 213, 0.22);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: rollover-publishing-spin 0.9s linear infinite;
+}
+
+.rollover-publishing-eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.rollover-publishing-card h2 {
+  margin: 6px 0 8px;
+  font-family: var(--font-display);
+  font-size: 25px;
+}
+
+.rollover-publishing-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+@keyframes rollover-publishing-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ── Setup Screens ─────────────────────────────────────── */
 
 .setup-screen {
@@ -457,6 +523,17 @@ body.window-resizing .projects-panel {
   background: var(--sidebar-hover);
   color: var(--sidebar-text);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.toolbar-btn-publish {
+  background: var(--accent);
+  color: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+}
+
+.toolbar-btn-publish:hover {
+  background: var(--accent-hover);
+  color: #FFFFFF;
 }
 
 /* Filter button badge & active state */

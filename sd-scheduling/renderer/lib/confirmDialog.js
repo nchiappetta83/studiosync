@@ -85,8 +85,63 @@
     return result.confirmed;
   }
 
+  function choose(options = {}) {
+    return new Promise((resolve) => {
+      const existing = document.querySelector('.confirm-dialog-overlay, .choice-dialog-layer');
+      if (existing) {
+        resolve({ confirmed: false, choice: null });
+        return;
+      }
+
+      const title = options.title || 'Choose an option';
+      const message = options.message || '';
+      const secondaryLabel = options.secondaryLabel || 'Keep separate';
+      const primaryLabel = options.primaryLabel || 'Apply to all';
+      const layer = document.createElement('div');
+      layer.className = 'choice-dialog-layer';
+      layer.innerHTML = `
+        <section class="choice-dialog" role="dialog" aria-modal="true" aria-labelledby="choice-dialog-title">
+          <div class="choice-dialog-copy">
+            <h2 id="choice-dialog-title">${escapeHtml(title)}</h2>
+            ${message ? `<p>${escapeHtml(message)}</p>` : ''}
+          </div>
+          <div class="choice-dialog-actions">
+            <button type="button" class="btn btn-ghost choice-dialog-secondary">${escapeHtml(secondaryLabel)}</button>
+            <button type="button" class="btn btn-primary choice-dialog-primary">${escapeHtml(primaryLabel)}</button>
+          </div>
+        </section>
+      `;
+      document.body.appendChild(layer);
+
+      const secondaryBtn = layer.querySelector('.choice-dialog-secondary');
+      const primaryBtn = layer.querySelector('.choice-dialog-primary');
+      let settled = false;
+
+      const cleanup = (choice = null) => {
+        if (settled) return;
+        settled = true;
+        layer.remove();
+        document.removeEventListener('keydown', handleKeydown);
+        resolve({ confirmed: Boolean(choice), choice });
+      };
+
+      const handleKeydown = (event) => {
+        if (event.key === 'Escape') cleanup();
+      };
+
+      secondaryBtn?.addEventListener('click', () => cleanup('single'));
+      primaryBtn?.addEventListener('click', () => cleanup('all'));
+      layer.addEventListener('click', (event) => {
+        if (event.target === layer) cleanup();
+      });
+      document.addEventListener('keydown', handleKeydown);
+      requestAnimationFrame(() => primaryBtn?.focus());
+    });
+  }
+
   globalScope.ConfirmDialog = {
     show,
     showWithCheckbox: showDialog,
+    choose,
   };
 })(window);

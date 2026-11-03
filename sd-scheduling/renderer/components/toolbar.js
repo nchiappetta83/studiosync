@@ -9,6 +9,8 @@ const Toolbar = {
     this._settingsBtn = document.getElementById('btn-settings');
     this._carryoverReviewBtn = document.getElementById('btn-carryover-review');
     this._carryoverReviewCount = document.getElementById('carryover-review-count');
+    this._publishRolloverBtn = document.getElementById('btn-publish-rollover');
+    this._bulkActionsBtn = document.getElementById('btn-bulk-actions');
     this._userBadge = document.getElementById('current-user-badge');
     this._syncIndicator = document.getElementById('sync-indicator');
     this._syncStatusText = document.getElementById('sync-status-text');
@@ -44,12 +46,25 @@ const Toolbar = {
       AppState.set('carryoverReviewMode', !AppState.get('carryoverReviewMode'));
     });
 
+    this._publishRolloverBtn?.addEventListener('click', () => this._publishRolloverChanges());
+    this._bulkActionsBtn?.addEventListener('click', () => this._showBulkActions());
+    document.addEventListener('bulk-selection-changed', (event) => {
+      const count = event.detail?.count || 0;
+      this._bulkActionsBtn?.classList.toggle('hidden', count === 0);
+      if (this._bulkActionsBtn) this._bulkActionsBtn.textContent = `Bulk Actions (${count})`;
+    });
+
     AppState.on('currentUser', () => this._updateUserBadge());
-    AppState.on('tasks', () => this._updateCarryoverReviewButton());
+    AppState.on('tasks', () => {
+      this._updateCarryoverReviewButton();
+      this._updateRolloverPublishButton();
+    });
     AppState.on('selectedPartnerId', () => this._updateCarryoverReviewButton());
+    AppState.on('selectedStaffId', () => this._updateCarryoverReviewButton());
     AppState.on('carryoverReviewMode', () => this._updateCarryoverReviewButton());
     this._updateUserBadge();
     this._updateCarryoverReviewButton();
+    this._updateRolloverPublishButton();
     this._bindRuntimeStatus();
   },
 
@@ -66,13 +81,49 @@ const Toolbar = {
     name.textContent = user.display_name;
   },
 
+  _showBulkActions() {
+    const ids = window.TaskPanel?.getBulkTaskIds?.() || [];
+    if (!ids.length) return;
+    const users = (AppState.get('users') || []).filter((user) => user.role !== 'partner' && user.active !== 0);
+    const escape = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay';
+    overlay.innerHTML = `<div class="dialog"><div class="dialog-header"><div class="dialog-title">Bulk Actions</div><div class="dialog-subtitle">Update ${ids.length} selected task${ids.length === 1 ? '' : 's'}</div></div><div class="dialog-body"><div class="form-group"><label>Assign to</label><select class="select" id="bulk-assignee"><option value="">Leave unchanged</option>${users.map((user) => `<option value="${escape(user.id)}">${escape(user.display_name)}</option>`).join('')}</select></div><div class="form-group"><label>Due date</label><input class="input" id="bulk-due-date" type="date"></div><div class="form-group"><label>Priority</label><select class="select" id="bulk-priority"><option value="">Leave unchanged</option><option value="0">Clear</option>${[1,2,3,4,5,6,7,8,9,10].map((value) => `<option value="${value}">${value}</option>`).join('')}</select></div></div><div class="dialog-footer"><button class="btn btn-ghost" type="button" data-bulk-cancel>Cancel</button><button class="btn btn-primary" type="button" data-bulk-apply>Apply Changes</button></div></div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('[data-bulk-cancel]').addEventListener('click', () => overlay.remove());
+    overlay.querySelector('[data-bulk-apply]').addEventListener('click', async () => {
+      const assignee = overlay.querySelector('#bulk-assignee').value;
+      const dueDate = overlay.querySelector('#bulk-due-date').value;
+      const priority = overlay.querySelector('#bulk-priority').value;
+      const changes = {};
+      if (assignee) changes.assigned_to = assignee;
+      if (dueDate) changes.due_date = dueDate;
+      if (priority !== '') { changes.priority = Number(priority); changes.priority_label = null; }
+      if (!Object.keys(changes).length) { overlay.remove(); return; }
+      const button = overlay.querySelector('[data-bulk-apply]');
+      button.disabled = true;
+      await Promise.all(ids.map((id) => window.api.updateTask({ id, ...changes })));
+      overlay.remove();
+      window.TaskPanel.clearBulkSelection();
+      await AppState.refresh();
+      Toast.show(`Updated ${ids.length} task${ids.length === 1 ? '' : 's'}`, 'success');
+    });
+  },
+
   _getCarryoverTasks() {
     const tasks = AppState.get('tasks') || [];
     const selectedPartnerId = AppState.get('selectedPartnerId');
+    const selectedStaffId = AppState.get('selectedStaffId');
+    const visibleStaffIds = new Set((AppState.get('users') || [])
+      .filter((user) => user.role !== 'partner' && (user.active !== 0 || AppState.getTaskCountForUser(user.id) > 0))
+      .map((user) => user.id));
+
     return tasks.filter((task) => {
       if ((task.confirmed ?? 1) !== 0) return false;
-      if (!selectedPartnerId) return true;
-      return AppState._matchesSelectedPartner(task, selectedPartnerId);
+      if (!visibleStaffIds.has(task.assigned_to)) return false;
+      if (selectedPartnerId && !AppState._matchesSelectedPartner(task, selectedPartnerId)) return false;
+      if (Array.isArray(selectedStaffId)) return selectedStaffId.includes(task.assigned_to);
+      return selectedStaffId === 'all' || task.assigned_to === selectedStaffId;
     });
   },
 
@@ -89,6 +140,63 @@ const Toolbar = {
     if (count === 0 && isActive) {
       AppState.set('carryoverReviewMode', false);
     }
+  },
+
+  async _updateRolloverPublishButton() {
+    if (!this._publishRolloverBtn) return;
+    const state = await window.api.getRolloverPublicationState();
+    const visible = state?.active && state?.hasUnpublishedChanges;
+    this._publishRolloverBtn.classList.toggle('hidden', !visible);
+    this._publishRolloverBtn.title = state?.notReviewedCount > 0
+      ? `Publish changes; ${state.notReviewedCount} task${state.notReviewedCount === 1 ? '' : 's'} will remain Not Reviewed`
+      : 'Publish scheduling changes to MyTasks';
+  },
+
+  async _publishRolloverChanges() {
+    const state = await window.api.getRolloverPublicationState();
+    if (!state?.hasUnpublishedChanges) return;
+
+    const confirmed = await ConfirmDialog.show({
+      title: state.published ? 'Publish scheduling changes?' : 'Publish weekly schedule?',
+      message: state.notReviewedCount > 0
+        ? `${state.notReviewedCount} task${state.notReviewedCount === 1 ? '' : 's'} will remain marked Not Reviewed in MyTasks.`
+        : 'MyTasks will receive these scheduling changes in one update.',
+      confirmLabel: 'Publish Changes',
+    });
+    if (!confirmed) return;
+
+    this._setPublishingState(true);
+    // Give the overlay a paint before the main process performs synchronous
+    // shared-drive writes. This keeps the app visibly responsive on slow
+    // network folders.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      const result = await window.api.publishRolloverChanges();
+      if (result?.published) {
+        const taskLabel = `${result.taskCount || 0} task${result.taskCount === 1 ? '' : 's'}`;
+        const deletedLabel = result.deletedCount ? `, ${result.deletedCount} removed` : '';
+        const reviewLabel = result.notReviewedCount
+          ? `, ${result.notReviewedCount} Not Reviewed`
+          : '';
+        Toast.show(`Published ${taskLabel}${deletedLabel}${reviewLabel}`, result.compatibilityPending ? 'warning' : 'success');
+      } else {
+        Toast.show(result?.error || 'Scheduling changes could not be published', 'error');
+      }
+    } finally {
+      this._setPublishingState(false);
+      await this._updateRolloverPublishButton();
+    }
+  },
+
+  _setPublishingState(active) {
+    document.body.classList.toggle('rollover-publishing-active', active);
+    const overlay = document.getElementById('rollover-publishing-overlay');
+    if (overlay) {
+      overlay.classList.toggle('hidden', !active);
+      overlay.setAttribute('aria-hidden', active ? 'false' : 'true');
+    }
+    if (this._publishRolloverBtn) this._publishRolloverBtn.disabled = active;
   },
 
   async _bindRuntimeStatus() {
@@ -141,6 +249,10 @@ const Toolbar = {
 
     if (status?.sharedDrivePath) {
       items.push({ type: 'label', label: status.sharedDrivePath });
+    }
+
+    if ((status?.syncOutbox?.pending || 0) > 0) {
+      items.push({ type: 'label', label: `${status.syncOutbox.pending} local change${status.syncOutbox.pending === 1 ? '' : 's'} waiting to publish` });
     }
 
     items.push({

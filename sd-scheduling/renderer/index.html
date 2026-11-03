@@ -44,6 +44,15 @@
     </div>
   </div>
 
+  <div id="rollover-publishing-overlay" class="rollover-publishing-overlay hidden" role="status" aria-live="assertive" aria-hidden="true">
+    <div class="rollover-publishing-card">
+      <div class="rollover-publishing-spinner" aria-hidden="true"></div>
+      <div class="rollover-publishing-eyebrow">StudioSync Dashboard</div>
+      <h2>Publishing schedule</h2>
+      <p>Sending the weekly schedule to MyTasks. Please keep Dashboard open.</p>
+    </div>
+  </div>
+
   <!-- User Registration Screen (when user not found in DB) -->
   <div id="register-screen" class="setup-screen hidden">
     <div class="window-controls window-controls-floating" aria-label="Window Controls">
@@ -143,6 +152,7 @@
         </div>
       </div>
       <div class="toolbar-right">
+        <button id="btn-bulk-actions" class="toolbar-btn partner-only hidden" type="button" title="Update selected tasks">Bulk Actions</button>
         <button id="btn-carryover-review" class="toolbar-btn toolbar-btn-filter partner-only hidden" type="button" title="Review carried-over tasks" aria-pressed="false">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 12a9 9 0 1 0 3-6.7"></path>
@@ -151,6 +161,13 @@
           </svg>
           Carryover
           <span id="carryover-review-count" class="toolbar-btn-count">0</span>
+        </button>
+        <button id="btn-publish-rollover" class="toolbar-btn toolbar-btn-publish partner-only hidden" type="button" title="Publish scheduling changes to MyTasks">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 2 11 13"></path>
+            <path d="m22 2-7 20-4-9-9-4Z"></path>
+          </svg>
+          Publish Changes
         </button>
         <button id="btn-print" class="toolbar-btn partner-only">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

@@ -13,6 +13,7 @@ const UpdateManager = require('./updateManager');
 const { createLogger } = require('./logger');
 
 let mainWindow = null;
+const projectActivityWindows = new Map();
 let db = null;
 let sync = null;
 let auth = null;
@@ -27,6 +28,10 @@ let startupInitPromise = null;
 let startupInitPath = null;
 let pendingStartupRolloverNotice = null;
 let logger = null;
+let allowWindowClose = false;
+let rolloverClosePromptOpen = false;
+let backupCloseInProgress = false;
+let backupCloseComplete = false;
 let runtimeStatus = {
   lastSyncAt: null,
   lastExcelWriteAt: null,
@@ -36,10 +41,14 @@ let runtimeStatus = {
 
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
+const ROLLOVER_PUBLISH_STATE_KEY = 'rollover_publish_state';
 
 const WINDOW_MODES = {
   auth: { width: 500, height: 600, minWidth: 500, minHeight: 560 },
-  main: { width: 1400, height: 900, minWidth: 1100, minHeight: 700 }
+  // minWidth must cover sidebar (240px) + tasks-panel min-width (500px) + panel-resizer
+  // (1px) + projects-panel min-width (380px) = 1121px, or the projects panel gets
+  // silently clipped by the shell's overflow:hidden at the window's minimum size.
+  main: { width: 1400, height: 900, minWidth: 1140, minHeight: 700 }
 };
 
 // ── Runtime Data Directory ───────────────────────────────
@@ -420,7 +429,97 @@ function getLocalDbPath() {
   return path.join(APP_DATA_DIR, 'local.db');
 }
 
+function getBackupFolderPath() {
+  return loadConfig()?.backupFolderPath || null;
+}
+
+function copyBackupDirectory(source, destination, copied) {
+  if (!source || !fs.existsSync(source)) return;
+  fs.mkdirSync(destination, { recursive: true });
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const sourcePath = path.join(source, entry.name);
+    const destinationPath = path.join(destination, entry.name);
+    if (entry.isDirectory()) copyBackupDirectory(sourcePath, destinationPath, copied);
+    else if (entry.isFile()) {
+      fs.copyFileSync(sourcePath, destinationPath);
+      copied.push(destinationPath);
+    }
+  }
+}
+
+async function createDashboardBackup({ includeSyncHistory = true } = {}) {
+  const backupFolderPath = getBackupFolderPath();
+  if (!backupFolderPath) throw new Error('Choose a backup folder in Settings first.');
+  fs.mkdirSync(backupFolderPath, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const target = path.join(backupFolderPath, `StudioSync-backup-${stamp}`);
+  fs.mkdirSync(target, { recursive: true });
+  const copied = [];
+  if (db) {
+    const databasePath = path.join(target, 'dashboard.sqlite');
+    await db.backupTo(databasePath);
+    copied.push(databasePath);
+  }
+  // The local SQLite database is the Dashboard's authoritative working copy.
+  // A manual backup also preserves the shared event/snapshot history, but the
+  // close-time safety snapshot must not copy an ever-growing shared folder.
+  for (const [name, source] of [['projects.xlsx', getExcelPath()], ['config.json', getConfigPath()], ['device-identity.json', path.join(APP_DATA_DIR, 'device-identity.json')]]) {
+    if (source && fs.existsSync(source)) {
+      const destination = path.join(target, name);
+      fs.copyFileSync(source, destination);
+      copied.push(destination);
+    }
+  }
+  if (includeSyncHistory && sync?.sharedDrivePath) {
+    copyBackupDirectory(path.join(sync.sharedDrivePath, 'events'), path.join(target, 'sync-events'), copied);
+    copyBackupDirectory(path.join(sync.sharedDrivePath, 'snapshots'), path.join(target, 'sync-snapshots'), copied);
+  }
+  fs.writeFileSync(path.join(target, 'manifest.json'), JSON.stringify({
+    createdAt: new Date().toISOString(),
+    contents: {
+      database: fs.existsSync(path.join(target, 'dashboard.sqlite')),
+      excel: fs.existsSync(path.join(target, 'projects.xlsx')),
+      syncEvents: includeSyncHistory && fs.existsSync(path.join(target, 'sync-events')),
+      syncSnapshots: includeSyncHistory && fs.existsSync(path.join(target, 'sync-snapshots')),
+      deviceIdentity: fs.existsSync(path.join(target, 'device-identity.json')),
+    },
+    files: copied.map((file) => path.relative(target, file)),
+  }, null, 2));
+  return { folder: target, files: copied, includesSyncHistory: includeSyncHistory };
+}
+
+function inspectBackupFolder(backupPath) {
+  const resolvedPath = path.resolve(String(backupPath || ''));
+  const manifestPath = path.join(resolvedPath, 'manifest.json');
+  const databasePath = path.join(resolvedPath, 'dashboard.sqlite');
+  if (!fs.existsSync(manifestPath) || !fs.existsSync(databasePath)) throw new Error('Select a StudioSync project-data backup folder.');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+  return { folder: resolvedPath, manifest, hasExcel: fs.existsSync(path.join(resolvedPath, 'projects.xlsx')) };
+}
+
+async function restoreDashboardBackup(backupPath) {
+  const backup = inspectBackupFolder(backupPath);
+  // Never replace the current data without first preserving it.
+  await createDashboardBackup();
+  const config = loadConfig() || {};
+  const excelTarget = config.excelPath || path.join(APP_DATA_DIR, 'projects.xlsx');
+  closeRuntime();
+  fs.copyFileSync(path.join(backup.folder, 'dashboard.sqlite'), getLocalDbPath());
+  if (backup.hasExcel) {
+    fs.copyFileSync(path.join(backup.folder, 'projects.xlsx'), excelTarget);
+    saveConfig({ ...config, excelPath: excelTarget });
+  }
+  const deviceIdentityBackup = path.join(backup.folder, 'device-identity.json');
+  if (fs.existsSync(deviceIdentityBackup)) {
+    fs.copyFileSync(deviceIdentityBackup, path.join(APP_DATA_DIR, 'device-identity.json'));
+  }
+  app.relaunch();
+  app.exit(0);
+  return { restored: true };
+}
+
 function closeRuntime() {
+  const startedAt = Date.now();
   if (updateManager) {
     updateManager.stop();
   }
@@ -433,6 +532,7 @@ function closeRuntime() {
     db = null;
   }
   excelSync = null;
+  appendInputDiagnostics({ scope: 'main', type: 'runtime-closed', durationMs: Date.now() - startedAt });
   excelWriteQueue = Promise.resolve();
   auth = null;
   runtimeStatus.lastSyncAt = null;
@@ -492,6 +592,11 @@ function notifyDataChanged(reason = 'unknown', meta = {}) {
       at: Date.now(),
       ...meta,
     });
+  }
+  for (const activityWindow of projectActivityWindows.values()) {
+    if (!activityWindow.isDestroyed()) {
+      activityWindow.webContents.send('data-updated', { reason, at: Date.now(), ...meta });
+    }
   }
   scheduleAutoExport();
 }
@@ -672,6 +777,7 @@ function getRuntimeStatus() {
     updateFolderPath,
     updateFolderReachable: updateFolderPath ? fs.existsSync(updateFolderPath) : false,
     lastSyncAt: runtimeStatus.lastSyncAt,
+    syncOutbox: sync?.getOutboxSummary?.() || { pending: 0, attempts: 0, lastError: null, oldestQueuedAt: null },
     lastExcelWriteAt: runtimeStatus.lastExcelWriteAt,
     lastExcelWriteError: runtimeStatus.lastExcelWriteError,
     updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
@@ -748,6 +854,162 @@ function getPreviousWeekStartString(weekStr = getCurrentWeekStartString()) {
   return getCurrentWeekStartString(currentWeek);
 }
 
+function getRolloverPublishState() {
+  if (!db) return null;
+  const raw = db.getGlobalSetting(ROLLOVER_PUBLISH_STATE_KEY);
+  if (!raw) return null;
+  try {
+    const state = JSON.parse(raw);
+    return state && typeof state === 'object' ? state : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveRolloverPublishState(state) {
+  if (!db) return null;
+  return db.setGlobalSetting(ROLLOVER_PUBLISH_STATE_KEY, state ? JSON.stringify(state) : null);
+}
+
+function getRolloverPublicationSummary() {
+  const state = getRolloverPublishState();
+  const currentWeek = getCurrentWeekStartString();
+  const active = Boolean(state && state.week === currentWeek);
+  const notReviewedCount = active
+    ? db.getTasks().filter((task) => (task.confirmed ?? 1) === 0).length
+    : 0;
+  return {
+    active,
+    week: active ? state.week : null,
+    published: active && state.published === true,
+    hasUnpublishedChanges: active && state.hasUnpublishedChanges === true,
+    pendingCount: active ? new Set(state.pendingTaskIds || []).size + new Set(state.deletedTaskIds || []).size : 0,
+    notReviewedCount,
+  };
+}
+
+function stageRolloverTaskChange(taskId, { deleted = false } = {}) {
+  const state = getRolloverPublishState();
+  if (!state || state.week !== getCurrentWeekStartString()) return false;
+
+  const pendingTaskIds = new Set(state.pendingTaskIds || []);
+  const deletedTaskIds = new Set(state.deletedTaskIds || []);
+  if (deleted) {
+    pendingTaskIds.delete(taskId);
+    deletedTaskIds.add(taskId);
+  } else {
+    deletedTaskIds.delete(taskId);
+    pendingTaskIds.add(taskId);
+  }
+
+  saveRolloverPublishState({
+    ...state,
+    // A later edit is a distinct publication.  Never reuse the ID of an
+    // already applied batch for different task contents.
+    publicationId: state.published === true ? null : state.publicationId,
+    pendingTaskIds: [...pendingTaskIds],
+    deletedTaskIds: [...deletedTaskIds],
+    hasUnpublishedChanges: true,
+  });
+  return true;
+}
+
+function shouldStageRolloverTask(task, { created = false } = {}) {
+  const state = getRolloverPublishState();
+  if (!state || state.week !== getCurrentWeekStartString()) return false;
+  if (state.published !== true) return true;
+  if (created) return false;
+  return (task?.confirmed ?? 1) === 0;
+}
+
+function publishRolloverChanges() {
+  const state = getRolloverPublishState();
+  if (!db || !sync || !state || state.week !== getCurrentWeekStartString() || (!state.hasUnpublishedChanges && !state.compatibilityPending)) {
+    return { published: false, ...getRolloverPublicationSummary() };
+  }
+
+  const initial = state.published !== true;
+  const currentTasks = db.getTasks();
+  const currentTaskIds = new Set(currentTasks.map((task) => task.id));
+  const deletedTaskIds = new Set(state.deletedTaskIds || []);
+  if (initial) {
+    for (const taskId of state.originalTaskIds || []) {
+      if (!currentTaskIds.has(taskId)) deletedTaskIds.add(taskId);
+    }
+  }
+
+  const pendingTaskIds = new Set(state.pendingTaskIds || []);
+  // A receiver must never infer its own rollover scope; the publication
+  // names every task it carries.  The initial publication covers the IDs
+  // captured before the local rollover began plus every task staged since
+  // (including tasks created during the meeting), because staged changes are
+  // withheld from MyTasks until this batch is written.
+  const originalTaskIds = new Set(state.originalTaskIds || []);
+  const tasks = initial
+    ? currentTasks.filter((task) => originalTaskIds.has(task.id) || pendingTaskIds.has(task.id))
+    : currentTasks.filter((task) => pendingTaskIds.has(task.id));
+
+  const publicationId = state.publicationId || crypto.randomUUID();
+  // Preserve this timestamp across retries so compatibility events cannot
+  // accidentally win over a task edited after the original publication.
+  const publishedAt = state.publishedAt || new Date().toISOString();
+  // Persist the intent first. If the process dies after the shared-folder
+  // write, the same ID is retried and receivers safely de-duplicate it.
+  saveRolloverPublishState({ ...state, publicationId, publishedAt });
+
+  const publicationWritten = state.compatibilityPending || sync.pushEvent('rollover-published', {
+    protocolVersion: 2,
+    publicationId,
+    week: state.week,
+    tasks,
+    deletedTaskIds: [...deletedTaskIds],
+    baseTaskUpdatedAt: state.baseTaskUpdatedAt || {},
+    publishedAt,
+    clearPTO: initial,
+  });
+  if (!publicationWritten) {
+    return {
+      published: false,
+      error: 'The scheduling changes could not be written to the shared folder.',
+      ...getRolloverPublicationSummary(),
+    };
+  }
+
+  const publishedState = {
+    ...state,
+    publicationId,
+    publishedAt,
+    published: true,
+    hasUnpublishedChanges: false,
+    pendingTaskIds: [],
+    deletedTaskIds: [],
+    lastPublishedAt: new Date().toISOString(),
+    compatibilityPending: true,
+  };
+  // Compatibility delivery is intentionally best effort: it must not make a
+  // successfully written authoritative batch retryable.
+  const compatibilityWritten = [
+    ...tasks.map((task) => sync.pushEvent('task-updated', { ...task, rolloverPublicationId: publicationId })),
+    ...[...deletedTaskIds].map((id) => sync.pushEvent('task-deleted', {
+      id,
+      deleted_at: publishedAt,
+      rolloverPublicationId: publicationId,
+    })),
+    ...(initial ? (state.originalPtoUserIds || []).map((userId) => sync.pushEvent('pto-cleared', { user_id: userId, rolloverPublicationId: publicationId })) : []),
+  ].every(Boolean);
+  saveRolloverPublishState({ ...publishedState, compatibilityPending: !compatibilityWritten });
+  markSyncActivity();
+
+  return {
+    published: true,
+    initial,
+    taskCount: tasks.length,
+    deletedCount: deletedTaskIds.size,
+    compatibilityPending: !compatibilityWritten,
+    ...getRolloverPublicationSummary(),
+  };
+}
+
 function hasSharedWeeklyRolloverEvent(weekStr) {
   if (!sync?.eventsDir || !weekStr || !fs.existsSync(sync.eventsDir)) {
     return false;
@@ -755,14 +1017,14 @@ function hasSharedWeeklyRolloverEvent(weekStr) {
 
   try {
     const files = fs.readdirSync(sync.eventsDir)
-      .filter((file) => file.endsWith('.json') && file.includes('_weekly-rollover_'))
+      .filter((file) => file.endsWith('.json') && (file.includes('_weekly-rollover_') || file.includes('_rollover-published_')))
       .sort()
       .reverse();
 
     for (const file of files) {
       const filePath = path.join(sync.eventsDir, file);
       const event = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      if (event?.type === 'weekly-rollover' && event?.data?.week === weekStr) {
+      if ((event?.type === 'weekly-rollover' || event?.type === 'rollover-published') && event?.data?.week === weekStr) {
         return true;
       }
     }
@@ -798,9 +1060,11 @@ function getWeeklyRolloverState() {
   }
 
   const sharedRolloverRecorded = hasSharedWeeklyRolloverEvent(currentWeek);
+  const localRolloverStaged = getRolloverPublishState()?.week === currentWeek;
   const recoveryNeeded = (
     lastWeek === currentWeek
     && !sharedRolloverRecorded
+    && !localRolloverStaged
     && db.hasTasksOlderThanWeek(currentWeek)
   );
 
@@ -819,17 +1083,34 @@ function performWeeklyRollover({ force = false, source = 'manual' } = {}) {
   if (!db) return { applied: false, source, ...state };
   if (!force && !state.needed) return { applied: false, source, ...state };
 
+  const originalTasks = db.getTasks();
+  const originalTaskIds = originalTasks.map((task) => task.id);
+  const baseTaskUpdatedAt = Object.fromEntries(originalTasks.map((task) => [task.id, task.updated_at]));
+  const originalPtoUserIds = db.getPTO().map((pto) => pto.user_id);
   db.performWeeklyRollover(state.currentWeek);
   db.setLastRolloverWeek(state.currentWeek);
-  db.optimizeStorage({ vacuum: true });
-
+  saveRolloverPublishState({
+    week: state.currentWeek,
+    published: false,
+    hasUnpublishedChanges: true,
+    originalTaskIds,
+    baseTaskUpdatedAt,
+    originalPtoUserIds,
+    publicationId: null,
+    pendingTaskIds: originalTaskIds,
+    deletedTaskIds: [],
+    startedAt: new Date().toISOString(),
+  });
+  // Let MyTasks know that the scheduling meeting is in progress before any
+  // task rows are published.  It will keep the prior schedule read-only until
+  // the authoritative publication closes the review.
   if (sync) {
-    sync.pushEvent('weekly-rollover', { week: state.currentWeek });
-    sync.pushEvent('setting-updated', {
-      key: 'rollover_week',
-      value: state.currentWeek,
+    sync.pushEvent('rollover-review-started', {
+      week: state.currentWeek,
+      startedAt: new Date().toISOString(),
     });
   }
+  db.optimizeStorage({ vacuum: true });
 
   const result = {
     applied: true,
@@ -945,6 +1226,10 @@ async function runStartupExcelRefresh(config) {
     const importer = new ExcelImport(db);
     const result = await importer.import(config.excelPath);
     if (result.imported > 0 || result.updated > 0) {
+      if (sync) {
+        for (const project of result.createdProjects || []) sync.pushEvent('project-created', project);
+        for (const project of result.updatedProjects || []) sync.pushEvent('project-updated', project);
+      }
       logger?.info('Excel auto-refresh completed', {
         imported: result.imported,
         updated: result.updated,
@@ -960,6 +1245,7 @@ async function runStartupExcelRefresh(config) {
 }
 
 async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = false } = {}) {
+  const startedAt = Date.now();
   const normalizedPath = normalizeFsPath(resolvedSharedPath);
 
   if (db && auth && sync && normalizeFsPath(sync.sharedDrivePath) === normalizedPath) {
@@ -996,11 +1282,12 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
     excelSync = new ExcelSync(db);
     auth = new Auth(db);
 
-    sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'scheduling', logger);
+    sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'scheduling', logger, { appDataDir: APP_DATA_DIR });
     const originalPushEvent = sync.pushEvent.bind(sync);
     sync.pushEvent = (type, data) => {
       const result = originalPushEvent(type, data);
-      markSyncActivity();
+      if (result) markSyncActivity();
+      else emitRuntimeStatus();
       return result;
     };
     const initialEvents = sync.initialize();
@@ -1036,6 +1323,7 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
       await runStartupExcelRefresh(config);
     }
 
+    appendInputDiagnostics({ scope: 'main', type: 'runtime-initialized', durationMs: Date.now() - startedAt, runExcelRefresh });
     return { user: null };
   })();
 
@@ -1045,6 +1333,31 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
     startupInitPromise = null;
     startupInitPath = null;
   }
+}
+
+function openProjectActivityWindow(projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) return false;
+  const existing = projectActivityWindows.get(id);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return true;
+  }
+
+  const activityWindow = new BrowserWindow({
+    width: 760, height: 680, minWidth: 560, minHeight: 440,
+    title: 'Project Activity', autoHideMenuBar: true,
+    parent: mainWindow || undefined,
+    icon: path.join(__dirname, '..', 'assets', 'studiosync-main.ico'),
+    backgroundColor: '#F7F9FB',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  projectActivityWindows.set(id, activityWindow);
+  activityWindow.loadFile(path.join(__dirname, '..', 'renderer', 'project-activity.html'), { query: { projectId: id } });
+  activityWindow.on('closed', () => projectActivityWindows.delete(id));
+  return true;
 }
 
 function createWindow() {
@@ -1106,6 +1419,72 @@ function createWindow() {
     showWindow();
   }, 1500);
 
+  mainWindow.on('close', async (event) => {
+    const publication = getRolloverPublicationSummary();
+    if (allowWindowClose || !publication.hasUnpublishedChanges) return;
+
+    event.preventDefault();
+    if (rolloverClosePromptOpen) return;
+    rolloverClosePromptOpen = true;
+
+    try {
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        title: 'Unpublished scheduling changes',
+        message: 'Publish scheduling changes before closing?',
+        detail: publication.notReviewedCount > 0
+          ? `${publication.notReviewedCount} task${publication.notReviewedCount === 1 ? '' : 's'} will remain marked Not Reviewed.`
+          : 'MyTasks will receive the finalized scheduling changes in one update.',
+        buttons: ['Publish Changes & Close', 'Save Without Publishing', 'Continue Editing'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+      });
+
+      const publicationResult = result.response === 0 ? publishRolloverChanges() : null;
+      if ((result.response === 0 && publicationResult?.published) || result.response === 1) {
+        allowWindowClose = true;
+        mainWindow?.close();
+      }
+    } finally {
+      rolloverClosePromptOpen = false;
+    }
+  });
+
+  mainWindow.on('close', async (event) => {
+    const config = loadConfig() || {};
+    if (event.defaultPrevented || !config.backupOnClose || backupCloseComplete) return;
+    event.preventDefault();
+    if (backupCloseInProgress) return;
+    backupCloseInProgress = true;
+    const backupStartedAt = Date.now();
+    appendInputDiagnostics({ scope: 'main', type: 'backup-on-close-started' });
+    try {
+      await createDashboardBackup({ includeSyncHistory: false });
+      appendInputDiagnostics({ scope: 'main', type: 'backup-on-close-completed', durationMs: Date.now() - backupStartedAt });
+      backupCloseComplete = true;
+      mainWindow?.close();
+    } catch (error) {
+      appendInputDiagnostics({ scope: 'main', type: 'backup-on-close-failed', durationMs: Date.now() - backupStartedAt, message: error.message });
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'Dashboard backup failed',
+        message: 'The Dashboard could not be backed up before closing.',
+        detail: error.message,
+        buttons: ['Close Without Backup', 'Keep App Open'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (result.response === 0) {
+        backupCloseComplete = true;
+        mainWindow?.close();
+      }
+    } finally {
+      backupCloseInProgress = false;
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -1119,6 +1498,24 @@ function createWindow() {
 // ── IPC Handlers ──────────────────────────────────────────
 
 function registerIPC() {
+  const recordTaskActivity = (taskOrId, action, details = {}) => {
+    const task = typeof taskOrId === 'object' ? taskOrId : db?.getTaskById(taskOrId);
+    const taskId = task?.id || taskOrId;
+    if (!db || !taskId) return null;
+    const activity = db.addTaskActivity({
+      task_id: taskId, project_id: task?.project_id || null,
+      action,
+      actor_id: auth?.getCurrentUser()?.id || null,
+      details,
+    });
+    if (activity && sync) sync.pushEvent('task-activity-added', activity);
+    if (activity) {
+      for (const activityWindow of projectActivityWindows.values()) {
+        if (!activityWindow.isDestroyed()) activityWindow.webContents.send('data-updated', { reason: 'task-activity-added', at: Date.now() });
+      }
+    }
+    return activity;
+  };
   ipcMain.handle('get-log-paths', () => logger?.getLogPaths() || null);
   ipcMain.handle('write-log', (_e, entry) => {
     const level = String(entry?.level || 'info').toLowerCase();
@@ -1139,6 +1536,27 @@ function registerIPC() {
       ...(entry && typeof entry === 'object' ? entry : { message: String(entry || '') }),
     });
     return true;
+  });
+  ipcMain.handle('open-project-activity-window', (_e, projectId) => openProjectActivityWindow(projectId));
+  ipcMain.handle('get-device-trust-status', () => sync?.getDeviceTrustStatus?.() || null);
+  ipcMain.handle('get-pending-device-enrollments', () => {
+    if (!auth?.isAdmin?.()) return [];
+    return sync?.deviceTrust?.getPendingEnrollments?.() || [];
+  });
+  ipcMain.handle('get-trusted-devices', () => auth?.isAdmin?.() ? (sync?.deviceTrust?.getTrustedDevices?.() || []) : []);
+  ipcMain.handle('approve-device-enrollment', (_e, deviceId) => {
+    if (!auth?.isAdmin?.()) throw new Error('Only a partner can approve trusted devices.');
+    const request = (sync?.deviceTrust?.getPendingEnrollments?.() || []).find((item) => item.deviceId === deviceId);
+    if (!request || !db.getUserById(request.userId)) throw new Error('The enrollment request is no longer valid.');
+    return sync.deviceTrust.approveEnrollment(deviceId);
+  });
+  ipcMain.handle('revoke-trusted-device', (_e, deviceId) => {
+    if (!auth?.isAdmin?.()) throw new Error('Only a partner can revoke trusted devices.');
+    return sync?.deviceTrust?.revokeDevice(deviceId) || false;
+  });
+  ipcMain.handle('set-signed-event-enforcement', (_e, enabled) => {
+    if (!auth?.isAdmin?.()) throw new Error('Only a partner can change the trusted-device policy.');
+    return sync?.deviceTrust?.setEnforcement(enabled) || false;
   });
 
   // Config
@@ -1202,6 +1620,18 @@ function registerIPC() {
     if (result.canceled) return null;
     return result.filePaths[0];
   });
+
+  ipcMain.handle('get-backup-folder-path', () => getBackupFolderPath());
+  ipcMain.handle('set-backup-folder-path', (_e, backupFolderPath) => {
+    const config = loadConfig() || {};
+    if (backupFolderPath) config.backupFolderPath = String(backupFolderPath);
+    else delete config.backupFolderPath;
+    saveConfig(config);
+    return getBackupFolderPath();
+  });
+  ipcMain.handle('create-dashboard-backup', async () => createDashboardBackup());
+  ipcMain.handle('inspect-dashboard-backup', (_e, backupPath) => inspectBackupFolder(backupPath));
+  ipcMain.handle('restore-dashboard-backup', async (_e, backupPath) => restoreDashboardBackup(backupPath));
 
   ipcMain.handle('window-minimize', () => {
     if (!mainWindow) return false;
@@ -1315,12 +1745,12 @@ function registerIPC() {
 
   ipcMain.handle('login', (_e, username) => {
     if (!auth || !db) return null;
-    auth.setUsername(username);
-    if (sync) sync.setUsername(username);
+    auth.setUsername(username); // Auth ignores renderer input and binds the Windows account.
     const user = auth.getCurrentUser();
     if (user) {
+      if (sync) sync.setActor(user);
       const config = loadConfig() || {};
-      config.loggedInUsername = username;
+      config.loggedInUsername = user.username;
       saveConfig(config);
       refreshLockMetadata();
       runtimeStatus.startupIssue = null;
@@ -1389,12 +1819,21 @@ function registerIPC() {
         }
         for (const task of openTasks) {
           const updatedTask = db.updateTask({ id: task.id, assigned_to: reassignTo });
-          if (sync) sync.pushEvent('task-updated', updatedTask);
+          if (shouldStageRolloverTask(task)) stageRolloverTaskChange(task.id);
+          else if (sync) sync.pushEvent('task-updated', updatedTask);
         }
       } else if (taskAction === 'delete') {
         for (const task of openTasks) {
+          const tombstone = db.recordTaskDeletion(task.id);
           db.deleteTask(task.id);
-          if (sync) sync.pushEvent('task-deleted', { id: task.id });
+          if (shouldStageRolloverTask(task)) stageRolloverTaskChange(task.id, { deleted: true });
+          else if (sync) sync.pushEvent('task-deleted', {
+            id: task.id,
+            deleted_at: tombstone.deleted_at,
+            title: task.title || '',
+            assigned_to: task.assigned_to || null,
+            project_id: task.project_id || null,
+          });
         }
       } else {
         return {
@@ -1551,27 +1990,45 @@ function registerIPC() {
     if (!db) return [];
     return db.getTasks(filters);
   });
+  ipcMain.handle('get-task-activity', (_e, taskId) => db?.getTaskActivity(taskId) || []);
+  ipcMain.handle('get-project-activity', (_e, projectId) => db?.getProjectActivity(projectId) || []);
 
   ipcMain.handle('create-task', (_e, taskData) => {
     if (!db) return null;
     const normalizedTaskData = { ...taskData };
+    if (!normalizedTaskData.due_date) {
+      const sharedDueDate = db.getSharedTaskDueDate(normalizedTaskData.project_id, normalizedTaskData.title);
+      if (sharedDueDate) normalizedTaskData.due_date = sharedDueDate;
+    }
     if (normalizedTaskData.completed !== undefined && normalizedTaskData.status === undefined) {
       normalizedTaskData.status = normalizedTaskData.completed ? 'complete' : 'not_started';
     }
     const task = db.createTask(normalizedTaskData);
-    if (sync) sync.pushEvent('task-created', task);
+    recordTaskActivity(task, 'created', { title: task.title, assignedTo: task.assigned_to || null });
+    if (shouldStageRolloverTask(task, { created: true })) stageRolloverTaskChange(task.id);
+    else if (sync) sync.pushEvent('task-created', task);
     notifyDataChanged('task-created', { taskId: task.id });
     return task;
   });
 
   ipcMain.handle('update-task', (_e, taskData) => {
     if (!db) return null;
+    const previousTask = db.getTaskById(taskData.id);
     const normalizedTaskData = { ...taskData };
     if (normalizedTaskData.completed !== undefined && normalizedTaskData.status === undefined) {
       normalizedTaskData.status = normalizedTaskData.completed ? 'complete' : 'not_started';
     }
     const task = db.updateTask(normalizedTaskData);
-    if (sync) sync.pushEvent('task-updated', task);
+    const changedFields = Object.keys(normalizedTaskData).filter((key) => key !== 'id' && previousTask?.[key] !== task?.[key]);
+    if (changedFields.length > 0) {
+      recordTaskActivity(task, task.completed && !previousTask?.completed ? 'completed' : (!task.completed && previousTask?.completed ? 'reopened' : 'updated'), {
+        fields: changedFields,
+        before: Object.fromEntries(changedFields.map((key) => [key, previousTask?.[key] ?? null])),
+        after: Object.fromEntries(changedFields.map((key) => [key, task?.[key] ?? null])),
+      });
+    }
+    if (shouldStageRolloverTask(previousTask)) stageRolloverTaskChange(task.id);
+    else if (sync) sync.pushEvent('task-updated', task);
     if (isNoteOnlyTaskUpdate(normalizedTaskData)) {
       appendInputDiagnostics({
         scope: 'main',
@@ -1587,16 +2044,28 @@ function registerIPC() {
 
   ipcMain.handle('delete-task', (_e, taskId) => {
     if (!db) return false;
+    const previousTask = db.getTaskById(taskId);
+    recordTaskActivity(previousTask || taskId, 'deleted', { title: previousTask?.title || '' });
+    const tombstone = db.recordTaskDeletion(taskId);
     db.deleteTask(taskId);
-    if (sync) sync.pushEvent('task-deleted', { id: taskId });
+    if (shouldStageRolloverTask(previousTask)) stageRolloverTaskChange(taskId, { deleted: true });
+    else if (sync) sync.pushEvent('task-deleted', {
+      id: taskId,
+      deleted_at: tombstone.deleted_at,
+      title: previousTask?.title || '',
+      assigned_to: previousTask?.assigned_to || null,
+      project_id: previousTask?.project_id || null,
+    });
     notifyDataChanged('task-deleted', { taskId });
     return true;
   });
 
   ipcMain.handle('reorder-tasks', (_e, taskOrders) => {
     if (!db) return false;
+    const shouldStage = taskOrders.some((item) => shouldStageRolloverTask(db.getTaskById(item.id)));
     db.reorderTasks(taskOrders);
-    if (sync) sync.pushEvent('tasks-reordered', taskOrders);
+    if (shouldStage) taskOrders.forEach((item) => stageRolloverTaskChange(item.id));
+    else if (sync) sync.pushEvent('tasks-reordered', taskOrders);
     return true;
   });
 
@@ -1919,10 +2388,22 @@ function registerIPC() {
     return notice;
   });
 
+  ipcMain.handle('get-rollover-publication-state', () => {
+    return getRolloverPublicationSummary();
+  });
+
+  ipcMain.handle('publish-rollover-changes', () => {
+    const result = publishRolloverChanges();
+    if (result.published) notifyDataChanged('rollover-published', result);
+    return result;
+  });
+
   ipcMain.handle('confirm-task', (_e, taskId) => {
     if (!db) return null;
+    const previousTask = db.getTaskById(taskId);
     const task = db.confirmTask(taskId);
-    if (sync) sync.pushEvent('task-confirmed', { id: taskId });
+    if (shouldStageRolloverTask(previousTask)) stageRolloverTaskChange(taskId);
+    else if (sync) sync.pushEvent('task-confirmed', { id: taskId });
     notifyDataChanged('task-confirmed', { taskId });
     return task;
   });
@@ -1930,6 +2411,7 @@ function registerIPC() {
   // Manual sync trigger
   ipcMain.handle('force-sync', async () => {
     if (!sync) return true;
+    sync.flushOutbox();
     const events = sync.pull();
     markSyncActivity();
     await handlePulledSyncEvents(events);
@@ -1963,6 +2445,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  appendInputDiagnostics({ scope: 'main', type: 'window-all-closed' });
   logger?.info('window-all-closed');
   if (updateManager) updateManager.stop();
   if (sync) sync.stopPolling();

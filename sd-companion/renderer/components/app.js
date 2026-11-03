@@ -92,6 +92,26 @@ const RendererLog = {
 
 RendererLog.bind();
 
+const MyTasksDiagnostics = {
+  log(type, detail = {}) {
+    window.api?.logDiagnostics?.({ type, href: window.location.href, ...detail }).catch(() => {});
+  },
+  bind() {
+    this.log('renderer-started');
+    window.addEventListener('error', (event) => this.log('renderer-error', { message: event.message, filename: event.filename, line: event.lineno }));
+    window.addEventListener('unhandledrejection', (event) => this.log('renderer-unhandled-rejection', { message: event.reason?.message || String(event.reason || '') }));
+    window.addEventListener('pageshow', () => this.log('renderer-pageshow'));
+    window.addEventListener('beforeunload', () => this.log('renderer-beforeunload'));
+    try {
+      new PerformanceObserver((entries) => entries.getEntries().forEach((entry) => {
+        if (entry.duration >= 100) this.log('renderer-long-task', { durationMs: Math.round(entry.duration) });
+      })).observe({ type: 'longtask', buffered: true });
+    } catch (_) {}
+  },
+};
+
+MyTasksDiagnostics.bind();
+
 function showToast(message, options = {}) {
   return window.MyTasksToast?.show({ message, ...options });
 }
@@ -191,6 +211,7 @@ let FORCE_COMMENT_SCROLL_TASK_ID = null;
 let OPEN_COMMENT_DRAWER_TASK_ID = null;
 let EXTERNAL_SYNC_REFRESH_PROMISE = null;
 let EXTERNAL_SYNC_REFRESH_PENDING = false;
+let ROLLOVER_REVIEW_STATE = { active: false, week: null, startedAt: null };
 const LAST_VIEWED_TASK_KEY = 'mytasks:last-viewed-task-id';
 const LAST_VIEWED_PROJECT_KEY = 'mytasks:last-viewed-project-id';
 const LAST_ACTIVE_TAB_KEY = 'mytasks:last-active-tab';
@@ -308,6 +329,7 @@ const {
 // ── Data Loading ────────────────────────────────────
 
 async function loadAllData() {
+  const rolloverReviewPromise = window.api.getRolloverReviewState();
   [USERS, TASKS, PROJECTS, PTO_DATA, CUSTOM_PRIORITIES, PRIORITY_MENU_ORDER, PRIORITY_DISPLAY_STYLES] = await Promise.all([
     window.api.getUsers(),
     window.api.getTasks(),
@@ -345,6 +367,19 @@ async function loadAllData() {
   if (currentUser) {
     currentUser = USERS.find((user) => user.id === currentUser.id) || currentUser;
   }
+
+  setRolloverReviewUi(await rolloverReviewPromise);
+}
+
+function setRolloverReviewUi(state) {
+  ROLLOVER_REVIEW_STATE = state?.active
+    ? state
+    : { active: false, week: null, startedAt: null };
+  document.body.classList.toggle('rollover-review-active', ROLLOVER_REVIEW_STATE.active);
+  const overlay = document.getElementById('rollover-review-overlay');
+  if (!overlay) return;
+  overlay.classList.toggle('hidden', !ROLLOVER_REVIEW_STATE.active);
+  overlay.setAttribute('aria-hidden', ROLLOVER_REVIEW_STATE.active ? 'false' : 'true');
 }
 
 async function loadSubtasksAndComments(taskIds) {
@@ -885,7 +920,10 @@ function getTodayDateString() {
 }
 
 function isTaskDueToday(task) {
-  return !task?.completed && String(task?.due_date || '').slice(0, 10) === getTodayDateString();
+  const dueDate = String(task?.due_date || '').slice(0, 10);
+  // The focus section deliberately keeps overdue work alongside today's work
+  // so a missed deadline does not disappear into the general task list.
+  return !task?.completed && Boolean(dueDate) && dueDate <= getTodayDateString();
 }
 
 function getTaskIdForDetailRestore({ allowFallback = false } = {}) {
@@ -1353,7 +1391,7 @@ function getActionItemAssigneeOptions(task) {
   const seen = new Set();
   const users = [];
 
-  for (const user of getTaskAssignees(task)) {
+  for (const user of [...getTaskAssignees(task), currentUser]) {
     if (!user?.id || seen.has(user.id)) continue;
     seen.add(user.id);
     users.push(user);
@@ -1387,6 +1425,26 @@ function renderActionItemAssignees(subtask) {
   }).join('');
 
   return avatars ? `<span class="subtask-assignee-list">${avatars}</span>` : '';
+}
+
+function renderActionItemDueDate(subtask) {
+  if (!subtask?.due_date) return '';
+  const due = formatDate(subtask.due_date);
+  const overdue = isTaskOverdue(subtask);
+  const label = overdue ? `Overdue · ${due.text}` : `Due ${due.text}`;
+  return `<span class="subtask-due ${overdue ? 'overdue' : due.cls || 'normal'}">${escapeHtml(label)}</span>`;
+}
+
+function renderActionItemContent(subtask) {
+  return `
+    <div class="subtask-content">
+      <div class="subtask-title-row">
+        <span class="subtask-title">${escapeHtml(subtask.title)}</span>
+        ${renderActionItemDueDate(subtask)}
+      </div>
+      ${subtask.notes ? `<div class="subtask-notes">${escapeHtml(subtask.notes)}</div>` : ''}
+    </div>
+  `;
 }
 
 function getAvailableProjectsForTaskCreation() {
@@ -1700,7 +1758,12 @@ async function duplicateSharedTask(task) {
     },
   }));
 
-  await refreshAfterTaskChange(created?.id || null);
+  if (!created) {
+    showToast('Task could not be duplicated. Check your permissions, or try again once the weekly review is finished.', { tone: 'error', duration: 6000 });
+    return;
+  }
+
+  await refreshAfterTaskChange(created.id || null);
   showToast('Task duplicated.', { tone: 'success' });
 }
 
@@ -2051,6 +2114,7 @@ function showUpdatePrompt(payload) {
 // ── Login ───────────────────────────────────────────
 
 async function initApp() {
+  const initStartedAt = performance.now();
   bindWindowChrome();
   bindResizePerfMode();
   bindUpdatePrompt();
@@ -2168,6 +2232,7 @@ async function initApp() {
     await nextFrame();
     await window.api.setWindowMode('app');
     enterApp();
+    MyTasksDiagnostics.log('renderer-ready', { durationMs: Math.round(performance.now() - initStartedAt), mode: 'remembered-user' });
     return;
   }
 
@@ -2196,6 +2261,7 @@ async function initApp() {
       await nextFrame();
       await window.api.setWindowMode('app');
       enterApp();
+      MyTasksDiagnostics.log('renderer-ready', { durationMs: Math.round(performance.now() - initStartedAt), mode: 'login' });
     } else {
       const latestStatus = await window.api.getRuntimeStatus();
       if (renderAuthEntryFromStatus(latestStatus) && latestStatus?.authEntry?.screen !== 'login') {
@@ -3021,6 +3087,11 @@ function openProjectContextMenu(e, project) {
 
   items.push(
     {
+      label: 'View Activity...',
+      action: () => window.api.openProjectActivityWindow(project.id)
+    },
+    { divider: true },
+    {
       label: 'Duplicate',
       action: async () => {
         const duplicated = await duplicateProject(project);
@@ -3063,6 +3134,7 @@ function openProjectContextMenu(e, project) {
 
 function renderTaskCard(task, options = {}) {
   const { showAssignee = false, isPrivate = false, readOnly = false } = options;
+  const isNotReviewed = !isPrivate && (task.confirmed ?? 1) === 0;
   const due = formatDate(task.due_date);
   const project = getProjectById(task.project_id);
   const displayTitle = isPrivate ? normalizeTaskDisplayTitle(task.title) : getTaskDisplayTitle(task, project);
@@ -3117,14 +3189,17 @@ function renderTaskCard(task, options = {}) {
   `;
 
   return `
-    <div class="task-card ${task.completed ? 'completed' : ''} ${String(selectedTaskId) === String(task.id) ? 'selected' : ''} ${readOnly ? 'read-only' : ''} ${task.priority === PRIORITY_WAIT ? 'wait' : ''} ${hasMeta ? 'has-activity' : ''}" data-task-id="${task.id}" ${isPrivate ? 'data-private="true"' : ''} ${readOnly ? 'data-read-only="true"' : ''} ${readOnly ? '' : 'tabindex="0" role="button"'}>
+    <div class="task-card ${task.completed ? 'completed' : ''} ${isNotReviewed ? 'not-reviewed' : ''} ${String(selectedTaskId) === String(task.id) ? 'selected' : ''} ${readOnly ? 'read-only' : ''} ${task.priority === PRIORITY_WAIT ? 'wait' : ''} ${hasMeta ? 'has-activity' : ''}" data-task-id="${task.id}" ${isPrivate ? 'data-private="true"' : ''} ${readOnly ? 'data-read-only="true"' : ''} ${readOnly ? '' : 'tabindex="0" role="button"'}>
       <div class="task-check">
         <div class="task-checkbox ${task.completed ? 'checked' : ''} ${readOnly ? 'read-only' : ''}" data-task-id="${task.id}" ${isPrivate ? 'data-private="true"' : ''} ${readOnly ? 'data-read-only="true"' : `tabindex="0" role="checkbox" aria-checked="${task.completed ? 'true' : 'false'}" aria-label="${task.completed ? 'Mark task incomplete' : 'Mark task complete'}"`}></div>
       </div>
       <div class="task-body">
         <div class="task-top-row">
           <span class="task-priority ${priority.className} ${canManagePriority ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canManagePriority ? `data-priority-task-id="${task.id}" tabindex="0" role="button" aria-label="Change priority: ${escapeAttr(priority.label)}"` : ''} title="${escapeAttr(priority.label)}">${escapeHtml(priority.shortLabel || priority.label)}</span>
-          <span class="task-title">${escapeHtml(displayTitle)}</span>
+          <span class="task-title">
+            ${isNotReviewed ? '<span class="task-not-reviewed-badge" title="This assignment has not been reviewed for the current week">Not Reviewed</span>' : ''}
+            <span class="task-title-text">${escapeHtml(displayTitle)}</span>
+          </span>
           ${dueMarkup}
           ${partnerAvatarsMarkup}
           ${showTaskMenu ? `
@@ -3490,21 +3565,21 @@ function renderStaffOverview() {
 
     return `
       <div class="staff-section">
-        <button class="staff-section-header" data-staff-toggle="${user.id}">
-          <div class="avatar" style="background: ${user.avatar_color}">${getInitials(user)}</div>
-          <span class="staff-section-name">${user.display_name}</span>
-          ${pto ? `<span class="pto-badge">${pto.label}</span>` : ''}
+        <button class="staff-section-header" data-staff-toggle="${escapeAttr(user.id)}">
+          <div class="avatar" style="background: ${user.avatar_color}">${escapeHtml(getInitials(user))}</div>
+          <span class="staff-section-name">${escapeHtml(user.display_name)}</span>
+          ${pto ? `<span class="pto-badge">${escapeHtml(pto.label)}</span>` : ''}
           <span class="staff-section-count">${tasks.length}${isFiltering ? ` of ${allTasks.length}` : ''} task${tasks.length !== 1 ? 's' : ''}</span>
           <span class="staff-section-chevron">${isCollapsed ? '&#9656;' : '&#9662;'}</span>
         </button>
-        <div class="staff-section-tasks ${isCollapsed ? 'hidden' : ''}" data-staff-id="${user.id}">
+        <div class="staff-section-tasks ${isCollapsed ? 'hidden' : ''}" data-staff-id="${escapeAttr(user.id)}">
           ${tasks.length === 0 ? `
             <div class="empty-state" style="padding:20px">
               <div class="empty-state-text">${isFiltering ? 'No tasks match this view' : 'No tasks assigned'}</div>
             </div>
           ` : tasks.map(t => renderTaskCard(t, { readOnly: isReadOnlyStaffView })).join('')}
           ${isReadOnlyStaffView ? '' : `
-            <button type="button" class="add-task-inline" data-staff-id="${user.id}">
+            <button type="button" class="add-task-inline" data-staff-id="${escapeAttr(user.id)}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add task
             </button>
@@ -3607,14 +3682,17 @@ function openAddStaffTaskDialog(staffId) {
 
     const button = document.getElementById('add-task-save');
     const outcome = await runUiAction(async () => {
-      await window.api.createTask(payload);
+      // The main process answers null when it refuses the request (no permission,
+      // or a weekly review is locking edits); that must not read as success.
+      const created = await window.api.createTask(payload);
+      if (!created) throw new Error('Task was not created.');
       await loadAllData();
       await refreshAll();
     }, {
       button,
       pendingLabel: 'Adding...',
       successMessage: 'Task assigned.',
-      errorMessage: 'Task could not be assigned.',
+      errorMessage: 'Task could not be assigned. Check your permissions, or try again once the weekly review is finished.',
     });
     if (outcome.ok) close();
   };
@@ -3677,14 +3755,15 @@ function setupAddSelfTask() {
 
       const button = document.getElementById('add-task-save');
       const outcome = await runUiAction(async () => {
-        await window.api.createTask(payload);
+        const created = await window.api.createTask(payload);
+        if (!created) throw new Error('Task was not created.');
         await loadAllData();
         await refreshAll();
       }, {
         button,
         pendingLabel: 'Adding...',
         successMessage: 'Task added.',
-        errorMessage: 'Task could not be added.',
+        errorMessage: 'Task could not be added. Check your permissions, or try again once the weekly review is finished.',
       });
       if (outcome.ok) close();
     };
@@ -3953,7 +4032,7 @@ async function openDetailPanel(taskId) {
       ` : subtasks.map((subtask) => `
         <div class="subtask-item ${subtask.completed ? 'completed' : ''}" data-subtask-id="${subtask.id}">
           <div class="task-checkbox ${subtask.completed ? 'checked' : ''}" data-subtask-id="${subtask.id}" tabindex="0" role="checkbox" aria-checked="${subtask.completed ? 'true' : 'false'}" aria-label="${subtask.completed ? 'Mark action item incomplete' : 'Mark action item complete'}"></div>
-          <span class="subtask-title">${escapeHtml(subtask.title)}</span>
+          ${renderActionItemContent(subtask)}
           ${renderActionItemAssignees(subtask)}
         </div>
       `).join('')}
@@ -4175,47 +4254,39 @@ function getPreferredActionItemAssigneeIds(task, subtask = null) {
   const currentIds = getSubtaskAssigneeIds(subtask);
   if (currentIds.length) return currentIds;
 
-  const selectedStaffIds = activeTab === 'staff-view'
-    ? (selectedReadonlyStaffIds.length ? selectedReadonlyStaffIds : (selectedStaffFilter ? [selectedStaffFilter] : []))
-    : (selectedStaffFilter ? [selectedStaffFilter] : []);
-  if (selectedStaffIds.length) return selectedStaffIds;
-
   if (task.assigned_to) return [task.assigned_to];
   if (task.owner_id) return [task.owner_id];
   return [];
 }
 
-function renderActionItemAssigneeChecklist(task, selectedAssigneeIds) {
-  const assignedUsers = getTaskAssignees(task);
-  const assignedIds = new Set(assignedUsers.map((user) => user.id));
-  const unassignedUsers = getActiveStaffUsers().filter((user) => !assignedIds.has(user.id));
+function renderActionItemAssigneeChips(assigneeOptions, selectedAssigneeIds) {
+  const selectedUsers = assigneeOptions.filter((user) => selectedAssigneeIds.has(user.id));
+  if (!selectedUsers.length) return '<span class="action-item-assignee-empty">Unassigned</span>';
 
-  const renderDivider = (label) => `
-    <div class="dialog-checklist-divider">
-      <div class="dialog-checklist-divider-line"></div>
-      <span class="dialog-checklist-divider-label">${escapeHtml(label)}</span>
-      <div class="dialog-checklist-divider-line"></div>
-    </div>
-  `;
-
-  const renderUserRow = (user) => `
-    <label class="dialog-checklist-row ${selectedAssigneeIds.has(user.id) ? 'active' : ''}" data-subtask-assignee-row="${user.id}">
-      <input type="checkbox" value="${user.id}" ${selectedAssigneeIds.has(user.id) ? 'checked' : ''}>
+  return selectedUsers.map((user) => `
+    <button class="action-item-assignee-chip" type="button" data-remove-action-item-assignee="${user.id}" title="Remove ${escapeAttr(user.display_name)}">
       <span class="dialog-checklist-avatar" style="background:${user.avatar_color}">${escapeHtml(getInitials(user))}</span>
-      <span class="dialog-checklist-name">${escapeHtml(user.display_name)}</span>
-    </label>
-  `;
+      <span>${escapeHtml(user.display_name)}</span>
+      <span class="action-item-assignee-chip-remove" aria-hidden="true">×</span>
+    </button>
+  `).join('');
+}
 
-  const sections = [];
-  if (assignedUsers.length) {
-    sections.push(renderDivider('Assigned'));
-    sections.push(assignedUsers.map(renderUserRow).join(''));
-  }
-  if (unassignedUsers.length) {
-    sections.push(renderDivider('Unassigned'));
-    sections.push(unassignedUsers.map(renderUserRow).join(''));
-  }
-  return sections.join('');
+function renderActionItemAssigneeResults(assigneeOptions, selectedAssigneeIds, query = '') {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matchingUsers = assigneeOptions.filter((user) => (user.display_name || '').toLocaleLowerCase().includes(normalizedQuery));
+  if (!matchingUsers.length) return '<div class="detail-empty-copy">No people found.</div>';
+
+  return matchingUsers.map((user) => {
+    const selected = selectedAssigneeIds.has(user.id);
+    return `
+      <button class="action-item-assignee-option ${selected ? 'selected' : ''}" type="button" data-action-item-assignee="${user.id}" aria-pressed="${selected ? 'true' : 'false'}">
+        <span class="dialog-checklist-avatar" style="background:${user.avatar_color}">${escapeHtml(getInitials(user))}</span>
+        <span class="action-item-assignee-option-name">${escapeHtml(user.display_name)}</span>
+        <span class="action-item-assignee-option-check" aria-hidden="true">${selected ? '✓' : ''}</span>
+      </button>
+    `;
+  }).join('');
 }
 
 function openAddSubtaskDialog(task, subtask = null, options = {}) {
@@ -4224,31 +4295,69 @@ function openAddSubtaskDialog(task, subtask = null, options = {}) {
   const overlay = document.getElementById('add-subtask-overlay');
   const ownerTask = getTaskThreadOwner(task) || task;
   const titleInput = document.getElementById('add-subtask-title');
-  const assigneeList = document.getElementById('add-subtask-assignee-list');
+  const notesInput = document.getElementById('add-subtask-notes');
+  const dueDateInput = document.getElementById('add-subtask-due-date');
+  const assigneeChips = document.getElementById('add-subtask-assignee-chips');
+  const assigneeSearch = document.getElementById('add-subtask-assignee-search');
+  const assigneeResults = document.getElementById('add-subtask-assignee-results');
   const saveButton = document.getElementById('add-subtask-save');
   const assigneeOptions = getActionItemAssigneeOptions(task);
   const selectedAssigneeIds = new Set(
     getPreferredActionItemAssigneeIds(task, subtask).filter((id) => assigneeOptions.some((user) => user.id === id))
   );
+  let assigneeQuery = '';
+
+  const refreshAssigneePicker = () => {
+    assigneeChips.innerHTML = renderActionItemAssigneeChips(assigneeOptions, selectedAssigneeIds);
+    assigneeResults.innerHTML = renderActionItemAssigneeResults(assigneeOptions, selectedAssigneeIds, assigneeQuery);
+  };
 
   overlay.classList.remove('hidden');
   document.getElementById('add-subtask-subtitle').textContent = task.title;
   saveButton.textContent = subtask ? 'Save Action Item' : 'Add Action Item';
   titleInput.value = subtask?.title || '';
-  assigneeList.innerHTML = assigneeOptions.length === 0
-    ? '<div class="detail-empty-copy">No staff available.</div>'
-    : renderActionItemAssigneeChecklist(task, selectedAssigneeIds);
+  notesInput.value = subtask?.notes || '';
+  dueDateInput.value = subtask?.due_date || '';
+  assigneeSearch.value = '';
+  refreshAssigneePicker();
 
-  assigneeList.querySelectorAll('[data-subtask-assignee-row]').forEach((row) => {
-    const checkbox = row.querySelector('input[type="checkbox"]');
-    checkbox?.addEventListener('change', () => {
-      row.classList.toggle('active', checkbox.checked);
-    });
-  });
+  assigneeChips.onclick = (event) => {
+    const button = event.target.closest('[data-remove-action-item-assignee]');
+    if (!button) return;
+    selectedAssigneeIds.delete(button.dataset.removeActionItemAssignee);
+    refreshAssigneePicker();
+  };
+  assigneeResults.onclick = (event) => {
+    const button = event.target.closest('[data-action-item-assignee]');
+    if (!button) return;
+    const userId = button.dataset.actionItemAssignee;
+    if (selectedAssigneeIds.has(userId)) selectedAssigneeIds.delete(userId);
+    else selectedAssigneeIds.add(userId);
+    refreshAssigneePicker();
+  };
+  assigneeSearch.oninput = () => {
+    assigneeQuery = assigneeSearch.value;
+    refreshAssigneePicker();
+  };
+  document.getElementById('add-subtask-assign-me').onclick = () => {
+    if (currentUser?.id && assigneeOptions.some((user) => user.id === currentUser.id)) {
+      selectedAssigneeIds.add(currentUser.id);
+      refreshAssigneePicker();
+    }
+  };
+  document.getElementById('add-subtask-use-task-assignee').onclick = () => {
+    selectedAssigneeIds.clear();
+    if (task.assigned_to && assigneeOptions.some((user) => user.id === task.assigned_to)) {
+      selectedAssigneeIds.add(task.assigned_to);
+    }
+    refreshAssigneePicker();
+  };
+  document.getElementById('add-subtask-clear-assignees').onclick = () => {
+    selectedAssigneeIds.clear();
+    refreshAssigneePicker();
+  };
 
-  const focusTarget = options.focusAssignees
-    ? assigneeList.querySelector('input[type="checkbox"]')
-    : titleInput;
+  const focusTarget = options.focusAssignees ? assigneeSearch : titleInput;
   setTimeout(() => focusTarget?.focus(), 50);
 
   const close = () => {
@@ -4262,23 +4371,24 @@ function openAddSubtaskDialog(task, subtask = null, options = {}) {
   saveButton.onclick = async () => {
     if (!requireTextInput(titleInput, 'Enter an action item title.')) return;
     const title = titleInput.value.trim();
-    const nextAssignedIds = [...assigneeList.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+    const notes = notesInput.value.trim();
+    const due_date = dueDateInput.value || null;
+    const nextAssignedIds = assigneeOptions
+      .filter((user) => selectedAssigneeIds.has(user.id))
+      .map((user) => user.id);
 
     const outcome = await runUiAction(async () => {
+      const payload = {
+        title,
+        notes,
+        due_date,
+        assigned_to: nextAssignedIds[0] || null,
+        assigned_to_ids: nextAssignedIds,
+      };
       if (subtask) {
-        await window.api.updateSubTask({
-          id: subtask.id,
-          title,
-          assigned_to: nextAssignedIds[0] || null,
-          assigned_to_ids: nextAssignedIds,
-        });
+        await window.api.updateSubTask({ id: subtask.id, ...payload });
       } else {
-        await window.api.createSubTask({
-          task_id: ownerTask.id,
-          title,
-          assigned_to: nextAssignedIds[0] || null,
-          assigned_to_ids: nextAssignedIds,
-        });
+        await window.api.createSubTask({ task_id: ownerTask.id, ...payload });
       }
 
       await loadAllData();
@@ -4399,7 +4509,7 @@ async function openProjectDetailPanel(projectId) {
       ` : subtasks.map((subtask) => `
         <div class="subtask-item ${subtask.completed ? 'completed' : ''}" data-subtask-id="${subtask.id}">
           <div class="task-checkbox ${subtask.completed ? 'checked' : ''}" data-subtask-id="${subtask.id}" tabindex="0" role="checkbox" aria-checked="${subtask.completed ? 'true' : 'false'}" aria-label="${subtask.completed ? 'Mark action item incomplete' : 'Mark action item complete'}"></div>
-          <span class="subtask-title">${escapeHtml(subtask.title)}</span>
+          ${renderActionItemContent(subtask)}
           ${renderActionItemAssignees(subtask)}
         </div>
       `).join('')}
@@ -4650,6 +4760,10 @@ function buildRuntimeStatusMenuItems(status) {
     items.push({ type: 'label', label: `${status.syncFailures.count} sync change${status.syncFailures.count === 1 ? '' : 's'} need attention` });
   }
 
+  if ((status?.syncOutbox?.pending || 0) > 0) {
+    items.push({ type: 'label', label: `${status.syncOutbox.pending} local change${status.syncOutbox.pending === 1 ? '' : 's'} waiting to publish` });
+  }
+
   if (sharedPath !== 'Not configured') {
     items.push({ type: 'label', label: sharedPath });
   }
@@ -4699,10 +4813,12 @@ function updateSyncBanner(status) {
   const failureCount = status?.syncFailures?.count || 0;
   const hasSyncFailures = failureCount > 0;
   const bannerText = document.getElementById('sync-banner-text');
+  const bannerDetail = document.getElementById('sync-banner-detail');
 
   if (!unreachable && !hasSyncFailures) {
     SYNC_BANNER_DISMISSED = false;
     banner.classList.add('hidden');
+    bannerDetail?.classList.add('hidden');
     return;
   }
 
@@ -4710,6 +4826,13 @@ function updateSyncBanner(status) {
     bannerText.textContent = unreachable
       ? "Can't reach the shared sync folder. Your changes are saved locally and will sync once it's back."
       : `${failureCount} sync change${failureCount === 1 ? '' : 's'} could not be applied. Your current data may be incomplete.`;
+  }
+  if (bannerDetail) {
+    const firstFailure = status?.syncFailures?.failures?.[0];
+    bannerDetail.textContent = firstFailure?.error
+      ? `Details: ${firstFailure.error}`
+      : 'Use Retry to check the shared folder again.';
+    bannerDetail.classList.remove('hidden');
   }
 
   banner.classList.toggle('hidden', SYNC_BANNER_DISMISSED);
@@ -4731,7 +4854,7 @@ function setupSyncBanner() {
       setSyncIndicatorState('syncing');
       await window.api.forceSync();
       await refreshRuntimeStatus();
-    }, { button, pendingLabel: 'Retrying...', successMessage: 'Sync retry finished.' });
+  }, { button, pendingLabel: 'Retrying...', successMessage: 'Sync retry finished. Review the status banner if it remains visible.' });
   });
 }
 

@@ -42,6 +42,10 @@ const SettingsDialog = {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
               System Status
             </button>
+            <button class="settings-nav-item" data-section="devices">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 17h8"/><path d="M9 7h6"/></svg>
+              Trusted Devices
+            </button>
             <button class="settings-nav-item" data-section="about">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
               About
@@ -104,6 +108,7 @@ const SettingsDialog = {
       case 'priorities': return this._renderPriorities(content);
       case 'paths': return this._renderPaths(content);
       case 'status': return this._renderStatus(content);
+      case 'devices': return this._renderDevices(content);
       case 'about': return this._renderAbout(content);
     }
   },
@@ -563,6 +568,7 @@ const SettingsDialog = {
     const excelPath = await window.api.getExcelPath();
     const exportPath = await window.api.getExportPath();
     const updateFolderPath = await window.api.getUpdateFolderPath();
+    const backupFolderPath = await window.api.getBackupFolderPath();
 
     container.innerHTML = `
       <div class="settings-section">
@@ -604,6 +610,21 @@ const SettingsDialog = {
             <button class="btn btn-ghost btn-sm" id="settings-check-update">Check Now</button>
             ${updateFolderPath ? '<button class="btn btn-ghost btn-sm" id="settings-clear-update" style="color:var(--danger);">Clear</button>' : ''}
           </div>
+        </div>
+
+        <div class="settings-path-group">
+          <label class="settings-path-label">Project Data Backup Folder</label>
+          <p class="settings-path-desc">Creates timestamped backups of the Dashboard SQLite database, active Excel project file, and shared sync events/snapshots. Settings are included only as a restore aid.</p>
+          <div class="settings-path-row">
+            <span class="settings-path-value">${this._esc(backupFolderPath || 'Not configured')}</span>
+            <button class="btn btn-ghost btn-sm" id="settings-change-backup">${backupFolderPath ? 'Change' : 'Set Folder'}</button>
+            <button class="btn btn-primary btn-sm" id="settings-create-backup" ${backupFolderPath ? '' : 'disabled'}>Back Up Now</button>
+            <button class="btn btn-ghost btn-sm" id="settings-restore-backup">Restore…</button>
+          </div>
+          <label class="settings-priority-carryover" style="margin-top:8px;display:inline-flex;">
+            <input type="checkbox" id="settings-backup-on-close" ${config?.backupOnClose ? 'checked' : ''} ${backupFolderPath ? '' : 'disabled'}>
+            Back up automatically when Dashboard closes
+          </label>
         </div>
 
         <div class="settings-path-group">
@@ -682,6 +703,47 @@ const SettingsDialog = {
       await window.api.checkForUpdates();
     });
 
+    container.querySelector('#settings-change-backup').addEventListener('click', async () => {
+      const folderPath = await window.api.selectFolder();
+      if (!folderPath) return;
+      await window.api.setBackupFolderPath(folderPath);
+      Toast.show('Backup folder saved.', 'success');
+      this._renderPaths(container);
+    });
+
+    container.querySelector('#settings-create-backup').addEventListener('click', async () => {
+      try {
+        const result = await window.api.createDashboardBackup();
+        Toast.show(`Backup created: ${result.folder}`, 'success');
+      } catch (error) {
+        Toast.show(error.message || 'Backup failed.', 'error');
+      }
+    });
+
+    container.querySelector('#settings-restore-backup').addEventListener('click', async () => {
+      const backupPath = await window.api.selectFolder();
+      if (!backupPath) return;
+      try {
+        const backup = await window.api.inspectDashboardBackup(backupPath);
+        const confirmed = await ConfirmDialog.show({
+          title: 'Restore project data?',
+          message: `Restore the backup from ${new Date(backup.manifest.createdAt).toLocaleString()}? Dashboard will first make a safety backup, pause sync, restore local database and Excel data, then restart. This does not publish restored data to the team.`,
+          confirmText: 'Restore & Restart',
+          danger: true,
+        });
+        if (confirmed) await window.api.restoreDashboardBackup(backupPath);
+      } catch (error) {
+        Toast.show(error.message || 'Restore failed.', 'error');
+      }
+    });
+
+    container.querySelector('#settings-backup-on-close').addEventListener('change', async (event) => {
+      const cfg = await window.api.getConfig() || {};
+      cfg.backupOnClose = event.target.checked;
+      await window.api.saveConfig(cfg);
+      Toast.show(event.target.checked ? 'Dashboard will back up on close.' : 'Backup on close disabled.', 'success');
+    });
+
     // Save reload interval
     container.querySelector('#settings-save-interval').addEventListener('click', async () => {
       const val = parseInt(container.querySelector('#settings-reload-interval').value);
@@ -754,6 +816,40 @@ const SettingsDialog = {
 
     container.querySelector('#settings-refresh-status')?.addEventListener('click', () => {
       this._renderStatus(container);
+    });
+  },
+
+  async _renderDevices(container) {
+    container.innerHTML = '<div class="settings-section"><h2 class="settings-section-title">Trusted Devices</h2><p class="settings-section-desc">Loading device enrollment requests...</p></div>';
+    const [status, pending, devices] = await Promise.all([
+      window.api.getDeviceTrustStatus(), window.api.getPendingDeviceEnrollments(), window.api.getTrustedDevices(),
+    ]);
+    const deviceRows = devices.length
+      ? devices.map((device) => `<div class="settings-list-item"><span class="settings-list-label">${this._esc(device.username || device.userId || 'Unknown user')}<small>${this._esc(device.deviceId)}</small></span><div class="settings-list-actions">${device.active ? `<button class="btn btn-ghost btn-sm" data-revoke-device="${this._esc(device.deviceId)}">Revoke</button>` : '<span class="settings-empty">Revoked</span>'}</div></div>`).join('')
+      : '<div class="settings-empty">No devices have been approved yet.</div>';
+    const pendingRows = pending.length
+      ? pending.map((request) => `<div class="settings-list-item"><span class="settings-list-label">${this._esc(request.username || request.userId)}<small>${this._esc(request.deviceId)}</small></span><div class="settings-list-actions"><button class="btn btn-primary btn-sm" data-approve-device="${this._esc(request.deviceId)}">Approve</button></div></div>`).join('')
+      : '<div class="settings-empty">No device approvals are waiting.</div>';
+    container.innerHTML = `
+      <div class="settings-section">
+        <h2 class="settings-section-title">Trusted Devices</h2>
+        <p class="settings-section-desc">Each installation has its own signing identity. Approve a request only when the listed StudioSync user and computer are expected.</p>
+        <label class="dialog-checkbox-row"><input id="settings-require-signed-events" type="checkbox" ${status?.enforceSignedEvents ? 'checked' : ''}><span class="dialog-checkbox-copy"><span class="dialog-checkbox-label">Require signed sync events</span><span class="dialog-checkbox-help">Turn this on after every active device has been approved.</span></span></label>
+        <h3 class="settings-subheading">Waiting for approval</h3><div class="settings-list">${pendingRows}</div>
+        <h3 class="settings-subheading">Approved devices</h3><div class="settings-list">${deviceRows}</div>
+      </div>`;
+    container.querySelectorAll('[data-approve-device]').forEach((button) => button.addEventListener('click', async () => {
+      await window.api.approveDeviceEnrollment(button.dataset.approveDevice);
+      this._renderDevices(container);
+    }));
+    container.querySelectorAll('[data-revoke-device]').forEach((button) => button.addEventListener('click', async () => {
+      const approved = await ConfirmDialog.show({ title: 'Revoke device?', message: 'This device will no longer be allowed to publish signed sync events.', confirmLabel: 'Revoke', tone: 'danger' });
+      if (!approved) return;
+      await window.api.revokeTrustedDevice(button.dataset.revokeDevice);
+      this._renderDevices(container);
+    }));
+    container.querySelector('#settings-require-signed-events').addEventListener('change', async (event) => {
+      try { await window.api.setSignedEventEnforcement(event.target.checked); } catch (_) { event.target.checked = !event.target.checked; }
     });
   },
 

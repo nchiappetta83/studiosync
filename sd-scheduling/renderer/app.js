@@ -881,7 +881,7 @@ const App = {
   async _checkWeeklyRollover() {
     const startupRollover = await window.api.consumeRolloverNotice();
     if (startupRollover?.applied) {
-      Toast.show('Weekly rollover complete', 'success');
+      Toast.show('Weekly rollover ready for review', 'success');
       return;
     }
 
@@ -889,7 +889,7 @@ const App = {
     if (result.needed) {
       await window.api.performRollover();
       await AppState.refresh();
-      Toast.show('Weekly rollover complete', 'success');
+      Toast.show('Weekly rollover ready for review', 'success');
     }
   },
 

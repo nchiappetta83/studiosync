@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('api', {
 
   // Tasks (shared, from main app)
   getTasks:           (filters)   => ipcRenderer.invoke('get-tasks', filters),
+  getTaskActivity:    (taskId)    => ipcRenderer.invoke('get-task-activity', taskId),
+  getProjectActivity: (projectId) => ipcRenderer.invoke('get-project-activity', projectId),
+  getRolloverReviewState: ()      => ipcRenderer.invoke('get-rollover-review-state'),
   createTask:         (data)      => ipcRenderer.invoke('create-task', data),
   updateTask:         (data)      => ipcRenderer.invoke('update-task', data),
   deleteTask:         (id)        => ipcRenderer.invoke('delete-task', id),
@@ -71,6 +74,7 @@ contextBridge.exposeInMainWorld('api', {
   getRuntimeStatus:   ()          => ipcRenderer.invoke('get-runtime-status'),
   openLink:           (value)     => ipcRenderer.invoke('open-link', value),
   openProjectNotesWindow: (projectId) => ipcRenderer.invoke('open-project-notes-window', projectId),
+  openProjectActivityWindow: (projectId) => ipcRenderer.invoke('open-project-activity-window', projectId),
   setWindowMode:      (mode)      => ipcRenderer.invoke('set-window-mode', mode),
   selectFolder:       ()          => ipcRenderer.invoke('select-folder'),
   initializeApp:      (path)      => ipcRenderer.invoke('initialize-app', path),
@@ -79,6 +83,8 @@ contextBridge.exposeInMainWorld('api', {
   forceSync:          ()          => ipcRenderer.invoke('force-sync'),
   getLogPaths:        ()          => ipcRenderer.invoke('get-log-paths'),
   writeLog:           (entry)     => ipcRenderer.invoke('write-log', entry),
+  getDiagnosticsPath: ()          => ipcRenderer.invoke('get-diagnostics-path'),
+  logDiagnostics:     (entry)     => ipcRenderer.invoke('log-diagnostics', entry),
 
   // Data change listener
   onDataUpdated: (callback) => {

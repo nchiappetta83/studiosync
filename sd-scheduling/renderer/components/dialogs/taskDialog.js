@@ -101,7 +101,7 @@ const TaskDialog = {
               <input type="checkbox" id="dialog-task-completed" ${taskData.completed ? 'checked' : ''}>
               <span class="dialog-checkbox-copy">
                 <span class="dialog-checkbox-label">Mark Task Complete</span>
-                <span class="dialog-checkbox-help">Completed tasks stay visible until the next weekly rollover.</span>
+                <span class="dialog-checkbox-help">Completed tasks return as Not Reviewed when the weekly schedule is published.</span>
               </span>
             </label>
           ` : ''}

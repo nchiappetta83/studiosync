@@ -18,13 +18,13 @@ class ExcelImport {
   /**
    * Import projects from an Excel file.
    * @param {string} filePath — path to the .xlsx file
-   * @returns {{ imported: number, updated: number, sheets: string[] }}
+   * @returns {{ imported: number, updated: number, sheets: string[], createdProjects: object[], updatedProjects: object[] }}
    */
   async import(filePath) {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(filePath);
 
-    const results = { imported: 0, updated: 0, sheets: [] };
+    const results = { imported: 0, updated: 0, sheets: [], createdProjects: [], updatedProjects: [] };
 
     for (const sheet of workbook.worksheets) {
       const sheetName = sheet.name;
@@ -84,12 +84,13 @@ class ExcelImport {
 
           if (Object.keys(updates).length > 0) {
             updates.id = existing.id;
-            this.db.updateProject(updates);
+            const updatedProject = this.db.updateProject(updates);
             results.updated++;
+            results.updatedProjects.push(updatedProject);
           }
         } else {
           // Create new project
-          this.db.createProject({
+          const createdProject = this.db.createProject({
             client: client,
             name: projectName,
             status: status,
@@ -100,6 +101,7 @@ class ExcelImport {
             partner_initials: partnerInfo.partner_initials
           });
           results.imported++;
+          results.createdProjects.push(createdProject);
         }
       }
     }

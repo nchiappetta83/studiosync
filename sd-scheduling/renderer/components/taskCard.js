@@ -101,10 +101,12 @@ globalScope.TaskCard = {
     const dueHtml = dueDisplay
       ? `<span class="task-due-label ${dueColor}" data-task-id="${task.id}" style="${dueCursor}">${this._escapeHtml(dueDisplay)}</span>`
       : '';
+    const bulkSelect = isPartner ? `<input class="task-bulk-select" type="checkbox" data-task-id="${task.id}" aria-label="Select task for bulk actions">` : '';
 
     return `
       <div class="task-card ${completedClass} ${carryoverClass} ${isPartner ? 'task-card-draggable' : ''}" data-task-id="${task.id}">
         <div class="task-card-main">
+          ${bulkSelect}
           ${priorityBadge}
           <div class="task-title-group">
             ${carryoverBadge}
@@ -695,7 +697,25 @@ globalScope.TaskCard = {
     const selectDate = async (dateStr) => {
       popup.remove();
       document.removeEventListener('click', dismissPicker);
-      await window.api.updateTask({ id: taskId, due_date: dateStr });
+      const task = AppState.get('tasks').find((candidate) => candidate.id === taskId);
+      const linkedTasks = task?.project_id
+        ? AppState.get('tasks').filter((candidate) => candidate.id !== task.id
+          && candidate.project_id === task.project_id
+          && this._hasMatchingSharedTitle(candidate, task))
+        : [];
+      let updateAll = false;
+      if (linkedTasks.length > 0) {
+        const result = await ConfirmDialog.choose({
+          title: 'Update matching tasks?',
+          message: `${linkedTasks.length + 1} assignments share this project and task.`,
+          secondaryLabel: 'Only this task',
+          primaryLabel: `Update all ${linkedTasks.length + 1}`,
+        });
+        if (!result.confirmed) return;
+        updateAll = result.choice === 'all';
+      }
+      const targetIds = updateAll ? [task.id, ...linkedTasks.map((candidate) => candidate.id)] : [taskId];
+      await Promise.all(targetIds.map((id) => window.api.updateTask({ id, due_date: dateStr })));
       await AppState.refresh();
     };
 
@@ -734,6 +754,15 @@ globalScope.TaskCard = {
     if (p === String(PRIORITY_WAIT)) return 'priority-w';
     if (p === String(PRIORITY_CUSTOM)) return 'priority-custom';
     return 'priority-unset';
+  },
+
+  _hasMatchingSharedTitle(firstTask, secondTask) {
+    const normalize = (value) => String(value || '')
+      .trim()
+      .toLocaleLowerCase()
+      .replace(/\s*[|\u2013\u2014]\s*/g, '|');
+    const firstTitle = normalize(firstTask?.title);
+    return Boolean(firstTitle) && firstTitle === normalize(secondTask?.title);
   },
 
   _getTaskDisplayTitle(task) {

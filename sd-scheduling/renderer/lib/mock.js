@@ -54,15 +54,26 @@ if (!window.api) {
     { user_id: 'u5', dates: ['2026-03-25', '2026-03-26', '2026-03-27'], label: '3/25-3/27' },
   ];
 
+  let currentUser = MOCK_USERS[0];
+
   window.api = {
     getConfig:        async () => ({ sharedDrivePath: 'C:\\MockSharedDrive' }),
     saveConfig:       async () => true,
     getAppVersion:    async () => '1.0.4',
     selectFolder:     async () => 'C:\\MockSharedDrive',
-    initializeApp:    async () => ({ success: true, user: MOCK_USERS[0] }),
+    initializeApp:    async () => ({ success: true, user: currentUser }),
+    resumeApp:        async () => ({ success: true, user: currentUser }),
     getWindowsUsername: async () => 'jsmith',
-    getCurrentUser:   async () => MOCK_USERS[0],
+    getRuntimeStatus: async () => ({ authEntry: null, sharedDriveReachable: true, syncFailures: { count: 0 }, appVersion: '1.0.4' }),
+    onRuntimeStatusChanged: () => () => {},
+    login:            async (username) => {
+      const match = MOCK_USERS.find(u => u.username.toLowerCase() === String(username || '').toLowerCase());
+      if (match) currentUser = match;
+      return match || null;
+    },
+    getCurrentUser:   async () => currentUser,
     getUsers:         async () => MOCK_USERS.filter(u => u.active),
+    getUserDeleteImpact: async () => ({ taskCount: 0, projectCount: 0 }),
     createUser:       async (d) => { const u = { ...d, id: 'u' + Date.now(), active: 1 }; MOCK_USERS.push(u); return u; },
     updateUser:       async (d) => d,
     deleteUser:       async () => ({ success: true }),
@@ -109,11 +120,43 @@ if (!window.api) {
     updateCustomPriority: async (d) => d,
     deleteCustomPriority: async () => true,
     reorderCustomPriorities: async () => true,
+    getPriorityMenuOrder:     async () => [],
+    setPriorityMenuOrder:     async () => true,
+    getPriorityCarryoverTokens: async () => [],
+    setPriorityCarryoverTokens: async () => true,
+    getPriorityDisplayStyles: async () => ({}),
+    setPriorityDisplayStyles: async () => true,
     checkRollover:    async () => ({ needed: false, currentWeek: '2026-03-23', lastWeek: '2026-03-23' }),
     performRollover:  async () => { MOCK_TASKS.forEach(t => { t.confirmed = 0; t.priority = 0; }); return true; },
     initRolloverWeek: async () => true,
+    consumeRolloverNotice: async () => null,
+    getRolloverPublicationState: async () => ({ active: false, published: false, hasUnpublishedChanges: false, pendingCount: 0, notReviewedCount: 0 }),
+    publishRolloverChanges: async () => ({ published: true, hasUnpublishedChanges: false, notReviewedCount: 0 }),
     confirmTask:      async (id) => { const t = MOCK_TASKS.find(t => t.id === id); if (t) t.confirmed = 1; return t; },
     forceSync:        async () => true,
+
+    // Window chrome
+    minimizeWindow:       async () => true,
+    toggleMaximizeWindow: async () => ({ isMaximized: false }),
+    closeWindow:          async () => true,
+    focusWindow:          async () => true,
+    getWindowState:       async () => ({ isMaximized: false }),
+    onWindowStateChanged: () => () => {},
+    setWindowMode:        async () => true,
+
+    // Updates
+    checkForUpdates:  async () => ({ upToDate: true }),
+    getPendingUpdate: async () => null,
+    onUpdateAvailable: () => () => {},
+    dismissUpdate:    async () => true,
+    installUpdate:    async () => true,
+    getUpdateFolderPath: async () => '',
+    setUpdateFolderPath: async () => true,
+
+    // Logging
+    writeLog:         async () => true,
+    logDiagnostics:   async () => true,
+
     onDataUpdated:    (cb) => () => {},
   };
 }

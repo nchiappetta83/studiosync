@@ -7,9 +7,12 @@ const Auth = require('./auth');
 const UpdateManager = require('./updateManager');
 const { createLogger } = require('./logger');
 const { getExternalTargetAction } = require('./linkSecurity');
+const { isPartner, canMutateTask, canCreateTask, canMutateSubtask } = require('./services/authorizationService');
+const { createTaskCommand, updateTaskCommand, deleteTaskCommand } = require('./services/taskCommandService');
 
 let mainWindow = null;
 const projectNotesWindows = new Map();
+const projectActivityWindows = new Map();
 let db = null;
 let sync = null;
 let auth = null;
@@ -57,6 +60,14 @@ const PROJECT_NOTES_WINDOW_BOUNDS = {
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
 const APP_USER_MODEL_ID = 'com.studiosync.mytasks';
+
+function getCurrentWeekStartString(date = new Date()) {
+  const local = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = local.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  local.setDate(local.getDate() + mondayOffset);
+  return `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
+}
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -166,6 +177,21 @@ const APP_DATA_DIR = ensureAppDataDir();
 logger = createLogger({ appDataDir: APP_DATA_DIR, appName: 'sd-companion' });
 logger.attachConsole();
 logger.attachProcessHandlers();
+const DIAGNOSTICS_DIR = path.join(APP_DATA_DIR, 'diagnostics');
+const INPUT_DIAGNOSTICS_PATH = path.join(DIAGNOSTICS_DIR, 'mytasks-diagnostics.log');
+
+function getDiagnosticsPath() {
+  fs.mkdirSync(DIAGNOSTICS_DIR, { recursive: true });
+  return INPUT_DIAGNOSTICS_PATH;
+}
+
+function appendDiagnostics(entry = {}) {
+  try {
+    const targetPath = getDiagnosticsPath();
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 2 * 1024 * 1024) fs.writeFileSync(targetPath, '');
+    fs.appendFileSync(targetPath, `${JSON.stringify({ timestamp: new Date().toISOString(), ...entry })}\n`, 'utf-8');
+  } catch (_) {}
+}
 
 // ── Config ─────────────────────────────────────────────
 
@@ -286,6 +312,7 @@ function getLocalDbPath() {
 }
 
 function closeRuntime() {
+  const startedAt = Date.now();
   if (updateManager) {
     updateManager.stop();
   }
@@ -299,6 +326,7 @@ function closeRuntime() {
   }
   auth = null;
   runtimeStatus.lastSyncAt = null;
+  appendDiagnostics({ scope: 'main', type: 'runtime-closed', durationMs: Date.now() - startedAt });
 }
 
 function resetLocalCache() {
@@ -320,6 +348,10 @@ function notifyDataChanged() {
   for (const notesWindow of projectNotesWindows.values()) {
     if (!notesWindow.isDestroyed()) notesWindow.webContents.send('data-updated');
   }
+  for (const activityWindow of projectActivityWindows.values()) {
+    if (!activityWindow.isDestroyed()) activityWindow.webContents.send('data-updated');
+  }
+  emitRuntimeStatus();
 }
 
 function getAuthEntryState() {
@@ -443,6 +475,7 @@ function getRuntimeStatus() {
     sharedDriveReachable: Boolean(sharedDrivePath && inspection.valid && fs.existsSync(inspection.resolvedPath || sharedDrivePath)),
     sharedDriveValid: Boolean(sharedDrivePath && inspection.valid),
     lastSyncAt: runtimeStatus.lastSyncAt,
+    syncOutbox: sync?.getOutboxSummary?.() || { pending: 0, attempts: 0, lastError: null, oldestQueuedAt: null },
     syncFailures: sync?.getFailureSummary?.() || { count: 0, totalAttempts: 0, nextRetryAt: null },
     updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
     latestVersion: pendingUpdate?.latestVersion || lastUpdateResult?.latestVersion || null,
@@ -773,7 +806,10 @@ function isTaskRelevantToCurrentUser(task, currentUserId) {
 function notifyForTaskEvent(event, actionLabel) {
   const currentUserId = getCurrentUserId();
   if (!currentUserId || !event?.data) return;
-  if (event.source === 'scheduling') return;
+  // Dashboard-origin changes normally do not need a second notification in
+  // MyTasks. Deletions are the exception: the task is no longer in the local
+  // database, so make the removal visible to its assignee.
+  if (event.source === 'scheduling' && event.type !== 'task-deleted') return;
 
   const task = db.getTaskById(event.data.id) || event.data;
   if (!task || task.assigned_to !== currentUserId) return;
@@ -813,6 +849,9 @@ function processIncomingEvents(events = []) {
       case 'task-updated':
         notifyForTaskEvent(event, 'Task Updated');
         break;
+      case 'task-deleted':
+        notifyForTaskEvent(event, 'Task Removed');
+        break;
       case 'comment-added':
         notifyForCommentEvent(event);
         break;
@@ -824,6 +863,13 @@ function processIncomingEvents(events = []) {
 
 async function handlePulledSyncEvents(events = []) {
   if (!Array.isArray(events) || events.length === 0) return [];
+
+  // Permission checks use the cached signed-in user.  A role, active or
+  // self-assign change made in the Dashboard arrives as a user-* event, so drop
+  // the cache and let the next check read the updated row.
+  if (auth && events.some((event) => typeof event?.type === 'string' && event.type.startsWith('user-'))) {
+    auth.clearCache();
+  }
 
   processIncomingEvents(events);
   markSyncActivity();
@@ -993,9 +1039,38 @@ function openProjectNotesWindow(projectId) {
   return true;
 }
 
+function openProjectActivityWindow(projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) return false;
+  const existing = projectActivityWindows.get(id);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return true;
+  }
+  const activityWindow = new BrowserWindow({
+    width: 760, height: 680, minWidth: 560, minHeight: 440,
+    title: 'Project Activity', autoHideMenuBar: true, icon: getAppIconPath(),
+    parent: mainWindow || undefined,
+    backgroundColor: '#F7F9FB',
+    webPreferences: { nodeIntegration: false, contextIsolation: true, preload: path.join(__dirname, 'preload.js') },
+  });
+  projectActivityWindows.set(id, activityWindow);
+  activityWindow.loadFile(path.join(__dirname, '..', 'renderer', 'project-activity.html'), { query: { projectId: id } });
+  activityWindow.on('closed', () => projectActivityWindows.delete(id));
+  return true;
+}
+
 // ── IPC Handlers ───────────────────────────────────────
 
 function registerIPC() {
+  const currentActor = () => auth?.getCurrentUser() || null;
+  const isRolloverReviewActive = () => {
+    const state = db?.getRolloverReviewState?.();
+    return Boolean(state?.active && state.week === getCurrentWeekStartString());
+  };
+
   ipcMain.handle('get-log-paths', () => logger?.getLogPaths() || null);
   ipcMain.handle('write-log', (_e, entry) => {
     const level = String(entry?.level || 'info').toLowerCase();
@@ -1006,6 +1081,11 @@ function registerIPC() {
     else if (level === 'warn') logger?.warn(message, meta);
     else if (level === 'debug') logger?.debug(message, meta);
     else logger?.info(message, meta);
+    return true;
+  });
+  ipcMain.handle('get-diagnostics-path', () => getDiagnosticsPath());
+  ipcMain.handle('log-diagnostics', (_e, entry) => {
+    appendDiagnostics({ scope: 'renderer', ...(entry && typeof entry === 'object' ? entry : { message: String(entry || '') }) });
     return true;
   });
 
@@ -1081,6 +1161,7 @@ function registerIPC() {
   ipcMain.handle('get-runtime-status', () => getRuntimeStatus());
   ipcMain.handle('open-link', (_e, value) => openExternalTarget(value));
   ipcMain.handle('open-project-notes-window', (_e, projectId) => openProjectNotesWindow(projectId));
+  ipcMain.handle('open-project-activity-window', (_e, projectId) => openProjectActivityWindow(projectId));
 
   ipcMain.handle('initialize-app', async (_e, sharedPath) => {
     try {
@@ -1105,9 +1186,10 @@ function registerIPC() {
       db.initialize();
 
       auth = new Auth(db);
-      sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'companion', logger);
-      sync.initialize();
+      sync = new SyncEngine(db, resolvedSharedPath, 'unknown', 'companion', logger, { appDataDir: APP_DATA_DIR });
+      const initialEvents = sync.initialize();
       markSyncActivity();
+      await handlePulledSyncEvents(initialEvents);
       sync.startPolling((events) => {
         if (!events.length) {
           markSyncActivity();
@@ -1141,12 +1223,12 @@ function registerIPC() {
 
   ipcMain.handle('login', (_e, username) => {
     if (!auth || !db) return null;
-    auth.setUsername(username);
-    if (sync) sync.setUsername(username);
+    auth.setUsername(username); // Auth ignores renderer input and binds the Windows account.
     const user = auth.getCurrentUser();
     if (user) {
+      if (sync) sync.setActor(user);
       const config = loadConfig() || {};
-      config.loggedInUsername = username;
+      config.loggedInUsername = user.username;
       saveConfig(config);
       runtimeStatus.startupIssue = null;
       emitRuntimeStatus();
@@ -1180,35 +1262,57 @@ function registerIPC() {
     if (!db) return [];
     return db.getTasks(filters);
   });
+  ipcMain.handle('get-task-activity', (_e, taskId) => {
+    const task = db?.getTaskById(taskId);
+    return db && task && canMutateTask(currentActor(), task) ? db.getTaskActivity(taskId) : [];
+  });
+  ipcMain.handle('get-project-activity', (_e, projectId) => {
+    const project = db?.getProjectById(projectId);
+    return db && project && isPartner(currentActor()) ? db.getProjectActivity(projectId) : [];
+  });
+  ipcMain.handle('get-rollover-review-state', () => {
+    if (!db) return { active: false, week: null, startedAt: null };
+    const state = db.getRolloverReviewState();
+    return { ...state, active: state.active && state.week === getCurrentWeekStartString() };
+  });
 
   ipcMain.handle('create-task', (_e, data) => {
-    if (!db) return null;
+    const actor = currentActor();
+    if (!db || isRolloverReviewActive() || !canCreateTask(actor, data || {})) return null;
     const normalizedData = { ...data };
+    if (!isPartner(actor)) {
+      normalizedData.assigned_to = actor.id;
+      normalizedData.created_by = actor.id;
+    }
     if (normalizedData.completed !== undefined && normalizedData.status === undefined) {
       normalizedData.status = normalizedData.completed ? 'complete' : 'not_started';
     }
-    const task = db.createTask(normalizedData);
-    if (sync) sync.pushEvent('task-created', task);
+    const { task } = sync
+      ? createTaskCommand({ db, sync, actor, data: normalizedData })
+      : { task: db.createTask(normalizedData) };
     notifyDataChanged();
     return task;
   });
 
   ipcMain.handle('update-task', (_e, data) => {
-    if (!db) return null;
+    const existing = db?.getTaskById(data?.id);
+    if (!db || isRolloverReviewActive() || !canMutateTask(currentActor(), existing)) return null;
     const normalizedData = { ...data };
     if (normalizedData.completed !== undefined && normalizedData.status === undefined) {
       normalizedData.status = normalizedData.completed ? 'complete' : 'not_started';
     }
-    const task = db.updateTask(normalizedData);
-    if (sync) sync.pushEvent('task-updated', task);
+    const { task } = sync
+      ? updateTaskCommand({ db, sync, actor: currentActor(), data: normalizedData, existing })
+      : { task: db.updateTask(normalizedData) };
     notifyDataChanged();
     return task;
   });
 
   ipcMain.handle('delete-task', (_e, taskId) => {
-    if (!db) return false;
-    db.deleteTask(taskId);
-    if (sync) sync.pushEvent('task-deleted', { id: taskId });
+    const task = db?.getTaskById(taskId);
+    if (!db || isRolloverReviewActive() || !canMutateTask(currentActor(), task)) return false;
+    if (sync) deleteTaskCommand({ db, sync, actor: currentActor(), task });
+    else db.deleteTask(taskId);
     notifyDataChanged();
     return true;
   });
@@ -1229,12 +1333,16 @@ function registerIPC() {
   });
 
   ipcMain.handle('update-private-task', (_e, data) => {
-    if (!db) return null;
+    const actor = currentActor();
+    const existing = db?.getPrivateTaskById?.(data?.id);
+    if (!db || !actor || !existing || existing.owner_id !== actor.id) return null;
     return db.updatePrivateTask(data);
   });
 
   ipcMain.handle('delete-private-task', (_e, id) => {
-    if (!db) return false;
+    const actor = currentActor();
+    const existing = db?.getPrivateTaskById?.(id);
+    if (!db || !actor || !existing || existing.owner_id !== actor.id) return false;
     db.deletePrivateTask(id);
     return true;
   });
@@ -1254,7 +1362,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('create-subtask', (_e, data) => {
-    if (!db) return null;
+    if (!db || isRolloverReviewActive() || !canMutateTask(currentActor(), db.getTaskById(data?.task_id))) return null;
     const sub = db.createSubTask(data);
     if (sync) sync.pushEvent('subtask-created', sub);
     notifyDataChanged();
@@ -1262,7 +1370,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('update-subtask', (_e, data) => {
-    if (!db) return null;
+    if (!db || isRolloverReviewActive() || !canMutateSubtask(currentActor(), db.getSubTaskById(data?.id), (id) => db.getTaskById(id))) return null;
     const sub = db.updateSubTask(data);
     if (sync) sync.pushEvent('subtask-updated', sub);
     notifyDataChanged();
@@ -1270,7 +1378,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('delete-subtask', (_e, subId) => {
-    if (!db) return false;
+    if (!db || isRolloverReviewActive() || !canMutateSubtask(currentActor(), db.getSubTaskById(subId), (id) => db.getTaskById(id))) return false;
     db.deleteSubTask(subId);
     if (sync) sync.pushEvent('subtask-deleted', { id: subId });
     notifyDataChanged();
@@ -1278,7 +1386,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('toggle-subtask', (_e, subId) => {
-    if (!db) return null;
+    if (!db || isRolloverReviewActive() || !canMutateSubtask(currentActor(), db.getSubTaskById(subId), (id) => db.getTaskById(id))) return null;
     const sub = db.toggleSubTask(subId);
     if (sync) sync.pushEvent('subtask-toggled', sub);
     notifyDataChanged();
@@ -1292,8 +1400,9 @@ function registerIPC() {
   });
 
   ipcMain.handle('add-comment', (_e, data) => {
-    if (!db) return null;
-    const comment = db.addComment(data);
+    const actor = currentActor();
+    if (!db || isRolloverReviewActive() || !actor || !canMutateTask(actor, db.getTaskById(data?.task_id))) return null;
+    const comment = db.addComment({ ...data, author_id: actor.id });
     if (sync) sync.pushEvent('comment-added', comment);
     notifyDataChanged();
     return comment;
@@ -1306,7 +1415,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('create-project', (_e, data) => {
-    if (!db) return null;
+    if (!db || !isPartner(currentActor())) return null;
     const project = db.createProject(data);
     if (sync) sync.pushEvent('project-created', project);
     notifyDataChanged();
@@ -1314,7 +1423,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('update-project', (_e, data) => {
-    if (!db) return null;
+    if (!db || !isPartner(currentActor())) return null;
     const project = db.updateProject(data);
     if (sync) sync.pushEvent('project-updated', project);
     notifyDataChanged();
@@ -1322,7 +1431,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('delete-project', (_e, id) => {
-    if (!db) return null;
+    if (!db || !isPartner(currentActor())) return null;
     db.deleteProject(id);
     if (sync) sync.pushEvent('project-deleted', { id });
     notifyDataChanged();
@@ -1341,7 +1450,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('update-project-notes', (_e, data) => {
-    if (!db) return null;
+    if (!db || !isPartner(currentActor())) return null;
     const result = db.upsertProjectNotes(data);
     if (sync) sync.pushEvent('project-notes-updated', data);
     notifyDataChanged();
@@ -1359,7 +1468,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('create-project-shared-note', (_e, data) => {
-    if (!db) return null;
+    if (!db || !isPartner(currentActor())) return null;
     const result = db.createProjectSharedNote(data);
     if (sync) sync.pushEvent('project-shared-note-created', result);
     notifyDataChanged();
@@ -1367,7 +1476,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('update-project-shared-note', (_e, data) => {
-    if (!db) return null;
+    if (!db || !isPartner(currentActor())) return null;
     const result = db.updateProjectSharedNote(data);
     if (result && sync) sync.pushEvent('project-shared-note-updated', result);
     notifyDataChanged();
@@ -1375,7 +1484,7 @@ function registerIPC() {
   });
 
   ipcMain.handle('delete-project-shared-note', (_e, id) => {
-    if (!db) return false;
+    if (!db || !isPartner(currentActor())) return false;
     db.deleteProjectSharedNote(id);
     if (sync) sync.pushEvent('project-shared-note-deleted', { id });
     notifyDataChanged();
@@ -1398,6 +1507,7 @@ function registerIPC() {
   // Sync
   ipcMain.handle('force-sync', async () => {
     if (!sync) return false;
+    sync.flushOutbox();
     const events = sync.retryFailedFiles();
     if (events.length === 0) {
       markSyncActivity();
@@ -1420,6 +1530,7 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    appendDiagnostics({ scope: 'main', type: 'app-ready-start' });
     logger?.info('app-ready', { pid: process.pid });
     app.setAppUserModelId(APP_USER_MODEL_ID);
     repairWindowsShortcutIdentity();
@@ -1474,9 +1585,11 @@ if (!gotSingleInstanceLock) {
           runtimeStatus.startupIssue = null;
         }
 
-        sync = new SyncEngine(db, resolvedSharedPath, config.loggedInUsername || 'unknown', 'companion', logger);
-        sync.initialize();
+        sync = new SyncEngine(db, resolvedSharedPath, config.loggedInUsername || 'unknown', 'companion', logger, { appDataDir: APP_DATA_DIR });
+        if (auth.getCurrentUser()) sync.setActor(auth.getCurrentUser());
+        const initialEvents = sync.initialize();
         markSyncActivity();
+        await handlePulledSyncEvents(initialEvents);
         sync.startPolling((events) => {
           if (!events.length) {
             markSyncActivity();
@@ -1491,6 +1604,7 @@ if (!gotSingleInstanceLock) {
           await updateManager.checkForUpdates({ promptIfAvailable: true });
         }
         emitRuntimeStatus();
+        appendDiagnostics({ scope: 'main', type: 'runtime-initialized', mode: 'saved-config' });
       } catch (err) {
         closeRuntime();
         runtimeStatus.startupIssue = {
@@ -1499,6 +1613,7 @@ if (!gotSingleInstanceLock) {
         };
         emitRuntimeStatus();
         console.error('Failed to initialize:', err.message);
+        appendDiagnostics({ scope: 'main', type: 'runtime-initialize-failed', message: err.message });
       }
     }
   });
@@ -1522,6 +1637,7 @@ if (!gotSingleInstanceLock) {
 
   app.on('before-quit', () => {
     logger?.info('before-quit');
+    appendDiagnostics({ scope: 'main', type: 'before-quit' });
     isQuitting = true;
   });
 }

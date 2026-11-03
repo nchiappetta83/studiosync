@@ -109,6 +109,13 @@
 }
 
 /* ── Due Date Label (click opens calendar, V4 style) ── */
+.task-bulk-select {
+  width: 15px;
+  height: 15px;
+  margin: 0 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 
 .task-due-label {
   font-size: 11px;
@@ -739,10 +746,11 @@
   background: transparent;
   width: 100%;
   padding: 2px 0;
-  outline: none;
+  cursor: default;
+  user-select: none;
 }
 
-.project-card-notes::placeholder {
+.project-card-notes-empty {
   color: var(--text-tertiary);
 }
 

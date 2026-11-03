@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const DeviceTrust = require('./deviceTrust');
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -16,6 +17,26 @@ function hasSortableItems(value) {
     && typeof item.id === 'string'
     && Number.isFinite(Number(item.sort_order))
   );
+}
+
+function isRolloverPublication(value) {
+  return isObject(value)
+    && typeof value.week === 'string'
+    && typeof value.publicationId === 'string'
+    && value.publicationId.trim().length > 0
+    && Array.isArray(value.tasks)
+    && value.tasks.every(hasStringId)
+    && Array.isArray(value.deletedTaskIds)
+    && value.deletedTaskIds.every((id) => typeof id === 'string' && id.trim().length > 0)
+    && (value.clearPTO === undefined || typeof value.clearPTO === 'boolean')
+    && (value.baseTaskUpdatedAt === undefined || isObject(value.baseTaskUpdatedAt));
+}
+
+function isRolloverReviewStart(value) {
+  return isObject(value)
+    && typeof value.week === 'string'
+    && value.week.trim().length > 0
+    && (value.startedAt === undefined || typeof value.startedAt === 'string');
 }
 
 const EVENT_VALIDATORS = {
@@ -51,11 +72,14 @@ const EVENT_VALIDATORS = {
   'priorities-reordered': hasSortableItems,
   'setting-updated': (value) => isObject(value) && typeof value.key === 'string',
   'weekly-rollover': (value) => value === undefined || value === null || isObject(value),
+  'rollover-review-started': isRolloverReviewStart,
+  'rollover-published': isRolloverPublication,
   'task-confirmed': hasStringId,
+  'task-activity-added': (value) => hasStringId(value) && typeof value.task_id === 'string' && typeof value.action === 'string',
 };
 
 class SyncEngine {
-  constructor(db, sharedDrivePath, username, source = 'companion', logger = null) {
+  constructor(db, sharedDrivePath, username, source = 'companion', logger = null, options = {}) {
     this.db = db;
     this.sharedDrivePath = sharedDrivePath;
     this.username = username || 'unknown';
@@ -73,6 +97,7 @@ class SyncEngine {
     this.processedFilesLoaded = false;
     this.failedFiles = new Map();
     this.logger = logger;
+    this.deviceTrust = options.appDataDir ? new DeviceTrust({ appDataDir: options.appDataDir, sharedDrivePath, source, logger }) : null;
   }
 
   getFailureSummary() {
@@ -106,16 +131,23 @@ class SyncEngine {
 
     this._ensureProcessedFilesLoaded();
     this._seedProcessedFilesFromLegacyCursor();
+    this.flushOutbox();
 
     const isFreshDb = !this.db.getLastSyncTimestamp() && this.processedFiles.size === 0;
-    this.pull(isFreshDb);
+    // The caller needs the initial events as well.  The window may already
+    // have loaded its cached rows while this synchronous catch-up is running;
+    // without returning them, the renderer never receives a data-updated
+    // notification because the next polling pass finds nothing new.
+    const initialEvents = this.pull(isFreshDb);
     this._maybeCleanup();
+    return initialEvents;
   }
 
   startPolling(onUpdate, onStatusChange) {
     this.stopPolling();
     this.pollInterval = setInterval(() => {
       try {
+        this.flushOutbox();
         const previousFailureState = JSON.stringify(this.getFailureSummary());
         const appliedEvents = this.pull();
         this._maybeCleanup();
@@ -132,6 +164,15 @@ class SyncEngine {
     this.username = username || 'unknown';
   }
 
+  setActor(actor) {
+    this.setUsername(actor?.username || 'unknown');
+    this.deviceTrust?.setActor(actor);
+  }
+
+  getDeviceTrustStatus() {
+    return this.deviceTrust?.getStatus() || null;
+  }
+
   stopPolling() {
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
@@ -146,11 +187,20 @@ class SyncEngine {
   pull(includeOwnEvents = false) {
     this._ensureProcessedFilesLoaded();
     this._seedProcessedFilesFromLegacyCursor();
-    let files;
+    let pendingFiles;
 
     try {
-      files = fs.readdirSync(this.eventsDir)
+      const now = Date.now();
+      // Only files still waiting to be applied are worth a stat() call.  The
+      // event log is append-only, so statting every file on every poll costs
+      // more as it grows (a network round trip each on a shared drive).
+      pendingFiles = fs.readdirSync(this.eventsDir)
         .filter((file) => file.endsWith('.json'))
+        .filter((file) => {
+          if (this.processedFiles.has(file)) return false;
+          const failure = this.failedFiles.get(file);
+          return !failure || failure.nextRetryAt <= now;
+        })
         .map((file) => {
           const filePath = path.join(this.eventsDir, file);
           let mtimeMs = 0;
@@ -169,12 +219,6 @@ class SyncEngine {
       return [];
     }
 
-    const now = Date.now();
-    const pendingFiles = files.filter(({ file }) => {
-      if (this.processedFiles.has(file)) return false;
-      const failure = this.failedFiles.get(file);
-      return !failure || failure.nextRetryAt <= now;
-    });
     if (pendingFiles.length === 0) return [];
 
     const appliedEvents = [];
@@ -208,64 +252,74 @@ class SyncEngine {
    * The event is already applied locally before this is called.
    */
   pushEvent(type, data) {
-    this._ensureProcessedFilesLoaded();
+    const event = this.createEvent(type, data);
 
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const shortId = uuidv4().split('-')[0];
-    const filename = `${timestamp}_${this.username}_${type}_${shortId}.json`;
+    try {
+      this.db.queueSyncEvent(event);
+      return this.flushOutbox(event.eventId);
+    } catch (err) {
+      this.logger?.error('Sync outbox queue failed', { type, error: err.message });
+      console.error('Error queueing sync event:', err.message);
+      return false;
+    }
+  }
 
+  createEvent(type, data) {
     const event = {
+      eventId: uuidv4(),
+      schemaVersion: 2,
       type,
       data,
       author: this.username,
       source: this.source,
+      deviceId: this.instanceId,
       instanceId: this.instanceId,
       timestamp: new Date().toISOString()
     };
+    return this.deviceTrust?.signEvent(event) || event;
+  }
+
+  getOutboxSummary() {
+    return this.db.getSyncOutboxSummary?.() || { pending: 0, attempts: 0, lastError: null, oldestQueuedAt: null };
+  }
+
+  flushOutbox(targetEventId = null) {
+    this._ensureProcessedFilesLoaded();
+    let targetPublished = false;
+    for (const queued of this.db.getQueuedSyncEvents?.() || []) {
+      try {
+        this._writeQueuedEvent(queued.event);
+        this.db.markSyncEventPublished(queued.event_id);
+        if (queued.event_id === targetEventId) targetPublished = true;
+      } catch (err) {
+        this.db.recordSyncEventFailure(queued.event_id, err.message);
+        this.logger?.warn('Sync outbox delivery failed', { eventId: queued.event_id, type: queued.event?.type, error: err.message });
+      }
+    }
+    return targetEventId ? targetPublished : true;
+  }
+
+  _writeQueuedEvent(event) {
+    if (!event?.eventId || !event.type) throw new Error('Queued sync event is incomplete.');
+    const timestamp = String(event.timestamp || new Date().toISOString()).replace(/[:.]/g, '-');
+    const filename = `${timestamp}_${this.username}_${event.type}_${String(event.eventId).slice(0, 8)}.json`;
 
     const filePath = path.join(this.eventsDir, filename);
     const tempPath = `${filePath}.tmp-${this.instanceId}`;
-
-    try {
-      fs.writeFileSync(tempPath, JSON.stringify(event, null, 2), 'utf-8');
-      fs.renameSync(tempPath, filePath);
-      this._markFileProcessed(filename);
-    } catch (err) {
-      try {
-        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-      } catch (_) {}
-      console.error('Error pushing event:', err.message);
-    }
+    try { fs.writeFileSync(tempPath, JSON.stringify(event, null, 2), 'utf-8'); fs.renameSync(tempPath, filePath); }
+    catch (err) { try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {} throw err; }
+    this._markFileProcessed(filename);
   }
 
   /**
-   * Clean up old event files (older than 7 days).
-   * Called periodically or on app startup by a partner.
+   * Placeholder for future snapshot-verified compaction.
+   * Replay history is deliberately retained for recovery and new-device bootstrap.
    */
-  cleanup(daysOld = 30) {
-    try {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - daysOld);
-      const cutoffStr = cutoff.toISOString().replace(/[:.]/g, '-');
-
-      let removed = 0;
-      removed += this._cleanupDirectory(this.eventsDir, cutoffStr);
-      removed += this._cleanupDirectory(this.snapshotsDir, cutoffStr);
-
-      this.db.cleanupProcessedSyncFiles(cutoffStr);
-      for (const filename of [...this.processedFiles]) {
-        if (filename < cutoffStr) {
-          this.processedFiles.delete(filename);
-          this.failedFiles.delete(filename);
-        }
-      }
-
-      if (removed > 0) {
-        this.logger?.info('Sync cleanup removed old sync files', { removed });
-      }
-    } catch (err) {
-      console.error('Sync cleanup error:', err.message);
-    }
+  cleanup() {
+    // Event files are the recovery source for a fresh or repaired local database.
+    // Do not prune them until a verified, authoritative snapshot protocol is in place.
+    // Losing replay history is worse than retaining a modest append-only audit log.
+    return 0;
   }
 
   _maybeCleanup() {
@@ -362,9 +416,17 @@ class SyncEngine {
     if (typeof event.type !== 'string' || !event.type.trim()) {
       throw new Error(`Event file ${filename} is missing a valid type`);
     }
+    if (event.eventId !== undefined && (typeof event.eventId !== 'string' || !event.eventId.trim())) {
+      throw new Error(`Event file ${filename} has an invalid eventId`);
+    }
+    const signatureResult = this.deviceTrust?.verifyEvent(event);
+    if (signatureResult && !signatureResult.valid) throw new Error(signatureResult.error);
 
     const validator = EVENT_VALIDATORS[event.type];
-    if (validator && !validator(event.data)) {
+    if (!validator) {
+      throw new Error(`Event file ${filename} has unsupported type ${event.type}`);
+    }
+    if (!validator(event.data)) {
       throw new Error(`Event file ${filename} has invalid payload for ${event.type}`);
     }
   }

@@ -8,7 +8,23 @@ const {
   PRIORITY_CUSTOM,
   buildCustomPriorityLabel,
 } = require('./priority');
-const DB_SCHEMA_VERSION = 13;
+const DB_SCHEMA_VERSION = 20;
+const AVATAR_COLOR_PATTERN = /^#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?$/;
+
+function normalizeSharedTaskTitle(value) {
+  return String(value || '')
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/\s*[|\u2013\u2014]\s*/g, '|');
+}
+
+function normalizeAvatarColor(value, fallback = '#5856A6') {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value !== 'string' || !AVATAR_COLOR_PATTERN.test(value)) {
+    throw new Error('Avatar color must be a #RRGGBB or #RRGGBBAA value.');
+  }
+  return value.toUpperCase();
+}
 
 class Database {
   constructor(dbPath, logger = null) {
@@ -26,9 +42,19 @@ class Database {
 
   close() {
     if (this.db) {
-      this.optimizeStorage();
       this.db.close();
+      this.db = null;
     }
+  }
+
+  runInTransaction(operation) {
+    if (!this.db) throw new Error('Database is not open.');
+    return this.db.transaction(operation)();
+  }
+
+  async backupTo(filePath) {
+    if (!this.db) throw new Error('Database is not open.');
+    return this.db.backup(filePath);
   }
 
   optimizeStorage(options = {}) {
@@ -192,8 +218,11 @@ class Database {
           id            TEXT PRIMARY KEY,
           task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
           title         TEXT NOT NULL DEFAULT '',
+          notes         TEXT NOT NULL DEFAULT '',
+          due_date      TEXT,
           completed     INTEGER NOT NULL DEFAULT 0,
           assigned_to   TEXT REFERENCES users(id) ON DELETE SET NULL,
+          assigned_to_ids TEXT NOT NULL DEFAULT '[]',
           created_by    TEXT REFERENCES users(id) ON DELETE SET NULL,
           sort_order    INTEGER NOT NULL DEFAULT 0,
           created_at    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -360,7 +389,7 @@ class Database {
       }
     });
 
-    this._runMigrationIfNeeded(version, DB_SCHEMA_VERSION, function migrateV13() {
+    this._runMigrationIfNeeded(version, 13, function migrateV13() {
       this._addColumnIfMissing('project_notes', 'title', `TEXT NOT NULL DEFAULT 'General'`);
       this._addColumnIfMissing('project_notes', 'created_by', 'TEXT');
       this._addColumnIfMissing('project_notes', 'created_at', `TEXT NOT NULL DEFAULT (datetime('now'))`);
@@ -381,6 +410,83 @@ class Database {
 
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_project_notes_project_updated ON project_notes(project_id, updated_at DESC)`);
     });
+
+    this._runMigrationIfNeeded(version, 14, function migrateV14() {
+      // A rollover publication may be delivered more than once by the shared
+      // folder.  Keep the publication ID durably so application is idempotent.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS applied_rollover_publications (
+          publication_id TEXT PRIMARY KEY,
+          applied_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    });
+
+    this._runMigrationIfNeeded(version, 15, function migrateV15() {
+      const users = this.db.prepare('SELECT id, avatar_color FROM users').all();
+      const resetColor = this.db.prepare("UPDATE users SET avatar_color = '#5856A6' WHERE id = ?");
+      for (const user of users) {
+        if (!AVATAR_COLOR_PATTERN.test(String(user.avatar_color || ''))) resetColor.run(user.id);
+      }
+    });
+
+    this._runMigrationIfNeeded(version, 16, function migrateV16() {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS task_activity (
+          id         TEXT PRIMARY KEY,
+          task_id    TEXT NOT NULL,
+          action     TEXT NOT NULL,
+          actor_id   TEXT,
+          details    TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_activity_task_created ON task_activity(task_id, created_at DESC);
+      `);
+    });
+
+    this._runMigrationIfNeeded(version, 17, function migrateV17() {
+      this._addColumnIfMissing('task_activity', 'project_id', 'TEXT');
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_task_activity_project_created ON task_activity(project_id, created_at DESC)');
+    });
+
+    this._runMigrationIfNeeded(version, 18, function migrateV18() {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_outbox (
+          event_id     TEXT PRIMARY KEY,
+          event_json   TEXT NOT NULL,
+          status       TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'published')),
+          attempts     INTEGER NOT NULL DEFAULT 0,
+          last_error   TEXT,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          published_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_outbox_status_created ON sync_outbox(status, created_at);
+      `);
+    });
+
+    this._runMigrationIfNeeded(version, 19, function migrateV19() {
+      if (this._addColumnIfMissing('sub_tasks', 'assigned_to_ids', "TEXT NOT NULL DEFAULT '[]'")) {
+        this.db.exec(`
+          UPDATE sub_tasks
+          SET assigned_to_ids = CASE
+            WHEN assigned_to IS NULL OR TRIM(assigned_to) = '' THEN '[]'
+            ELSE json_array(assigned_to)
+          END
+        `);
+      }
+      this._addColumnIfMissing('sub_tasks', 'notes', "TEXT NOT NULL DEFAULT ''");
+      this._addColumnIfMissing('sub_tasks', 'due_date', 'TEXT');
+    });
+
+    this._runMigrationIfNeeded(version, 20, function migrateV20() {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS task_tombstones (
+          task_id    TEXT PRIMARY KEY,
+          deleted_at TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    });
   }
 
   _getMetaInt(key, defaultVal) {
@@ -393,7 +499,58 @@ class Database {
   }
 
   _getCurrentTimestamp() {
-    return new Date().toISOString().slice(0, 19).replace('T', ' ');
+    return new Date().toISOString();
+  }
+
+  _timestampMillis(value) {
+    if (!value) return 0;
+    const text = String(value).includes('T') ? String(value) : `${String(value).replace(' ', 'T')}Z`;
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  _compareTimestamps(left, right) {
+    return this._timestampMillis(left) - this._timestampMillis(right);
+  }
+
+  // Stamp a local task edit so it always sorts after the version it replaces,
+  // even when this PC's clock is behind the machine that wrote that version.
+  // Receivers keep the newest updated_at, so a plain clock reading would let an
+  // older-stamped later edit be silently discarded.
+  _getNextTaskTimestamp(taskId) {
+    const previous = this.db.prepare('SELECT updated_at FROM tasks WHERE id = ?').get(taskId)?.updated_at;
+    return new Date(Math.max(Date.now(), this._timestampMillis(previous) + 1)).toISOString();
+  }
+
+  _normalizeAssignedUserIds(value, fallback = null) {
+    const raw = Array.isArray(value)
+      ? value
+      : (() => {
+          if (typeof value !== 'string' || !value.trim()) return [];
+          try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch (_) {
+            return [];
+          }
+        })();
+    const uniqueIds = [...new Set(raw
+      .filter((item) => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean))];
+    if (!uniqueIds.length && fallback && typeof fallback === 'string' && fallback.trim()) {
+      uniqueIds.push(fallback.trim());
+    }
+    return uniqueIds;
+  }
+
+  _normalizeSubTaskPayload(data = {}) {
+    const assignedToIds = this._normalizeAssignedUserIds(data.assigned_to_ids, data.assigned_to || null);
+    return {
+      ...data,
+      assigned_to: assignedToIds[0] || null,
+      assigned_to_ids: JSON.stringify(assignedToIds),
+    };
   }
 
   _normalizeProjectNotePayload(data = {}) {
@@ -447,6 +604,41 @@ class Database {
 
   cleanupProcessedSyncFiles(cutoffStr) {
     this.db.prepare('DELETE FROM sync_processed_events WHERE filename < ?').run(cutoffStr);
+  }
+
+  queueSyncEvent(event) {
+    if (!event?.eventId) throw new Error('Sync event must have an eventId.');
+    this.db.prepare(`
+      INSERT OR IGNORE INTO sync_outbox (event_id, event_json, status, created_at)
+      VALUES (?, ?, 'queued', ?)
+    `).run(event.eventId, JSON.stringify(event), event.timestamp || this._getCurrentTimestamp());
+  }
+
+  getQueuedSyncEvents(limit = 100) {
+    return this.db.prepare(`
+      SELECT event_id, event_json, attempts, last_error, created_at
+      FROM sync_outbox WHERE status = 'queued'
+      ORDER BY julianday(created_at), rowid LIMIT ?
+    `).all(Math.max(1, Math.min(Number(limit) || 100, 500))).map((row) => ({
+      ...row,
+      event: JSON.parse(row.event_json),
+    }));
+  }
+
+  markSyncEventPublished(eventId) {
+    this.db.prepare(`UPDATE sync_outbox SET status = 'published', published_at = datetime('now'), last_error = NULL WHERE event_id = ?`).run(eventId);
+  }
+
+  recordSyncEventFailure(eventId, error) {
+    this.db.prepare(`UPDATE sync_outbox SET attempts = attempts + 1, last_error = ? WHERE event_id = ?`).run(String(error || 'Unknown sync write error'), eventId);
+  }
+
+  getSyncOutboxSummary() {
+    return this.db.prepare(`
+      SELECT COUNT(*) AS pending, COALESCE(SUM(attempts), 0) AS attempts,
+        MAX(last_error) AS lastError, MIN(created_at) AS oldestQueuedAt
+      FROM sync_outbox WHERE status = 'queued'
+    `).get();
   }
 
   _globalSettingKey(key) {
@@ -684,7 +876,7 @@ class Database {
   createUser(data) {
     const id = data.id || uuidv4();
     const avatarColors = ['#5856A6', '#3D8A6E', '#A8803F', '#5478A3', '#A65C5C', '#7E5FA6', '#3D8A9E'];
-    const color = data.avatar_color || avatarColors[Math.floor(Math.random() * avatarColors.length)];
+    const color = normalizeAvatarColor(data.avatar_color, avatarColors[Math.floor(Math.random() * avatarColors.length)]);
     const maxOrder = this.db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM users').get().m;
 
     const firstName = data.first_name || '';
@@ -711,6 +903,7 @@ class Database {
   updateUser(data) {
     const fields = [];
     const values = [];
+    if (data.avatar_color !== undefined) data = { ...data, avatar_color: normalizeAvatarColor(data.avatar_color) };
     for (const key of ['display_name', 'role', 'avatar_color', 'sort_order', 'active', 'username', 'first_name', 'last_name', 'business_role_id', 'is_admin', 'windows_username', 'can_self_assign']) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
@@ -797,6 +990,62 @@ class Database {
     return this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
   }
 
+  getSharedTaskDueDate(projectId, title) {
+    const normalizedTitle = normalizeSharedTaskTitle(title);
+    if (!projectId || !normalizedTitle) return null;
+
+    const matches = this.db.prepare(`
+      SELECT title, due_date
+      FROM tasks
+      WHERE project_id = ?
+        AND due_date IS NOT NULL
+        AND trim(due_date) <> ''
+      ORDER BY datetime(updated_at) DESC, rowid DESC
+    `).all(projectId);
+    const match = matches.find((task) => normalizeSharedTaskTitle(task.title) === normalizedTitle);
+
+    return match?.due_date || null;
+  }
+
+  addTaskActivity(data = {}) {
+    if (!data.task_id || !data.action) return null;
+    const activity = {
+      id: data.id || uuidv4(),
+      task_id: data.task_id,
+      project_id: data.project_id || null,
+      action: data.action,
+      actor_id: data.actor_id || null,
+      details: typeof data.details === 'string' ? data.details : JSON.stringify(data.details || {}),
+      created_at: data.created_at || this._getCurrentTimestamp(),
+    };
+    this.db.prepare(`INSERT OR IGNORE INTO task_activity (id, task_id, project_id, action, actor_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(activity.id, activity.task_id, activity.project_id, activity.action, activity.actor_id, activity.details, activity.created_at);
+    return this.db.prepare('SELECT * FROM task_activity WHERE id = ?').get(activity.id);
+  }
+
+  getTaskActivity(taskId, limit = 40) {
+    return this.db.prepare(`
+      SELECT activity.*, users.display_name AS actor_name
+      FROM task_activity activity
+      LEFT JOIN users ON users.id = activity.actor_id
+      WHERE activity.task_id = ?
+      ORDER BY datetime(activity.created_at) DESC, activity.id DESC
+      LIMIT ?
+    `).all(taskId, Math.max(1, Math.min(Number(limit) || 40, 100)));
+  }
+
+  getProjectActivity(projectId, limit = 100) {
+    return this.db.prepare(`
+      SELECT activity.*, users.display_name AS actor_name, tasks.title AS task_title
+      FROM task_activity activity
+      LEFT JOIN users ON users.id = activity.actor_id
+      LEFT JOIN tasks ON tasks.id = activity.task_id
+      WHERE activity.project_id = ? OR (activity.project_id IS NULL AND tasks.project_id = ?)
+      ORDER BY datetime(activity.created_at) DESC, activity.id DESC
+      LIMIT ?
+    `).all(projectId, projectId, Math.max(1, Math.min(Number(limit) || 100, 250)));
+  }
+
   createTask(data) {
     const id = data.id || uuidv4();
     const maxOrder = this.db.prepare(
@@ -804,8 +1053,8 @@ class Database {
     ).get(data.assigned_to || null)?.m || 0;
 
     this.db.prepare(`
-      INSERT INTO tasks (id, project_id, assigned_to, created_by, title, notes, priority, priority_label, due_date, sort_order, confirmed, partner_id, category, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, project_id, assigned_to, created_by, title, notes, priority, priority_label, due_date, sort_order, confirmed, partner_id, category, status, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.project_id || null,
@@ -820,7 +1069,8 @@ class Database {
       data.confirmed ?? 1,
       data.partner_id || null,
       data.category || 'current',
-      data.status || (data.completed ? 'complete' : 'not_started')
+      data.status || (data.completed ? 'complete' : 'not_started'),
+      data.updated_at || this._getCurrentTimestamp()
     );
 
     return this.getTaskById(id);
@@ -836,7 +1086,8 @@ class Database {
       }
     }
     if (fields.length === 0) return this.getTaskById(data.id);
-    fields.push("updated_at = datetime('now')");
+    fields.push('updated_at = ?');
+    values.push(data.updated_at || this._getNextTaskTimestamp(data.id));
     values.push(data.id);
     this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
     return this.getTaskById(data.id);
@@ -844,6 +1095,21 @@ class Database {
 
   deleteTask(id) {
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+  }
+
+  getTaskTombstone(taskId) {
+    return this.db.prepare('SELECT * FROM task_tombstones WHERE task_id = ?').get(taskId) || null;
+  }
+
+  recordTaskDeletion(taskId, deletedAt = this._getCurrentTimestamp()) {
+    const existing = this.getTaskTombstone(taskId);
+    if (existing && this._compareTimestamps(existing.deleted_at, deletedAt) >= 0) return existing;
+    this.db.prepare(`
+      INSERT INTO task_tombstones (task_id, deleted_at)
+      VALUES (?, ?)
+      ON CONFLICT(task_id) DO UPDATE SET deleted_at = excluded.deleted_at
+    `).run(taskId, deletedAt);
+    return this.getTaskTombstone(taskId);
   }
 
   reorderTasks(orders) {
@@ -869,26 +1135,29 @@ class Database {
   }
 
   createSubTask(data) {
+    const normalized = this._normalizeSubTaskPayload(data);
     const id = data.id || uuidv4();
     const maxOrder = this.db.prepare(
       'SELECT COALESCE(MAX(sort_order), 0) as m FROM sub_tasks WHERE task_id = ?'
     ).get(data.task_id).m;
 
     this.db.prepare(`
-      INSERT INTO sub_tasks (id, task_id, title, assigned_to, created_by, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, data.task_id, data.title || '', data.assigned_to || null, data.created_by || null, maxOrder + 1);
+      INSERT INTO sub_tasks (id, task_id, title, notes, due_date, assigned_to, assigned_to_ids, created_by, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.task_id, data.title || '', data.notes || '', data.due_date || null, normalized.assigned_to, normalized.assigned_to_ids, data.created_by || null, maxOrder + 1);
 
     return this.getSubTaskById(id);
   }
 
   updateSubTask(data) {
+    const normalized = this._normalizeSubTaskPayload(data);
     const fields = [];
     const values = [];
-    for (const key of ['title', 'completed', 'assigned_to', 'sort_order']) {
-      if (data[key] !== undefined) {
+    for (const key of ['title', 'notes', 'due_date', 'completed', 'assigned_to', 'assigned_to_ids', 'sort_order']) {
+      const source = Object.prototype.hasOwnProperty.call(normalized, key) ? normalized : data;
+      if (source[key] !== undefined) {
         fields.push(`${key} = ?`);
-        values.push(data[key]);
+        values.push(source[key]);
       }
     }
     if (fields.length === 0) return this.getSubTaskById(data.id);
@@ -1128,7 +1397,6 @@ class Database {
 
   performWeeklyRollover(weekStr = null) {
     const transaction = this.db.transaction(() => {
-      this.db.prepare('DELETE FROM tasks WHERE completed = 1').run();
       const carryoverTokens = this.getPriorityCarryoverTokens();
       const carryoverTokenSet = carryoverTokens ? new Set(carryoverTokens) : null;
       const customCarryoverLabels = this._getCustomPriorityCarryoverLabels(carryoverTokenSet);
@@ -1149,7 +1417,7 @@ class Database {
         WHERE id = ?
       `);
 
-      // Move all tasks into carry-over review state for the new week.
+      // Move every task, including completed work, into carry-over review for the new week.
       // Keep due dates only if they land in the new week or later.
       for (const task of tasks) {
         const shouldCarryPriority = this._shouldCarryTaskPriority(task, carryoverTokenSet, customCarryoverLabels);
@@ -1323,9 +1591,9 @@ class Database {
       case 'user-created':    return this._upsertUser(event.data);
       case 'user-updated':    return this._upsertUser(event.data);
       case 'user-deleted':    return this.deleteUser(event.data.id);
-      case 'task-created':    return this._upsertTask(event.data);
-      case 'task-updated':    return this._upsertTask(event.data);
-      case 'task-deleted':    return this.deleteTask(event.data.id);
+      case 'task-created':    return this._upsertTask({ ...event.data, updated_at: event.data.updated_at || event.timestamp });
+      case 'task-updated':    return this._applyCompatibilityEvent(event.data, () => this._upsertTask({ ...event.data, updated_at: event.data.updated_at || event.timestamp }));
+      case 'task-deleted':    return this._applyCompatibilityEvent(event.data, () => this._applyTaskDeletion(event.data, event.timestamp));
       case 'tasks-reordered': return this.reorderTasks(event.data);
       case 'subtask-created': return this._upsertSubTask(event.data);
       case 'subtask-updated': return this._upsertSubTask(event.data);
@@ -1337,7 +1605,7 @@ class Database {
       case 'project-updated': return this._upsertProject(event.data);
       case 'project-deleted': return this.deleteProject(event.data.id);
       case 'pto-set':         return this._upsertPTO(event.data);
-      case 'pto-cleared':     return this.clearPTO(event.data.user_id);
+      case 'pto-cleared':     return this._applyCompatibilityEvent(event.data, () => this.clearPTO(event.data.user_id));
       case 'project-notes-updated': return this.upsertProjectNotes(event.data);
       case 'project-shared-note-created': return this._upsertProjectSharedNote(event.data);
       case 'project-shared-note-updated': return this._upsertProjectSharedNote(event.data);
@@ -1352,7 +1620,9 @@ class Database {
       case 'priorities-reordered': return this.reorderCustomPriorities(event.data);
       case 'setting-updated':   return this._applyGlobalSetting(event.data);
       case 'weekly-rollover':   return this._applyRollover(event.data);
+      case 'rollover-published': return this.applyRolloverPublication(event.data);
       case 'task-confirmed':    return this.confirmTask(event.data.id);
+      case 'task-activity-added': return this.addTaskActivity(event.data);
       default:
         console.warn('Unknown event type:', event.type);
     }
@@ -1367,13 +1637,35 @@ class Database {
     }
   }
 
-  _upsertTask(data) {
-    const existing = this.getTaskById(data.id);
-    if (existing) {
-      return this.updateTask(data);
-    } else {
-      return this.createTask(data);
+  _applyCompatibilityEvent(data, apply) {
+    const publicationId = data?.rolloverPublicationId;
+    if (publicationId && this.db.prepare('SELECT 1 FROM applied_rollover_publications WHERE publication_id = ?').get(publicationId)) {
+      return null;
     }
+    return apply();
+  }
+
+  _upsertTask(data) {
+    const incomingUpdatedAt = data.updated_at || this._getCurrentTimestamp();
+    const tombstone = this.getTaskTombstone(data.id);
+    if (tombstone && this._compareTimestamps(tombstone.deleted_at, incomingUpdatedAt) >= 0) return null;
+    const existing = this.getTaskById(data.id);
+    if (existing && this._compareTimestamps(existing.updated_at, incomingUpdatedAt) > 0) return existing;
+    if (tombstone) this.db.prepare('DELETE FROM task_tombstones WHERE task_id = ?').run(data.id);
+    if (existing) {
+      return this.updateTask({ ...data, updated_at: incomingUpdatedAt });
+    } else {
+      return this.createTask({ ...data, updated_at: incomingUpdatedAt });
+    }
+  }
+
+  _applyTaskDeletion(data = {}, eventTimestamp = null) {
+    const deletedAt = data.deleted_at || eventTimestamp || this._getCurrentTimestamp();
+    const existing = this.getTaskById(data.id);
+    if (existing && this._compareTimestamps(existing.updated_at, deletedAt) > 0) return existing;
+    const tombstone = this.recordTaskDeletion(data.id, deletedAt);
+    this.deleteTask(data.id);
+    return tombstone;
   }
 
   _upsertSubTask(data) {
@@ -1435,6 +1727,40 @@ class Database {
   _applyRollover(data) {
     this.performWeeklyRollover(data?.week || null);
     if (data.week) this.setLastRolloverWeek(data.week);
+  }
+
+  applyRolloverPublication(data = {}) {
+    const transaction = this.db.transaction(() => {
+      if (!data.publicationId) throw new Error('Rollover publication is missing its publication ID');
+      const applied = this.db.prepare('SELECT 1 FROM applied_rollover_publications WHERE publication_id = ?').get(data.publicationId);
+      if (applied) return { applied: false, duplicate: true, conflicts: [] };
+
+      const conflicts = [];
+      for (const taskId of data.deletedTaskIds || []) {
+        const existing = this.getTaskById(taskId);
+        const baseUpdatedAt = data.baseTaskUpdatedAt?.[taskId];
+        if (existing && baseUpdatedAt && this._compareTimestamps(existing.updated_at, baseUpdatedAt) > 0) {
+          conflicts.push(taskId);
+          continue;
+        }
+        this.recordTaskDeletion(taskId, data.publishedAt || this._getCurrentTimestamp());
+        this.deleteTask(taskId);
+      }
+      for (const task of data.tasks || []) {
+        const existing = this.getTaskById(task.id);
+        const baseUpdatedAt = data.baseTaskUpdatedAt?.[task.id];
+        if (existing && baseUpdatedAt && this._compareTimestamps(existing.updated_at, baseUpdatedAt) > 0) {
+          conflicts.push(task.id);
+          continue;
+        }
+        this._upsertTask(task);
+      }
+      if (data.clearPTO === true) this.db.exec('DELETE FROM staff_pto_dates');
+      if (data.week) this.setLastRolloverWeek(data.week);
+      this.db.prepare('INSERT INTO applied_rollover_publications (publication_id) VALUES (?)').run(data.publicationId);
+      return { applied: true, duplicate: false, conflicts };
+    });
+    return transaction();
   }
 }
 

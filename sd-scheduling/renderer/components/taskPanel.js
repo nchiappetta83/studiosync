@@ -3,6 +3,30 @@
  */
 
 const TaskPanel = {
+  _bulkTaskIds: new Set(),
+
+  getBulkTaskIds() {
+    return [...this._bulkTaskIds];
+  },
+
+  clearBulkSelection() {
+    this._bulkTaskIds.clear();
+    document.dispatchEvent(new CustomEvent('bulk-selection-changed', { detail: { count: 0 } }));
+    this.render();
+  },
+  _escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+
+  _escapeAttr(value) {
+    return this._escapeHtml(value);
+  },
+
   init() {
     this._container = document.getElementById('tasks-container');
     this._title = document.getElementById('tasks-title');
@@ -159,19 +183,19 @@ const TaskPanel = {
       // PTO badge
       const pto = AppState.getPTOForUser(user.id);
       const ptoBadge = pto
-        ? `<span class="badge badge-pto">${pto.label}</span>`
+        ? `<span class="badge badge-pto">${this._escapeHtml(pto.label)}</span>`
         : '';
 
       // Menu button (partner only)
       const isPartner = AppState.isPartner();
       const menuBtn = isPartner
-        ? `<button class="staff-section-menu partner-only" data-user-id="${user.id}" title="PTO & options">\u22EF</button>`
+        ? `<button class="staff-section-menu partner-only" data-user-id="${this._escapeAttr(user.id)}" title="PTO & options">\u22EF</button>`
         : '';
 
       html += `
-        <div class="staff-section" data-user-id="${user.id}">
+        <div class="staff-section" data-user-id="${this._escapeAttr(user.id)}">
           <div class="staff-section-header">
-            <span class="staff-section-name">${user.display_name}</span>
+            <span class="staff-section-name">${this._escapeHtml(user.display_name)}</span>
             <span class="badge badge-green">${tasks.length} TASKS</span>
             ${ptoBadge}
             ${menuBtn}
@@ -214,6 +238,15 @@ const TaskPanel = {
 
     // Bind task card events
     taskCard.bindEvents(this._container);
+    this._container.querySelectorAll('.task-bulk-select').forEach((checkbox) => {
+      checkbox.checked = this._bulkTaskIds.has(checkbox.dataset.taskId);
+      checkbox.addEventListener('click', (event) => event.stopPropagation());
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) this._bulkTaskIds.add(checkbox.dataset.taskId);
+        else this._bulkTaskIds.delete(checkbox.dataset.taskId);
+        document.dispatchEvent(new CustomEvent('bulk-selection-changed', { detail: { count: this._bulkTaskIds.size } }));
+      });
+    });
 
     if (activeNoteTaskId) {
       const restoredInput = this._container.querySelector(`.task-notes-input[data-task-id="${activeNoteTaskId}"]`);

@@ -6,7 +6,8 @@
   --ui-control-radius: 6px;
   --ui-surface-radius: 8px;
   --ui-border-strong: #D7DEE6;
-  --ui-focus-ring: rgba(77, 74, 213, 0.18);
+  --ui-focus-border: rgba(77, 74, 213, 0.55);
+  --ui-focus-ring: rgba(77, 74, 213, 0.1);
   --ui-danger-bg: #FFF1F1;
   --ui-danger-hover: #FFE5E5;
   --ui-menu-shadow: 0 10px 28px rgba(27, 36, 42, 0.16), 0 2px 8px rgba(27, 36, 42, 0.08);
@@ -18,7 +19,8 @@
 
 body.theme-dark {
   --ui-border-strong: #4A525F;
-  --ui-focus-ring: rgba(139, 125, 255, 0.22);
+  --ui-focus-border: rgba(139, 125, 255, 0.62);
+  --ui-focus-ring: rgba(139, 125, 255, 0.14);
   --ui-danger-bg: rgba(217, 95, 95, 0.14);
   --ui-danger-hover: rgba(217, 95, 95, 0.22);
 }
@@ -26,16 +28,20 @@ body.theme-dark {
 button:focus-visible,
 [role="button"]:focus-visible,
 [role="menuitem"]:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
 input,
 textarea,
+select,
 .input,
 .select {
   border-color: var(--ui-border-strong);
@@ -45,10 +51,11 @@ textarea,
 
 input:focus,
 textarea:focus,
+select:focus,
 .input:focus,
 .select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--ui-focus-ring);
+  border-color: var(--ui-focus-border);
+  box-shadow: 0 0 0 2px var(--ui-focus-ring);
 }
 
 .input,

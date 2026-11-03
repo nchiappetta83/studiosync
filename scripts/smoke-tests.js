@@ -74,6 +74,7 @@ function testDashboardPriority() {
 
 function testDashboardShellGuards() {
   const indexHtml = readRepoFile('sd-scheduling/renderer/index.html');
+  const installerScript = readRepoFile('sd-scheduling/build/installer.nsh');
   assert.match(indexHtml, /Content-Security-Policy/);
   assert.match(indexHtml, /script-src 'self'/);
   assert.match(indexHtml, /lib\/confirmDialog\.js/);
@@ -88,13 +89,23 @@ function testDashboardShellGuards() {
 
   assertFilesEqual('sd-scheduling/main/auth.js', 'sd-companion/main/auth.js');
   assertFilesEqual('sd-scheduling/main/logger.js', 'sd-companion/main/logger.js');
+  assert.match(installerScript, /!include "getProcessInfo\.nsh"/, 'Dashboard installer should include the process-info helper used by its override');
+  assert.match(installerScript, /!macro customCheckAppRunning/, 'Dashboard installer should override the path-prefix process check');
+  assert.match(installerScript, /StrCpy \$IsPowerShellAvailable 1[\s\S]*!insertmacro _CHECK_APP_RUNNING/, 'Dashboard installer should use exact executable-name shutdown');
 }
 
 function testDashboardLayoutGuards() {
   const toolbar = readRepoFile('sd-scheduling/renderer/components/toolbar.js');
   const state = readRepoFile('sd-scheduling/renderer/lib/state.js');
   const dialogsCss = readRepoFile('sd-scheduling/renderer/styles/dialogs.css');
+  const interactionCss = readRepoFile('sd-scheduling/renderer/styles/interaction-system.css');
+  const projectCard = readRepoFile('sd-scheduling/renderer/components/projectCard.js');
   const taskPanel = readRepoFile('sd-scheduling/renderer/components/taskPanel.js');
+  const taskDialog = readRepoFile('sd-scheduling/renderer/components/dialogs/taskDialog.js');
+  const database = readRepoFile('sd-scheduling/main/database.js');
+  const mainCode = readRepoFile('sd-scheduling/main/index.js');
+  const toolbarCode = readRepoFile('sd-scheduling/renderer/components/toolbar.js');
+  const indexHtml = readRepoFile('sd-scheduling/renderer/index.html');
 
   assert.match(toolbar, /_buildRuntimeStatusMenuItems/, 'Dashboard sync menu should expose runtime details');
   assert.match(toolbar, /context-menu-info/, 'Dashboard context menu should support non-action info rows');
@@ -102,6 +113,110 @@ function testDashboardLayoutGuards() {
   assert.match(dialogsCss, /\.context-menu-item\.context-menu-info/, 'Dashboard should style sync detail rows quietly');
   assert.match(taskPanel, /carryoverReviewMode/, 'Dashboard should keep carryover review mode wired through the task panel');
   assert.match(readRepoFile('sd-scheduling/renderer/lib/dragDrop.js'), /toast-dismiss/, 'Dashboard notifications should provide the shared dismiss action');
+  assert.match(interactionCss, /box-shadow:\s*0 0 0 2px var\(--ui-focus-ring\)/, 'Text controls should use the subtle shared focus halo');
+  assert.doesNotMatch(interactionCss, /input:focus-visible,[\s\S]{0,120}outline:\s*2px solid/, 'Text controls should not stack the heavy keyboard outline');
+  assert.doesNotMatch(projectCard, /<input[^>]+project-card-notes/, 'Project-list notes should not be inline-editable');
+  assert.match(projectCard, /project\.notes \|\| 'Note'/, 'Project-list notes should remain visible as display text');
+  assert.doesNotMatch(database, /DELETE FROM tasks WHERE completed = 1/, 'Weekly rollover should retain completed tasks');
+  assert.match(database, /SET category = 'last_week',[\s\S]*confirmed = 0,[\s\S]*completed = 0,[\s\S]*status = 'not_started'/, 'Weekly rollover should return every task to carryover review');
+  assert.match(taskDialog, /Completed tasks return as Not Reviewed/, 'The completed-task guidance should explain publication behavior');
+  assert.doesNotMatch(mainCode, /sync\.pushEvent\('weekly-rollover'/, 'Starting rollover should remain local until publication');
+  assert.match(mainCode, /sync\.pushEvent\('rollover-published'/, 'Dashboard should publish rollover changes as one batch');
+  assert.match(mainCode, /publicationId/, 'Rollover publications must have a durable idempotency key');
+  assert.match(mainCode, /originalTaskIds = new Set/, 'Initial publication must still track rollover-start task IDs');
+  assert.match(mainCode, /originalTaskIds\.has\(task\.id\) \|\| pendingTaskIds\.has\(task\.id\)/, 'Initial publication must include tasks created while the review was in progress');
+  assert.match(mainCode, /rolloverPublicationId: publicationId/, 'Legacy compatibility events must identify their authoritative publication');
+  assert.match(mainCode, /publishedAt = state\.publishedAt \|\| new Date\(\)\.toISOString\(\)/, 'Rollover retries must retain their original publication timestamp');
+  assert.match(mainCode, /deleted_at: publishedAt/, 'Rollover compatibility deletions must carry their original timestamp');
+  assert.match(database, /recordTaskDeletion\(taskId, data\.publishedAt/, 'Dashboard rollover deletions must record a durable tombstone');
+  assert.match(database, /applied_rollover_publications/, 'Dashboard must persist applied publication IDs');
+  assert.doesNotMatch(database, /existing\.updated_at > baseUpdatedAt/, 'Dashboard rollover conflicts must compare parsed timestamps, not mixed-format strings');
+  assert.match(database, /_getNextTaskTimestamp\(data\.id\)/, 'Dashboard local task edits must be stamped after the version they replace');
+  assert.match(database, /ORDER BY julianday\(created_at\), rowid LIMIT/, 'Dashboard outbox must flush in creation order, including events created within the same second');
+  assert.doesNotMatch(database, /ORDER BY datetime\(created_at\), event_id/, 'Dashboard outbox must not order same-second events by random event ID');
+  assert.match(mainCode, /Publish Changes & Close[\s\S]*Save Without Publishing[\s\S]*Continue Editing/, 'Closing with unpublished work should offer explicit publication choices');
+  assert.match(indexHtml, /id="btn-publish-rollover"/, 'Dashboard should expose an explicit rollover publish action');
+  assert.match(toolbarCode, /publishRolloverChanges/, 'The rollover publish control should call the publication API');
+  assert.match(indexHtml, /id="rollover-publishing-overlay"/, 'Dashboard should show a publication progress overlay');
+  assert.match(toolbarCode, /_setPublishingState\(true\)/, 'Dashboard should activate publication progress before writing shared events');
+  assert.match(toolbarCode, /requestAnimationFrame/, 'Dashboard should paint publication progress before synchronous shared-drive work');
+  assert.match(mainCode, /rollover-review-started/, 'Dashboard should notify MyTasks when the meeting review starts');
+  assert.match(database, /CREATE TABLE IF NOT EXISTS task_activity/, 'Dashboard should persist immutable task activity');
+  assert.match(mainCode, /task-activity-added/, 'Dashboard should sync task activity as append-only events');
+  assert.match(projectCard, /View Activity\.\.\./, 'Dashboard project menu should expose project activity');
+  assert.match(mainCode, /openProjectActivityWindow/, 'Dashboard should open project activity in a separate window');
+  assert.match(readRepoFile('sd-scheduling/renderer/project-activity.html'), /PROJECT HISTORY/, 'Dashboard should provide a project activity window');
+  assert.match(database, /task_tombstones/, 'Dashboard must preserve task deletion tombstones');
+  assert.match(mainCode, /recordTaskDeletion\(taskId\)/, 'Dashboard task deletion must create a tombstone before removing local data');
+  assert.match(mainCode, /result\.createdProjects[\s\S]{0,120}project-created/, 'Startup Excel imports must publish newly created projects');
+  assert.match(mainCode, /result\.updatedProjects[\s\S]{0,120}project-updated/, 'Startup Excel imports must publish changed projects');
+  assert.match(database, /getSharedTaskDueDate/, 'Dashboard should look up a matching assignment due date when creating a task');
+  assert.match(mainCode, /db\.getSharedTaskDueDate\(normalizedTaskData\.project_id, normalizedTaskData\.title\)/, 'New Dashboard assignments should inherit a matching shared due date');
+  assert.match(toolbarCode, /visibleStaffIds/, 'Carryover counts should match reviewable staff assignments');
+  assert.match(readRepoFile('sd-scheduling/renderer/lib/confirmDialog.js'), /function choose\(/, 'Shared due dates should use the compact choice dialog');
+}
+
+function testDashboardSharedTaskDueDate() {
+  const Database = require(path.join(repoRoot, 'sd-scheduling/main/database'));
+  const databasePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'studiosync-due-date-')), 'schedule.db');
+  const db = new Database(databasePath);
+
+  try {
+    db.initialize();
+    db.createTask({ id: 'first', project_id: 'project-1', assigned_to: 'staff-1', title: 'Review package', due_date: '2026-11-06' });
+    db.createTask({ id: 'second', project_id: 'project-1', assigned_to: 'staff-2', title: '  review PACKAGE  ', due_date: '2026-11-08' });
+    db.createTask({ id: 'project-label', project_id: 'project-1', assigned_to: 'staff-4', title: 'Client — Project', due_date: '2026-11-12' });
+    db.createTask({ id: 'other', project_id: 'project-1', assigned_to: 'staff-3', title: 'Different task', due_date: '2026-11-10' });
+
+    assert.equal(db.getSharedTaskDueDate('project-1', 'Review package'), '2026-11-08', 'Matching task lookups should return the latest shared due date');
+    assert.equal(db.getSharedTaskDueDate('project-1', 'Client | Project'), '2026-11-12', 'Project task labels should match across Dashboard display separators');
+    assert.equal(db.getSharedTaskDueDate('project-1', 'Different task'), '2026-11-10');
+    assert.equal(db.getSharedTaskDueDate('project-2', 'Review package'), null, 'Due dates should not cross project boundaries');
+  } finally {
+    db.close();
+    fs.rmSync(path.dirname(databasePath), { recursive: true, force: true });
+  }
+}
+
+function testDashboardExportGuards() {
+  const ExportEngine = require(path.join(repoRoot, 'sd-scheduling/main/export'));
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studiosync-export-'));
+  const outputPath = path.join(outputDir, 'schedule.html');
+  const db = {
+    getUsers: () => [
+      { id: 'staff-1', display_name: 'Staff Person', role: 'staff', avatar_color: '#3E91A5' },
+      { id: 'partner-1', display_name: 'Partner Person', role: 'partner', avatar_color: '#5856A6' },
+    ],
+    getTasks: () => [
+      { id: 'task-1', assigned_to: 'staff-1', project_id: 'project-1', priority: 1, notes: 'Staff task', confirmed: 1 },
+      { id: 'task-2', assigned_to: 'partner-1', title: 'Partner-only task', priority: 2, confirmed: 1 },
+    ],
+    getProjects: () => [
+      { id: 'project-1', client: 'Client', name: 'Project', partner_initials: 'PP' },
+    ],
+    getPTO: () => [],
+    getBusinessRoles: () => [],
+    getCustomPriorities: () => [],
+  };
+
+  try {
+    new ExportEngine(db).exportHTML(outputPath, { reloadInterval: 3600 });
+    const html = fs.readFileSync(outputPath, 'utf-8');
+
+    assert.match(html, /data-staff="Staff Person"/, 'Schedule exports should include staff accounts');
+    assert.doesNotMatch(html, /data-staff="Partner Person"/, 'Schedule exports should omit partner accounts');
+    assert.doesNotMatch(html, /Partner-only task/, 'Schedule exports should omit tasks assigned to partners');
+    assert.match(html, /class="partner-badge">PP</, 'Staff tasks should retain their partner badge');
+    assert.match(html, /\.staff-section\.empty \{ display: none; \}/, 'Printed schedules should omit empty staff groups');
+    assert.match(html, /<table class="print-task-table"/, 'Printed schedules should render a task table for each staff member');
+    assert.match(html, /class="print-staff-heading"/, 'Printed task tables should carry staff identity into repeated headers');
+    assert.match(html, /<th>Priority<\/th><th>Project<\/th><th>Due<\/th><th>Partner<\/th><th>Notes<\/th>/, 'Printed task tables should preserve the weekly schedule columns');
+    assert.match(html, /\.tasks-container \{ display: none; \}/, 'Printed schedules should hide the interactive card grid');
+    assert.match(html, /\.print-task-table \{ display: table;/, 'Printed schedules should reveal the table layout');
+    assert.match(html, /\.print-task-table thead \{ display: table-header-group; \}/, 'Printed task tables should repeat staff and column headers after page breaks');
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
 }
 
 async function testDashboardNotesEditor() {
@@ -270,6 +385,17 @@ function testMyTasksHelpers() {
   );
   assert.deepEqual(plain(representativeTasks).map((task) => task.id), ['t2', 't3']);
 
+  const directProjectTasks = win.MyTasksActionItems.getVisibleRepresentativeTasks(
+    [
+      { id: 'monday', project_id: 'p1', assigned_to: 'u1', due_date: '2026-10-05', sort_order: 2 },
+      { id: 'tuesday', project_id: 'p1', assigned_to: 'u1', due_date: '2026-10-06', sort_order: 1 },
+    ],
+    'u1',
+    () => [],
+    (tasks) => [...tasks].sort((a, b) => a.sort_order - b.sort_order),
+  );
+  assert.deepEqual(plain(directProjectTasks).map((task) => task.id), ['tuesday', 'monday'], 'Every directly assigned task must remain visible, including overdue work on the same project');
+
   const orderedTasks = win.MyTasksTaskOrdering.sortTasksLikeScheduling(
     [
       { id: 'done', completed: 1, priority: 1, sort_order: 1, title: 'Done' },
@@ -336,6 +462,8 @@ function testMyTasksLayoutGuards() {
   const notesWindowCode = readRepoFile('sd-companion/renderer/components/projectNotesWindow.js');
   const companionCss = readRepoFile('sd-companion/renderer/styles/companion.css');
   const notesCss = readRepoFile('sd-companion/renderer/styles/project-notes.css');
+  const companionDatabase = readRepoFile('sd-companion/main/database.js');
+  const companionSync = readRepoFile('sd-companion/main/sync.js');
   assertFilesEqual(
     'sd-scheduling/renderer/styles/interaction-system.css',
     'sd-companion/renderer/styles/interaction-system.css',
@@ -373,6 +501,9 @@ function testMyTasksLayoutGuards() {
   assert.match(packageJson, /"extraResources"[\s\S]*studiosync-mytasks\.ico/, 'MyTasks installer should include the icon as an external resource');
   assert.match(installerScript, /resources\\assets\\studiosync-mytasks\.ico/, 'MyTasks desktop shortcut should point directly at the packaged icon');
   assert.match(installerScript, /WinShell::SetLnkAUMI[\s\S]*\$\{APP_ID\}/, 'MyTasks installer should associate its desktop shortcut with the app identity');
+  assert.match(installerScript, /!include "getProcessInfo\.nsh"/, 'MyTasks installer should include the process-info helper used by its override');
+  assert.match(installerScript, /!macro customCheckAppRunning/, 'MyTasks installer should override the path-prefix process check');
+  assert.match(installerScript, /StrCpy \$IsPowerShellAvailable 1[\s\S]*!insertmacro _CHECK_APP_RUNNING/, 'MyTasks installer should use exact executable-name shutdown');
   assert.match(notesWindowCode, /applyStoredThemePreference/, 'Project Notes should inherit the MyTasks theme preference');
   assert.match(appCode, /getVisibleTaskCardsForActiveTab/, 'Task-card keyboard navigation should remain wired');
   assert.match(companionCss, /#view-staff-view[\s\S]*overflow-x:\s*hidden/, 'Staff Overview should guard against horizontal scrolling');
@@ -387,6 +518,40 @@ function testMyTasksLayoutGuards() {
   assert.match(companionCss, /\.detail-pane-toggle\s*\{[\s\S]*?width:\s*18px/, 'The shared Staff and Partner detail toggle should remain narrow');
   assert.match(companionCss, /\.project-group\s*\{[\s\S]*?overflow:\s*hidden/, 'Partner project sections should own their visible frame');
   assert.match(companionCss, /\.project-group-body\s*\{[\s\S]*?scrollbar-gutter:\s*stable/, 'Partner project section scrollbars should stay inside the frame');
+  assert.match(appCode, /task-not-reviewed-badge/, 'MyTasks should label unresolved rollover tasks as Not Reviewed');
+  assert.match(companionCss, /\.task-card\.not-reviewed[\s\S]*opacity:\s*0\.62/, 'Not Reviewed tasks should be visually faded');
+  assert.match(indexHtml, /id="rollover-review-overlay"/, 'MyTasks should display a meeting review lock');
+  assert.match(appCode, /setRolloverReviewUi/, 'MyTasks should update the meeting review lock after syncing');
+  assert.match(companionCss, /\.rollover-review-active #app-shell/, 'MyTasks should fade the active task screen during review');
+  assert.match(mainCode, /get-rollover-review-state/, 'MyTasks should expose durable rollover review state to the renderer');
+  assert.match(mainCode, /const isRolloverReviewActive/, 'MyTasks should enforce the review lock in the main process');
+  assert.match(mainCode, /isRolloverReviewActive\(\) \|\| !canMutateTask/, 'MyTasks should reject shared task edits while review is active');
+  assert.match(companionDatabase, /case 'rollover-published': return this\.applyRolloverPublication/, 'MyTasks should apply published rollover batches');
+  assert.match(companionDatabase, /case 'rollover-review-started': return this\.startRolloverReview/, 'MyTasks should apply review-start events');
+  assert.match(companionDatabase, /endRolloverReview\(data\.week\)/, 'MyTasks should release the review lock when the publication arrives');
+  assert.doesNotMatch(companionDatabase, /applyRolloverPublication[\s\S]{0,500}performWeeklyRollover/, 'MyTasks must not run a broad rollover when it receives a publication');
+  assert.match(companionDatabase, /applied_rollover_publications/, 'MyTasks must de-duplicate rollover publications');
+  assert.doesNotMatch(companionDatabase, /existing\.updated_at > baseUpdatedAt/, 'MyTasks rollover conflicts must compare parsed timestamps, not mixed-format strings');
+  assert.match(companionDatabase, /_getNextTaskTimestamp\(data\.id\)/, 'MyTasks local task edits must be stamped after the version they replace');
+  assert.match(companionDatabase, /ORDER BY julianday\(created_at\), rowid LIMIT/, 'MyTasks outbox must flush in creation order, including events created within the same second');
+  assert.doesNotMatch(companionDatabase, /ORDER BY datetime\(created_at\), event_id/, 'MyTasks outbox must not order same-second events by random event ID');
+  assert.match(mainCode, /event\.type\.startsWith\('user-'\)[\s\S]{0,80}auth\.clearCache\(\)/, 'MyTasks must refresh its cached acting user when user events sync');
+  assert.match(appCode, /if \(!created\) throw new Error\('Task was not created\.'\)/, 'MyTasks must not report success when the main process refuses a new task');
+  assert.match(companionSync, /processedFiles\.has\(file\)[\s\S]{0,200}fs\.statSync/, 'MyTasks polling must skip already-processed event files before calling stat');
+  assert.match(companionDatabase, /_applyCompatibilityEvent/, 'MyTasks must ignore legacy compatibility events after applying their publication');
+  assert.match(companionDatabase, /recordTaskDeletion\(taskId, data\.publishedAt/, 'MyTasks rollover deletions must record a durable tombstone');
+  assert.doesNotMatch(companionDatabase, /DELETE FROM tasks WHERE completed = 1/, 'MyTasks should retain completed tasks during rollover publication');
+  assert.match(companionSync, /'rollover-published': isRolloverPublication/, 'MyTasks should validate rollover publication events');
+  assert.match(companionSync, /'rollover-review-started': isRolloverReviewStart/, 'MyTasks should validate review-start events');
+  assert.match(companionDatabase, /CREATE TABLE IF NOT EXISTS task_activity/, 'MyTasks should persist synced task activity');
+  assert.match(readRepoFile('sd-companion/main/services/taskCommandService.js'), /task-activity-added/, 'MyTasks should queue local task activity with the task command');
+  assert.match(companionDatabase, /task_tombstones/, 'MyTasks must preserve task deletion tombstones');
+  assert.match(readRepoFile('sd-companion/main/services/taskCommandService.js'), /recordTaskDeletion/, 'MyTasks task deletion must create a tombstone before removing local data');
+  assert.match(appCode, /View Activity\.\.\./, 'MyTasks project menu should expose project activity');
+  assert.doesNotMatch(appCode, /detail-section-heading">Activity/, 'MyTasks task details should not duplicate project activity');
+  assert.match(readRepoFile('sd-companion/renderer/project-activity.html'), /PROJECT HISTORY/, 'MyTasks should provide a project activity window');
+  assert.match(mainCode, /mytasks-diagnostics\.log/, 'MyTasks should create a dedicated diagnostics log');
+  assert.match(readRepoFile('sd-companion/main/auth.js'), /os\.userInfo\(\)\.username/, 'MyTasks identity must come from the Windows session');
   assert.doesNotMatch(companionCss, /margin-right:\s*-\d+px/, 'Negative horizontal offsets should not be used to hide overflow in MyTasks');
   assert.doesNotMatch(notesCss, /project-notes-overlay/, 'Standalone Project Notes CSS should not carry legacy overlay styles');
 }
@@ -460,13 +625,92 @@ function testMyTasksSyncRecovery() {
   }
 }
 
+function testDurableSyncOutbox(appName) {
+  const SyncEngine = require(path.join(repoRoot, `${appName}/main/sync`));
+  const sharedPath = fs.mkdtempSync(path.join(os.tmpdir(), `studiosync-outbox-${appName}-`));
+  const eventsPath = path.join(sharedPath, 'events');
+  const outbox = new Map();
+  const db = {
+    getProcessedSyncFiles: () => [], getLastSyncTimestamp: () => null,
+    markSyncFileProcessed: () => {}, setLastSyncTimestamp: () => {}, applyEvent: () => {},
+    queueSyncEvent: (event) => outbox.set(event.eventId, { event_id: event.eventId, event, attempts: 0, last_error: null }),
+    getQueuedSyncEvents: () => [...outbox.values()].filter((item) => !item.published),
+    markSyncEventPublished: (eventId) => { outbox.get(eventId).published = true; },
+    recordSyncEventFailure: (eventId, error) => { const item = outbox.get(eventId); item.attempts += 1; item.last_error = error; },
+    getSyncOutboxSummary: () => ({ pending: [...outbox.values()].filter((item) => !item.published).length }),
+  };
+
+  try {
+    const sync = new SyncEngine(db, sharedPath, 'tester');
+    fs.mkdirSync(eventsPath, { recursive: true });
+    fs.rmSync(eventsPath, { recursive: true, force: true });
+    fs.writeFileSync(eventsPath, 'blocked', 'utf-8');
+    assert.equal(sync.pushEvent('task-created', { id: 'task-1' }), false, `${appName} should queue an unavailable shared-folder write`);
+    assert.equal(sync.getOutboxSummary().pending, 1, `${appName} should retain the failed event in its outbox`);
+    fs.unlinkSync(eventsPath);
+    fs.mkdirSync(eventsPath);
+    assert.equal(sync.flushOutbox(), true, `${appName} should retry queued events after the shared folder returns`);
+    assert.equal(sync.getOutboxSummary().pending, 0, `${appName} should mark a delivered outbox event as published`);
+    assert.equal(fs.readdirSync(eventsPath).filter((file) => file.endsWith('.json')).length, 1);
+  } finally {
+    fs.rmSync(sharedPath, { recursive: true, force: true });
+  }
+}
+
+function testDurableSyncHistory(appName) {
+  const SyncEngine = require(path.join(repoRoot, `${appName}/main/sync`));
+  const sharedPath = fs.mkdtempSync(path.join(os.tmpdir(), `studiosync-history-${appName}-`));
+  const eventsPath = path.join(sharedPath, 'events');
+  const oldEventPath = path.join(eventsPath, '2000-01-01T00-00-00-000Z_tester_task-created_deadbeef.json');
+  const db = {
+    getProcessedSyncFiles: () => [], getLastSyncTimestamp: () => null,
+  };
+
+  try {
+    fs.mkdirSync(eventsPath, { recursive: true });
+    fs.writeFileSync(oldEventPath, JSON.stringify({ type: 'task-created', data: { id: 'task-1' } }), 'utf-8');
+    const sync = new SyncEngine(db, sharedPath, 'tester');
+    assert.equal(sync.cleanup(), 0, `${appName} should keep replay history until snapshot compaction exists`);
+    assert.equal(fs.existsSync(oldEventPath), true, `${appName} should not delete recovery events by age`);
+  } finally {
+    fs.rmSync(sharedPath, { recursive: true, force: true });
+  }
+}
+
+function testTrustedDeviceEnrollment() {
+  const DashboardTrust = require(path.join(repoRoot, 'sd-scheduling/main/deviceTrust'));
+  const MyTasksTrust = require(path.join(repoRoot, 'sd-companion/main/deviceTrust'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studiosync-device-trust-'));
+  try {
+    const dashboard = new DashboardTrust({ appDataDir: path.join(root, 'dashboard'), sharedDrivePath: path.join(root, 'shared'), source: 'scheduling' });
+    dashboard.setActor({ id: 'partner-1', username: 'partner', role: 'partner' });
+    const myTasks = new MyTasksTrust({ appDataDir: path.join(root, 'mytasks'), sharedDrivePath: path.join(root, 'shared'), source: 'companion' });
+    myTasks.setActor({ id: 'staff-1', username: 'staff', role: 'staff' });
+    const request = dashboard.getPendingEnrollments()[0];
+    assert.equal(request.userId, 'staff-1');
+    assert.equal(dashboard.approveEnrollment(request.deviceId), true);
+    const event = myTasks.signEvent({ eventId: 'event-1', schemaVersion: 2, type: 'task-created', data: { id: 'task-1' }, timestamp: '2026-10-11T12:00:00.000Z' });
+    assert.ok(event.signature, 'An approved device should sign new events');
+    assert.equal(dashboard.verifyEvent(event).valid, true, 'Dashboard should verify an approved device event');
+    dashboard.setEnforcement(true);
+    assert.equal(dashboard.verifyEvent({ eventId: 'old-event', type: 'task-created', data: { id: 'task-2' } }).valid, false, 'Strict policy should reject legacy unsigned events');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const target = process.argv[2] || 'all';
   if (target === 'all' || target === 'scheduling') {
     testDashboardPriority();
     testDashboardShellGuards();
     testDashboardLayoutGuards();
+    testDashboardSharedTaskDueDate();
+    testDashboardExportGuards();
     await testDashboardNotesEditor();
+    testDurableSyncOutbox('sd-scheduling');
+    testDurableSyncHistory('sd-scheduling');
+    testTrustedDeviceEnrollment();
   }
   if (target === 'all' || target === 'companion') {
     testMyTasksHelpers();
@@ -474,6 +718,8 @@ async function main() {
     testMyTasksLayoutGuards();
     testMyTasksLinkSecurity();
     testMyTasksSyncRecovery();
+    testDurableSyncOutbox('sd-companion');
+    testDurableSyncHistory('sd-companion');
   }
   console.log(`Smoke tests passed (${target}).`);
 }

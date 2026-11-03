@@ -1,3 +1,5 @@
+const os = require('os');
+
 class Auth {
   constructor(db) {
     this.db = db;
@@ -6,7 +8,8 @@ class Auth {
   }
 
   setUsername(username) {
-    this._username = username;
+    // Ignore renderer-provided names; identity comes from the Windows session.
+    this._username = username === null ? null : os.userInfo().username;
     this._currentUser = null;
   }
 

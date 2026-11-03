@@ -22,11 +22,8 @@ const ProjectCard = {
       ? `${projectTasks.length} task${projectTasks.length !== 1 ? 's' : ''}`
       : '';
 
-    // Notes — editable for partners, read-only for staff
-    const notesHtml = isPartner
-      ? `<input type="text" class="project-card-notes" value="${this._escapeAttr(project.notes || '')}"
-              placeholder="Add notes..." data-project-id="${project.id}" data-field="notes">`
-      : (project.notes ? `<div class="project-card-notes" style="cursor:default">${this._escapeHtml(project.notes)}</div>` : '');
+    // Project notes are display-only here so the full card remains a reliable drag target.
+    const notesHtml = `<div class="project-card-notes ${project.notes ? '' : 'project-card-notes-empty'}">${this._escapeHtml(project.notes || 'Note')}</div>`;
 
     const inactiveClass = project.status !== 'active' ? 'project-inactive' : '';
 
@@ -100,22 +97,6 @@ const ProjectCard = {
         });
       }
     });
-
-    // Inline notes editing (partner only)
-    if (isPartner) {
-      container.querySelectorAll('.project-card-notes[data-field="notes"]').forEach(input => {
-        let debounce;
-        input.addEventListener('input', () => {
-          clearTimeout(debounce);
-          debounce = setTimeout(async () => {
-            await window.api.updateProject({
-              id: input.dataset.projectId,
-              notes: input.value
-            });
-          }, 500);
-        });
-      });
-    }
 
     // Status toggle (partner only)
     if (isPartner) {
@@ -240,6 +221,13 @@ const ProjectCard = {
         ]
       });
     }
+
+    items.push({ divider: true });
+
+    items.push({
+      label: 'View Activity...',
+      action: () => window.api.openProjectActivityWindow(project.id)
+    });
 
     items.push({ divider: true });
 
