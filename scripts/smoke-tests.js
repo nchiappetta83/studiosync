@@ -72,6 +72,49 @@ function testDashboardPriority() {
   assert.equal(priority.getPriorityMenuToken({ priority: -2, priority_label: 'cp:Rush' }, customPriorities), 'custom:rush');
 }
 
+function testDashboardPaletteSearch() {
+  const win = runBrowserScript('sd-scheduling/renderer/lib/paletteSearch.js');
+  const search = win.PaletteSearch;
+
+  // Tokens: case, accents and the "Client | Project" separator are ignored.
+  assert.deepEqual(plain(search.tokenize('  Maple | CIVIC  ')), ['maple', 'civic']);
+  assert.equal(search.normalize('José'), 'jose');
+
+  // A prefix beats a word start, which beats a mid-word match, which beats a hint-only match.
+  const tokens = search.tokenize('com');
+  const prefix = search.scoreItem({ label: 'Commons' }, tokens);
+  const wordStart = search.scoreItem({ label: 'Maple Commons' }, tokens);
+  const midWord = search.scoreItem({ label: 'Income' }, tokens);
+  const hintOnly = search.scoreItem({ label: 'Harbor', hint: 'Community project' }, tokens);
+  assert.ok(prefix > wordStart && wordStart > midWord && midWord > hintOnly && hintOnly > 0, 'ranking order');
+
+  // Every word has to match; one missing word rejects the item.
+  assert.equal(search.scoreItem({ label: 'Maple Commons' }, search.tokenize('maple harbor')), -1);
+  assert.ok(search.scoreItem({ label: 'Maple Civic Partners | Maple Commons' }, search.tokenize('civic commons')) > 0);
+
+  // Ties go to the shorter, more specific label.
+  assert.ok(search.scoreItem({ label: 'Add' }, search.tokenize('add')) > search.scoreItem({ label: 'Add Task' }, search.tokenize('add')));
+
+  // Highlight ranges are merged and cover only the matching text.
+  assert.deepEqual(plain(search.highlightRanges('Maple Commons', search.tokenize('ma com'))), [[0, 2], [6, 9]]);
+  assert.deepEqual(plain(search.highlightRanges('Maple', search.tokenize('ap pl'))), [[1, 4]]);
+
+  // filter(): group order, per-group limits, and the groups shown for an empty query.
+  const items = [
+    { group: 'Tasks', label: 'Plan review' },
+    { group: 'Tasks', label: 'Plan kickoff' },
+    { group: 'Tasks', label: 'Plan budget' },
+    { group: 'People', label: 'Planner Pat' },
+    { group: 'Actions', label: 'Plan the week' },
+  ];
+  const options = { groupOrder: ['Actions', 'People', 'Projects', 'Tasks'], limits: { Tasks: 2 }, emptyGroups: ['Actions', 'People'] };
+  const results = search.filter(items, 'plan', options);
+  assert.deepEqual(plain(results.map((r) => r.item.group)), ['Actions', 'People', 'Tasks', 'Tasks'], 'groups ordered and limited');
+  assert.deepEqual(plain(search.filter(items, '', options).map((r) => r.item.group)), ['Actions', 'People'], 'empty query shows only the short groups');
+  assert.equal(search.filter(items, 'zzz', options).length, 0);
+  assert.deepEqual(plain(results[0].ranges), [[0, 4]]);
+}
+
 function testDashboardShellGuards() {
   const indexHtml = readRepoFile('sd-scheduling/renderer/index.html');
   const installerScript = readRepoFile('sd-scheduling/build/installer.nsh');
@@ -1519,6 +1562,7 @@ async function main() {
   const target = process.argv[2] || 'all';
   if (target === 'all' || target === 'scheduling') {
     testDashboardPriority();
+    testDashboardPaletteSearch();
     testDashboardShellGuards();
     testDashboardLayoutGuards();
     testDashboardSharedTaskDueDate();

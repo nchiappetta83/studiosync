@@ -36,6 +36,8 @@ const Toolbar = {
       PrintDialog.show();
     });
 
+    document.getElementById('btn-command-palette')?.addEventListener('click', () => CommandPalette.open());
+
     this._settingsBtn.addEventListener('click', () => {
       SettingsDialog.show();
     });

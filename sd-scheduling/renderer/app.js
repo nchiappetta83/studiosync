@@ -139,9 +139,24 @@ const App = {
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       const mod = e.ctrlKey || e.metaKey;
+      const key = String(e.key || '').toLowerCase();
 
+      // The command palette is modal: while it is open, only Ctrl+K (which closes it) is handled here.
+      if (CommandPalette.isOpen()) {
+        if (mod && key === 'k') {
+          e.preventDefault();
+          CommandPalette.close();
+        }
+        return;
+      }
+
+      // Ctrl+K — command palette
+      if (mod && key === 'k') {
+        e.preventDefault();
+        CommandPalette.open();
+      }
       // Ctrl+F — focus search
-      if (mod && (e.key === 'f' || e.key === 'k')) {
+      if (mod && key === 'f') {
         e.preventDefault();
         document.getElementById('search-input')?.focus();
       }
@@ -161,16 +176,7 @@ const App = {
       // Ctrl+E — refresh Excel import
       if (mod && e.key === 'e') {
         e.preventDefault();
-        if (AppState.isAdmin()) {
-          window.api.refreshExcel().then(result => {
-            if (result && !result.error) {
-              AppState.refresh();
-              Toast.show(`Excel refreshed: ${result.imported || 0} new, ${result.updated || 0} updated`, 'success');
-            } else if (result && result.error) {
-              Toast.show(result.error, 'error');
-            }
-          });
-        }
+        if (AppState.isAdmin()) App.refreshExcel();
       }
       // Escape — close dialogs/overlays, clear search
       if (e.key === 'Escape') {
@@ -929,6 +935,18 @@ const App = {
     // Hide partner-only (admin) elements for regular staff
     document.querySelectorAll('.partner-only').forEach(el => {
       el.style.display = hasAdmin ? '' : 'none';
+    });
+  },
+
+  // Re-read the linked Excel workbook (Ctrl+E, and the command palette).
+  refreshExcel() {
+    return window.api.refreshExcel().then(result => {
+      if (result && !result.error) {
+        AppState.refresh();
+        Toast.show(`Excel refreshed: ${result.imported || 0} new, ${result.updated || 0} updated`, 'success');
+      } else if (result && result.error) {
+        Toast.show(result.error, 'error');
+      }
     });
   },
 

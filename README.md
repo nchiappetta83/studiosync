@@ -52,6 +52,7 @@ Core capabilities:
 - Manage custom priorities, business roles, and user records
 - Export the schedule as PDF and HTML for office-wide visibility
 - Configure a shared update folder used by both apps
+- Press Ctrl+K for a command palette: type to jump to a person, project, or task, run commands such as Add Task, New Project, Print/Export, and Publish Changes, or open a Settings section. Commands you are not allowed to use are left out, and Ctrl+F still focuses the search box
 - Work through task rows entirely from the keyboard: Tab to a priority chip, due date, calendar icon, or project lead and press Enter or Space; menus support the arrow keys, Home, End, and Escape (which returns focus to where you were); the date picker is a keyboard date grid (arrows, Home/End, Page Up/Down); and the Menu key or Shift+F10 opens a task's full action menu
 - Run the weekly rollover flow to carry unfinished work forward cleanly with explicit Keep/Delete review actions
 - Preserve custom rollover priorities while clearing only numbered weekly priorities

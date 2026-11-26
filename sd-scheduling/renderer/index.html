@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="styles/cards.css">
   <link rel="stylesheet" href="styles/dialogs.css">
   <link rel="stylesheet" href="styles/scrollbars.css">
+  <link rel="stylesheet" href="styles/palette.css">
   <link rel="stylesheet" href="styles/interaction-system.css">
   <title>StudioSync</title>
 </head>
@@ -149,6 +150,7 @@
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
           <input type="text" id="search-input" class="search-input" placeholder="Search tasks and people...">
+          <button type="button" id="btn-command-palette" class="palette-hint" title="Command palette (Ctrl+K)" aria-label="Open command palette" aria-keyshortcuts="Control+K"><kbd>Ctrl</kbd><kbd>K</kbd></button>
         </div>
       </div>
       <div class="toolbar-right">
@@ -342,6 +344,7 @@
   <script src="lib/dragDrop.js"></script>
   <script src="lib/scrollSmoothing.js"></script>
   <script src="lib/confirmDialog.js"></script>
+  <script src="lib/paletteSearch.js"></script>
   <script src="components/miniCalendar.js"></script>
   <script src="components/sidebar.js"></script>
   <script src="components/toolbar.js"></script>
@@ -357,6 +360,7 @@
   <script src="components/dialogs/settingsDialog.js"></script>
   <script src="components/dialogs/ptoDialog.js"></script>
   <script src="components/dialogs/printDialog.js"></script>
+  <script src="components/commandPalette.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

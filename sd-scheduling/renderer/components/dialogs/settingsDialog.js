@@ -11,8 +11,9 @@ const SettingsDialog = {
   _upArrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><polyline points="18 15 12 9 6 15"></polyline></svg>',
   _downArrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><polyline points="6 9 12 15 18 9"></polyline></svg>',
 
-  show() {
-    this._activeSection = 'staff';
+  // Optionally open straight to a section (used by the command palette).
+  show(section = 'staff') {
+    this._activeSection = section;
     const overlay = document.createElement('div');
     overlay.className = 'dialog-overlay';
     this._overlay = overlay;
@@ -66,6 +67,13 @@ const SettingsDialog = {
     `;
 
     document.body.appendChild(overlay);
+
+    // Highlight the requested section; fall back to the first one if it is unknown.
+    const navItems = [...overlay.querySelectorAll('.settings-nav-item')];
+    if (!navItems.some((item) => item.dataset.section === this._activeSection)) {
+      this._activeSection = 'staff';
+    }
+    navItems.forEach((item) => item.classList.toggle('active', item.dataset.section === this._activeSection));
 
     // Nav switching
     overlay.querySelectorAll('.settings-nav-item').forEach(btn => {
