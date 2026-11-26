@@ -6,12 +6,26 @@
 
 StudioSync is a two-app Windows scheduling system for small production and professional-services teams that need a clear daily board in the office and a lighter personal workspace on each desktop.
 
-Latest public release: [v1.2.0](https://github.com/nchiappetta83/studiosync/releases/tag/v1.2.0)
+Latest public release: [v1.3.1](https://github.com/nchiappetta83/studiosync/releases/tag/v1.3.1)
 
 - `StudioSync` is the main dashboard used to plan work, manage people, import projects, and publish office-wide updates.
 - `StudioSync MyTasks` is the companion app used by partners and staff to track assigned work, add follow-up notes, and stay in sync with the main board.
 
 Both apps are Electron-based, store data locally in SQLite, synchronize through a shared-drive event system instead of a central server database, and now keep local runtime logs for troubleshooting.
+
+## What's new in 1.3.1
+
+- **Work Cards** break a project's weekly work into shared cards with a type, assignees, dates, planned time and a Start / Pause / Complete workflow. Partners manage cards; assignees run them from MyTasks, and each person can mark one card as their current focus.
+- Work Cards appear on the MyTasks Team Calendar by type, unfinished cards carry into the new week at the weekly rollover, and a project's lead is notified when someone else completes a card.
+- **Work Card Types** are managed in Dashboard Settings, including whether each type shows on the Team Calendar. Dashboard shows a compact, read-only card list beneath a scheduled project.
+- **Project Lead** is chosen on a scheduled assignment, is shared by every assignment on the project, and can only be a person marked **Senior Staff** in Dashboard Settings.
+- MyTasks adds Staff Overview assignment counts, an office daily/weekly capacity setting that partners can edit, and a clearer permission for adding office projects to your own list.
+- The Dashboard publishes a recovery snapshot so a new or empty MyTasks install can restore users and shared data from the shared folder. Unpublished weekly reviews can be closed with **Close & Unlock MyTasks**, and a review that is never finished expires after 12 hours.
+- Sign-in uses the StudioSync profile you select rather than the Windows account, so shared and test PCs can switch profiles.
+- Fixes: deleted Work Card Types no longer reappear, synced events no longer fail forever when a lead loses Senior Staff status, and avatar colours now match between the two apps.
+- The release workflow now runs both smoke-test suites before building. They run on Electron's bundled runtime, so `npm test` no longer depends on the system Node version.
+
+See the [1.3.1 release notes](docs/releases/v1.3.1.md) for details.
 
 ## What's new in 1.2.0
 
@@ -164,7 +178,9 @@ GitHub Actions is configured in [`.github/workflows/release-signpath.yml`](.gith
 3. package both `win-unpacked` folders as zip downloads
 4. publish the unsigned installers and win-unpacked zip packages to the GitHub release for version tags
 
-Push a tag like `v1.2.0` to publish the current unsigned release assets. Version-specific notes under `docs/releases/` are used when present; otherwise GitHub generates notes automatically. Keep the SignPath setup notes below if you want to restore signed releases later.
+Both apps' smoke tests (`npm test` in `sd-scheduling` and `sd-companion`) run first, and a failing suite stops the release.
+
+Push a tag like `v1.3.1` to publish the current unsigned release assets. Version-specific notes under `docs/releases/` are used when present; otherwise GitHub generates notes automatically. Keep the SignPath setup notes below if you want to restore signed releases later.
 
 The interactive installers currently force current-user install mode and seed default locations under `C:\SD Apps\StudioSync` and `C:\SD Apps\StudioSync MyTasks`.
 
