@@ -357,18 +357,104 @@ const Toolbar = {
 /**
  * Context menu utility
  */
+/**
+ * Keyboard behaviour shared by the pop-up menus (context menu, priority and lead menus).
+ * Focus moves into a menu only when it was opened from the keyboard, so mouse use is unchanged.
+ * Arrow keys, Home and End move between items, Right and Left open and close submenus,
+ * and Escape or Tab close the menu and return focus to the control that opened it.
+ */
+const PopupKeyboard = {
+  usingKeyboard: false,
+
+  init() {
+    document.addEventListener('keydown', () => { PopupKeyboard.usingKeyboard = true; }, true);
+    document.addEventListener('pointerdown', () => { PopupKeyboard.usingKeyboard = false; }, true);
+  },
+
+  focusFirst(menu, itemSelector) {
+    if (!PopupKeyboard.usingKeyboard) return;
+    requestAnimationFrame(() => {
+      const first = [...menu.children].find((el) => el.matches(itemSelector));
+      if (first) first.focus({ preventScroll: true });
+    });
+  },
+
+  returnFocus(returnTo) {
+    if (returnTo && returnTo.isConnected && typeof returnTo.focus === 'function') {
+      returnTo.focus({ preventScroll: true });
+    }
+  },
+
+  attach(menu, { itemSelector = '.context-menu-item:not(.context-menu-info)', close, returnTo = null }) {
+    menu.addEventListener('keydown', (e) => {
+      const current = document.activeElement;
+      if (!current || !menu.contains(current)) return;
+      const container = current.closest('.context-menu, .priority-menu');
+      if (!container) return;
+      const items = [...container.children].filter((el) => el.matches(itemSelector));
+      const index = items.indexOf(current);
+      const go = (target) => {
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        target.focus({ preventScroll: true });
+      };
+      const openSubmenu = () => {
+        const submenu = current.classList.contains('has-submenu') ? current.querySelector('.context-submenu') : null;
+        if (submenu) go([...submenu.children].find((el) => el.matches(itemSelector)));
+      };
+
+      switch (e.key) {
+        case 'ArrowDown': if (items.length) go(items[(index + 1) % items.length]); break;
+        case 'ArrowUp': if (items.length) go(items[(index - 1 + items.length) % items.length]); break;
+        case 'Home': go(items[0]); break;
+        case 'End': go(items[items.length - 1]); break;
+        case 'ArrowRight': openSubmenu(); break;
+        case 'Enter':
+        case ' ':
+          if (current === e.target && current.classList.contains('has-submenu')) openSubmenu();
+          break;
+        case 'ArrowLeft':
+          if (container.classList.contains('context-submenu')) go(container.parentElement);
+          break;
+        case 'Escape':
+          e.preventDefault();
+          e.stopPropagation();
+          close();
+          PopupKeyboard.returnFocus(returnTo);
+          break;
+        case 'Tab':
+          close();
+          PopupKeyboard.returnFocus(returnTo);
+          break;
+        default:
+          break;
+      }
+    });
+  }
+};
+PopupKeyboard.init();
+
 const ContextMenu = {
   _current: null,
+  _opener: null,
 
   create(items) {
+    const active = document.activeElement;
+    const opener = active && active !== document.body && !active.closest('.context-menu') ? active : null;
     this.dismiss();
+    this._opener = opener;
 
     const menu = document.createElement('div');
     menu.className = 'context-menu';
+    menu.setAttribute('role', 'menu');
     this._appendItems(menu, items);
 
     document.body.appendChild(menu);
     this._current = menu;
+
+    PopupKeyboard.attach(menu, { close: () => ContextMenu.dismiss(), returnTo: opener });
+    PopupKeyboard.focusFirst(menu, '.context-menu-item:not(.context-menu-info)');
 
     setTimeout(() => {
       document.addEventListener('click', this._onOutsideClick);
@@ -383,6 +469,7 @@ const ContextMenu = {
       if (item.divider) {
         const div = document.createElement('div');
         div.className = 'context-menu-divider';
+        div.setAttribute('role', 'separator');
         container.appendChild(div);
         continue;
       }
@@ -391,6 +478,15 @@ const ContextMenu = {
       const btn = document.createElement(item.submenu || isLabel ? 'div' : 'button');
       if (!item.submenu && !isLabel) btn.type = 'button';
       btn.className = `context-menu-item ${item.danger ? 'danger' : ''}${item.submenu ? ' has-submenu' : ''}${isLabel ? ' context-menu-info' : ''}`;
+      if (isLabel) {
+        btn.setAttribute('role', 'presentation');
+      } else {
+        btn.setAttribute('role', 'menuitem');
+        if (item.submenu) {
+          btn.tabIndex = 0;
+          btn.setAttribute('aria-haspopup', 'menu');
+        }
+      }
 
       let iconHtml = '';
       if (item.icon) {
@@ -427,6 +523,7 @@ const ContextMenu = {
       if (item.submenu) {
         const submenu = document.createElement('div');
         submenu.className = 'context-menu context-submenu';
+        submenu.setAttribute('role', 'menu');
         this._appendItems(submenu, item.submenu);
         btn.appendChild(submenu);
 
@@ -468,6 +565,20 @@ const ContextMenu = {
             });
           }
         });
+        // Keyboard activation: Enter or Space runs the item, like a pointer press.
+        btn.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          event.stopPropagation();
+          const opener = this._opener;
+          this.dismiss();
+          PopupKeyboard.returnFocus(opener);
+          if (item.action) {
+            Promise.resolve(item.action()).catch((error) => {
+              console.error('Context menu action failed:', error);
+            });
+          }
+        });
       }
 
       container.appendChild(btn);
@@ -491,7 +602,9 @@ const ContextMenu = {
 
   _onEscape: function(e) {
     if (e.key === 'Escape') {
+      const opener = ContextMenu._opener;
       ContextMenu.dismiss();
+      if (PopupKeyboard.usingKeyboard) PopupKeyboard.returnFocus(opener);
     }
   }
 };
