@@ -35,6 +35,14 @@ jobs:
         working-directory: sd-companion
         run: npm ci
 
+      - name: Run StudioSync smoke tests
+        working-directory: sd-scheduling
+        run: npm test
+
+      - name: Run StudioSync MyTasks smoke tests
+        working-directory: sd-companion
+        run: npm test
+
       - name: Build StudioSync installer
         working-directory: sd-scheduling
         run: npm run build

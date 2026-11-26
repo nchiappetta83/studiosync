@@ -394,7 +394,10 @@ const AppState = {
 
   isPartner() {
     const u = this._data.currentUser;
-    return u && (u.role === 'partner' || u.is_admin === 1);
+    // Senior staff can manage scheduled assignments (including the Project
+    // Lead) alongside partners. This deliberately does not grant the broader
+    // administrator-only actions protected by isAdmin().
+    return u && (u.role === 'partner' || u.is_admin === 1 || (u.role === 'staff' && (u.is_senior_staff === 1 || u.is_senior_staff === true)));
   },
 
   isAdmin() {

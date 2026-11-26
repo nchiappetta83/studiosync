@@ -7,7 +7,17 @@ function canMutateTask(actor, task) {
 }
 
 function canCreateTask(actor, data = {}) {
-  return Boolean(isPartner(actor) || (actor && (data.assigned_to === actor.id || (!data.assigned_to && actor.can_self_assign === 1))));
+  if (!actor) return false;
+
+  // Adding an existing project to one's own MyTasks list is controlled by
+  // the explicit Dashboard Staff Management setting for every role.
+  if (data.assigned_to === actor.id) {
+    return actor.can_self_assign === 1 || actor.can_self_assign === true;
+  }
+
+  // Scheduling admins and partners retain their separate ability to assign
+  // projects to other people during planning.
+  return isPartner(actor);
 }
 
 function canMutateSubtask(actor, subtask, getTaskById) {

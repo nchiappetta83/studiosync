@@ -1,5 +1,3 @@
-const os = require('os');
-
 class Auth {
   constructor(db) {
     this.db = db;
@@ -8,8 +6,9 @@ class Auth {
   }
 
   setUsername(username) {
-    // Ignore renderer-provided names; identity comes from the Windows session.
-    this._username = username === null ? null : os.userInfo().username;
+    // Use the selected StudioSync identity instead of coupling sign-in to the
+    // local Windows account, so shared/test PCs can switch profiles.
+    this._username = username === null ? null : String(username || '').trim().toLowerCase();
     this._currentUser = null;
   }
 

@@ -58,6 +58,15 @@ const UserDialog = {
                   <option value="">— No role assigned —</option>
                 </select>
               </div>
+              <div class="form-group" id="staff-senior-group" style="margin-top:4px;">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                  <input type="checkbox" id="staff-senior-staff">
+                  <span>Senior Staff / Project Lead</span>
+                </label>
+                <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">
+                  Makes this staff member available to select as a Project Lead.
+                </div>
+              </div>
               <div class="form-group" id="staff-admin-group" style="margin-top:4px;">
                 <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
                   <input type="checkbox" id="staff-admin-access">
@@ -70,10 +79,10 @@ const UserDialog = {
               <div class="form-group" id="staff-self-assign-group" style="margin-top:4px;">
                 <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
                   <input type="checkbox" id="staff-self-assign">
-                  <span>Can Add Tasks In MyTasks</span>
+                  <span>Can Add Projects In MyTasks</span>
                 </label>
                 <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">
-                  Lets this staff member add project-linked tasks and action items to their own MyTasks list.
+                  Lets this person add office projects to their own MyTasks list, plus private items when their role allows it.
                 </div>
               </div>
               <input type="hidden" id="staff-edit-id" value="">
@@ -205,6 +214,15 @@ const UserDialog = {
                 <option value="">— No role assigned —</option>
               </select>
             </div>
+            <div class="form-group" id="staff-senior-group" style="margin-top:4px;">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input type="checkbox" id="staff-senior-staff">
+                <span>Senior Staff / Project Lead</span>
+              </label>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">
+                Makes this staff member available to select as a Project Lead.
+              </div>
+            </div>
             <div class="form-group" id="staff-admin-group" style="margin-top:4px;">
               <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
                 <input type="checkbox" id="staff-admin-access">
@@ -217,10 +235,10 @@ const UserDialog = {
             <div class="form-group" id="staff-self-assign-group" style="margin-top:4px;">
               <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
                 <input type="checkbox" id="staff-self-assign">
-                <span>Can Add Tasks In MyTasks</span>
+                <span>Can Add Projects In MyTasks</span>
               </label>
               <div style="font-size:12px;color:var(--text-secondary);margin-top:6px;">
-                Lets this staff member add project-linked tasks and action items to their own MyTasks list.
+                Lets this person add office projects to their own MyTasks list, plus private items when their role allows it.
               </div>
             </div>
             <input type="hidden" id="staff-edit-id" value="">
@@ -575,6 +593,7 @@ const UserDialog = {
     this._overlay.querySelector('#staff-edit-id').value = '';
     this._overlay.querySelector('#staff-username-preview strong').textContent = '—';
     this._overlay.querySelector('#staff-admin-access').checked = false;
+    this._overlay.querySelector('#staff-senior-staff').checked = false;
     this._overlay.querySelector('#staff-self-assign').checked = false;
 
     // Populate business roles dropdown
@@ -582,12 +601,14 @@ const UserDialog = {
 
     // Show/hide staff-only fields
     const roleGroup = this._overlay.querySelector('#staff-role-group');
+    const seniorGroup = this._overlay.querySelector('#staff-senior-group');
     const adminGroup = this._overlay.querySelector('#staff-admin-group');
     const selfAssignGroup = this._overlay.querySelector('#staff-self-assign-group');
     const showStaffFields = this._activeTab !== 'partners';
     roleGroup.style.display = showStaffFields ? '' : 'none';
+    seniorGroup.style.display = showStaffFields ? '' : 'none';
     adminGroup.style.display = showStaffFields ? '' : 'none';
-    selfAssignGroup.style.display = showStaffFields ? '' : 'none';
+    selfAssignGroup.style.display = '';
 
     const label = this._activeTab === 'partners' ? 'Partner' : 'Staff';
     titleEl.textContent = `Add ${label}`;
@@ -611,6 +632,7 @@ const UserDialog = {
     this._overlay.querySelector('#staff-last-name').value = user.last_name || '';
     this._overlay.querySelector('#staff-edit-id').value = user.id;
     this._overlay.querySelector('#staff-admin-access').checked = !!user.is_admin;
+    this._overlay.querySelector('#staff-senior-staff').checked = !!user.is_senior_staff;
     this._overlay.querySelector('#staff-self-assign').checked = !!user.can_self_assign;
 
     // Update username preview
@@ -628,12 +650,14 @@ const UserDialog = {
 
     // Show/hide staff-only fields
     const roleGroup = this._overlay.querySelector('#staff-role-group');
+    const seniorGroup = this._overlay.querySelector('#staff-senior-group');
     const adminGroup = this._overlay.querySelector('#staff-admin-group');
     const selfAssignGroup = this._overlay.querySelector('#staff-self-assign-group');
     const showStaffFields = user.role !== 'partner';
     roleGroup.style.display = showStaffFields ? '' : 'none';
+    seniorGroup.style.display = showStaffFields ? '' : 'none';
     adminGroup.style.display = showStaffFields ? '' : 'none';
-    selfAssignGroup.style.display = showStaffFields ? '' : 'none';
+    selfAssignGroup.style.display = '';
 
     titleEl.textContent = `Edit ${user.display_name}`;
     saveBtn.textContent = 'Save';
@@ -667,16 +691,19 @@ const UserDialog = {
     const preview = this._overlay.querySelector('#staff-username-preview strong');
     preview.textContent = currentUser.username || '—';
     this._overlay.querySelector('#staff-admin-access').checked = !!currentUser.is_admin;
+    this._overlay.querySelector('#staff-senior-staff').checked = !!currentUser.is_senior_staff;
     this._overlay.querySelector('#staff-self-assign').checked = !!currentUser.can_self_assign;
 
     this._populateRoleDropdown(currentUser.business_role_id);
     const roleGroup = this._overlay.querySelector('#staff-role-group');
+    const seniorGroup = this._overlay.querySelector('#staff-senior-group');
     const adminGroup = this._overlay.querySelector('#staff-admin-group');
     const selfAssignGroup = this._overlay.querySelector('#staff-self-assign-group');
     const showStaffFields = role !== 'partner';
     roleGroup.style.display = showStaffFields ? '' : 'none';
+    seniorGroup.style.display = showStaffFields ? '' : 'none';
     adminGroup.style.display = showStaffFields ? '' : 'none';
-    selfAssignGroup.style.display = showStaffFields ? '' : 'none';
+    selfAssignGroup.style.display = '';
 
     titleEl.textContent = role === 'partner' ? 'Add Me As Partner' : 'Add Me As Staff';
     saveBtn.textContent = role === 'partner' ? 'Become Partner' : 'Become Staff';
@@ -708,6 +735,7 @@ const UserDialog = {
     const editId = this._overlay.querySelector('#staff-edit-id').value;
     const businessRoleId = this._overlay.querySelector('#staff-business-role').value || null;
     const adminAccess = this._overlay.querySelector('#staff-admin-access').checked;
+    const seniorStaff = this._overlay.querySelector('#staff-senior-staff').checked;
     const selfAssign = this._overlay.querySelector('#staff-self-assign').checked;
 
     if (!firstName) {
@@ -744,7 +772,8 @@ const UserDialog = {
           username: username,
           role: role,
           is_admin: role === 'partner' ? 1 : (adminAccess ? 1 : 0),
-          can_self_assign: role === 'staff' && selfAssign ? 1 : 0,
+          is_senior_staff: role === 'staff' && seniorStaff ? 1 : 0,
+          can_self_assign: selfAssign ? 1 : 0,
         };
         // Only set business_role_id for staff
         if (role === 'staff') {
@@ -763,7 +792,8 @@ const UserDialog = {
           username: username,
           role: role,
           is_admin: role === 'partner' ? 1 : (adminAccess ? 1 : 0),
-          can_self_assign: role === 'staff' && selfAssign ? 1 : 0,
+          is_senior_staff: role === 'staff' && seniorStaff ? 1 : 0,
+          can_self_assign: selfAssign ? 1 : 0,
         };
         if (role === 'staff') {
           createData.business_role_id = businessRoleId;

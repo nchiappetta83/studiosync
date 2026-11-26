@@ -80,6 +80,7 @@ globalScope.TaskCard = {
 
     // Partner initials badge
     const partnerHtml = this._renderPartnerBadge(task);
+    const leadHtml = this._renderLeadControl(task, isPartner);
 
     // Calendar icon (partner only)
     const calIcon = isPartner && !dueDisplay
@@ -102,6 +103,9 @@ globalScope.TaskCard = {
       ? `<span class="task-due-label ${dueColor}" data-task-id="${task.id}" style="${dueCursor}">${this._escapeHtml(dueDisplay)}</span>`
       : '';
     const bulkSelect = isPartner ? `<input class="task-bulk-select" type="checkbox" data-task-id="${task.id}" aria-label="Select task for bulk actions">` : '';
+    const workCardToggle = task.project_id
+      ? `<button type="button" class="task-work-card-toggle" data-project-id="${this._escapeAttr(task.project_id)}" aria-expanded="false" title="Show work cards">&#8250; Work cards</button>`
+      : '';
 
     return `
       <div class="task-card ${completedClass} ${carryoverClass} ${isPartner ? 'task-card-draggable' : ''}" data-task-id="${task.id}">
@@ -121,7 +125,10 @@ globalScope.TaskCard = {
         <div class="task-card-bottom">
           <input type="text" class="task-notes-input ${canEditNotes ? 'task-notes-input-editable' : ''}" data-task-id="${task.id}"
             value="${this._escapeAttr(notesVal)}" placeholder="Note" ${canEditNotes ? '' : 'readonly'}>
+          ${leadHtml}
         </div>
+        ${workCardToggle}
+        <div class="task-work-card-list hidden" aria-live="polite"></div>
       </div>
     `;
   },
@@ -194,6 +201,14 @@ globalScope.TaskCard = {
         });
       });
 
+      container.querySelectorAll('.task-lead-control').forEach((control) => {
+        control.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const task = AppState.get('tasks').find((candidate) => candidate.id === control.dataset.taskId);
+          if (task) this._showLeadMenu(control, task);
+        });
+      });
+
       container.querySelectorAll('.task-cal-icon').forEach(icon => {
         icon.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -211,7 +226,7 @@ globalScope.TaskCard = {
               e.target.closest('.task-partner-badge') || e.target.closest('.task-keep-btn') ||
               e.target.closest('.task-carry-delete-btn') ||
               e.target.closest('.task-complete-btn') ||
-              e.target.closest('.task-due-label')) return;
+              e.target.closest('.task-due-label') || e.target.closest('.task-lead-control')) return;
           const taskId = card.dataset.taskId;
           const task = AppState.get('tasks').find(t => t.id === taskId);
           if (task) TaskDialog.show(task, true);
@@ -242,6 +257,7 @@ globalScope.TaskCard = {
               e.target.closest('.task-cal-icon') ||
               e.target.closest('.task-keep-btn') || e.target.closest('.task-carry-delete-btn') ||
               e.target.closest('.task-complete-btn') ||
+              e.target.closest('.task-lead-control') ||
               e.button !== 0) return;
 
           startX = e.clientX;
@@ -278,6 +294,49 @@ globalScope.TaskCard = {
       if (globalScope.TaskNotesEditor) {
         globalScope.TaskNotesEditor.bindInput(input);
       }
+    });
+
+    // Work cards are deliberately loaded only after disclosure. The Dashboard
+    // must stay responsive while the team moves quickly through assignments.
+    container.querySelectorAll('.task-work-card-toggle').forEach((button) => {
+      button.addEventListener('mousedown', (event) => event.stopPropagation());
+      button.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const card = button.closest('.task-card');
+        const list = card?.querySelector('.task-work-card-list');
+        if (!list) return;
+        const isOpen = !list.classList.contains('hidden');
+        if (isOpen) {
+          list.classList.add('hidden');
+          button.setAttribute('aria-expanded', 'false');
+          button.innerHTML = '&#8250; Work cards';
+          return;
+        }
+
+        if (!card.dataset.workCardsLoaded) {
+          button.disabled = true;
+          button.textContent = 'Loading work cards…';
+          try {
+            const cards = await window.api.getProjectWorkCards(button.dataset.projectId);
+            list.innerHTML = cards.length
+              ? cards.map((workCard) => `<div class="task-work-card ${workCard.completed ? 'completed' : ''}">
+                  <strong>${this._escapeHtml(workCard.title)}</strong>
+                  ${workCard.description ? `<span>${this._escapeHtml(workCard.description)}</span>` : ''}
+                  ${workCard.planned_minutes ? `<em>${this._escapeHtml(`${workCard.planned_minutes / 60}h`)}</em>` : ''}
+                </div>`).join('')
+              : '<div class="task-work-card-empty">No work cards for this week.</div>';
+            card.dataset.workCardsLoaded = 'true';
+          } catch (error) {
+            console.error('Unable to load work cards:', error);
+            list.innerHTML = '<div class="task-work-card-empty">Work cards could not be loaded.</div>';
+          } finally {
+            button.disabled = false;
+          }
+        }
+        list.classList.remove('hidden');
+        button.setAttribute('aria-expanded', 'true');
+        button.innerHTML = '&#8964; Work cards';
+      });
     });
   },
 
@@ -331,18 +390,24 @@ globalScope.TaskCard = {
     document.body.appendChild(menu);
 
     const rect = anchor.getBoundingClientRect();
-    menu.style.top = (rect.bottom + 4) + 'px';
-    menu.style.left = rect.left + 'px';
+    const viewportPadding = 8;
+    const gap = 4;
+    const availableAbove = Math.max(0, rect.top - viewportPadding - gap);
+    const availableBelow = Math.max(0, window.innerHeight - rect.bottom - viewportPadding - gap);
+    menu.style.maxHeight = `${Math.max(120, Math.min(window.innerHeight - (viewportPadding * 2), Math.max(availableAbove, availableBelow)))}px`;
+    menu.style.overflowY = 'auto';
 
-    // Keep in viewport
+    // Prefer the larger open side of the badge. This keeps long numerical
+    // priority lists reachable instead of allowing the first entries to be
+    // hidden above the app frame.
     requestAnimationFrame(() => {
       const menuRect = menu.getBoundingClientRect();
-      if (menuRect.bottom > window.innerHeight - 8) {
-        menu.style.top = (rect.top - menuRect.height - 4) + 'px';
-      }
-      if (menuRect.right > window.innerWidth - 8) {
-        menu.style.left = (window.innerWidth - menuRect.width - 8) + 'px';
-      }
+      const openUp = menuRect.height > availableBelow && availableAbove > availableBelow;
+      menu.classList.toggle('opens-up', openUp);
+      menu.style.top = `${openUp
+        ? Math.max(viewportPadding, rect.top - menuRect.height - gap)
+        : Math.min(window.innerHeight - menuRect.height - viewportPadding, rect.bottom + gap)}px`;
+      menu.style.left = `${Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - menuRect.width - viewportPadding))}px`;
     });
 
     const dismiss = (e) => {
@@ -362,6 +427,73 @@ globalScope.TaskCard = {
     dot.style.background = color;
     dot.style.flexShrink = '0';
     button.appendChild(dot);
+  },
+
+  _showLeadMenu(anchor, task) {
+    const existing = document.querySelector('.task-lead-menu');
+    if (existing) existing.remove();
+
+    const leads = (AppState.get('users') || [])
+      .filter((user) => user.role === 'staff' && user.active !== 0 && (user.is_senior_staff === 1 || user.is_senior_staff === true))
+      .sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''), undefined, { sensitivity: 'base' }));
+    const menu = document.createElement('div');
+    menu.className = 'priority-menu task-lead-menu';
+
+    const appendOption = (label, leadId = null, selected = false) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'context-menu-item';
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      if (selected) button.classList.add('task-lead-menu-selected');
+      button.textContent = selected ? `✓ ${label}` : label;
+      button.addEventListener('click', async () => {
+        menu.remove();
+        document.removeEventListener('click', dismiss);
+        await window.api.updateTask({ id: task.id, lead_id: leadId });
+        await AppState.refresh();
+        Toast.show(leadId ? 'Project Lead set for the whole project' : 'Project Lead cleared for the whole project', 'success');
+      });
+      menu.appendChild(button);
+    };
+
+    appendOption('No Lead', null, !task.lead_id);
+    if (leads.length) {
+      const divider = document.createElement('div');
+      divider.className = 'context-menu-divider';
+      menu.appendChild(divider);
+      leads.forEach((lead) => appendOption(lead.display_name, lead.id, lead.id === task.lead_id));
+    }
+
+    document.body.appendChild(menu);
+    this._positionPopupMenu(menu, anchor);
+
+    const dismiss = (event) => {
+      if (!menu.contains(event.target) && event.target !== anchor) {
+        menu.remove();
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', dismiss), 0);
+  },
+
+  _positionPopupMenu(menu, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const viewportPadding = 8;
+    const gap = 4;
+    const availableAbove = Math.max(0, rect.top - viewportPadding - gap);
+    const availableBelow = Math.max(0, window.innerHeight - rect.bottom - viewportPadding - gap);
+    menu.style.maxHeight = `${Math.max(120, Math.min(window.innerHeight - (viewportPadding * 2), Math.max(availableAbove, availableBelow)))}px`;
+    menu.style.overflowY = 'auto';
+
+    requestAnimationFrame(() => {
+      const menuRect = menu.getBoundingClientRect();
+      const openUp = menuRect.height > availableBelow && availableAbove > availableBelow;
+      menu.classList.toggle('opens-up', openUp);
+      menu.style.top = `${openUp
+        ? Math.max(viewportPadding, rect.top - menuRect.height - gap)
+        : Math.min(window.innerHeight - menuRect.height - viewportPadding, rect.bottom + gap)}px`;
+      menu.style.left = `${Math.max(viewportPadding, Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - viewportPadding))}px`;
+    });
   },
 
   async _confirmCarryoverDelete(task) {
@@ -920,6 +1052,22 @@ globalScope.TaskCard = {
     const partnerLabel = this._getTaskPartnerLabel(task);
     if (!partnerLabel) return '';
     return `<span class="task-partner-badge" data-task-id="${task.id}" title="${this._escapeAttr(partnerLabel)}">${this._escapeHtml(partnerLabel)}</span>`;
+  },
+
+  _renderLeadControl(task, editable) {
+    const users = AppState.get('users') || [];
+    const lead = task.lead_id ? users.find((user) => user.id === task.lead_id) : null;
+    const label = `Lead: ${lead ? this._getLastName(lead) : 'None'}`;
+    const title = lead ? `Project Lead: ${lead.display_name}` : 'Project Lead: None';
+    if (!editable) return `<span class="task-lead-control task-lead-readonly" title="${this._escapeAttr(title)}">${this._escapeHtml(label)}</span>`;
+    return `<button type="button" class="task-lead-control" data-task-id="${this._escapeAttr(task.id)}" title="${this._escapeAttr(title)}" aria-label="Change ${this._escapeAttr(title)}">${this._escapeHtml(label)}</button>`;
+  },
+
+  _getLastName(user) {
+    const lastName = String(user?.last_name || '').trim();
+    if (lastName) return lastName;
+    const nameParts = String(user?.display_name || '').trim().split(/\s+/).filter(Boolean);
+    return nameParts[nameParts.length - 1] || 'None';
   },
 
   _getInitials(name) {

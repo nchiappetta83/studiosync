@@ -715,6 +715,20 @@ body.window-resizing .projects-panel {
   padding: 0 8px 16px;
 }
 
+/* Keep scrollbars from changing a panel's usable width while the shared
+   wheel smoother softens discrete mouse-wheel steps. Precision input remains
+   native and can still chain at an edge. */
+.sidebar-list,
+.tasks-scroll,
+.projects-scroll,
+.dialog-body,
+.dialog-project-picker-list,
+.settings-list-scroll,
+.task-activity-list {
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
+}
+
 /* ── Content Area ──────────────────────────────────────── */
 
 .content-area {

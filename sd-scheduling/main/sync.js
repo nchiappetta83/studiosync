@@ -39,6 +39,13 @@ function isRolloverReviewStart(value) {
     && (value.startedAt === undefined || typeof value.startedAt === 'string');
 }
 
+function isRolloverReviewEnd(value) {
+  return isObject(value)
+    && typeof value.week === 'string'
+    && value.week.trim().length > 0
+    && (value.endedAt === undefined || typeof value.endedAt === 'string');
+}
+
 const EVENT_VALIDATORS = {
   'user-created': hasStringId,
   'user-updated': hasStringId,
@@ -47,6 +54,15 @@ const EVENT_VALIDATORS = {
   'task-updated': hasStringId,
   'task-deleted': hasStringId,
   'tasks-reordered': hasSortableItems,
+  'work-card-created': hasStringId,
+  'work-card-updated': hasStringId,
+  'work-card-completed': (value) => hasStringId(value) && typeof value.project_id === 'string' && typeof value.completed_by === 'string',
+  'work-card-deleted': hasStringId,
+  'work-card-focus-set': (value) => isObject(value) && typeof value.user_id === 'string' && (typeof value.work_card_id === 'string' || value.work_card_id === null),
+  'work-card-category-created': hasStringId,
+  'work-card-category-updated': hasStringId,
+  'work-card-category-deleted': hasStringId,
+  'work-card-categories-reordered': hasSortableItems,
   'subtask-created': hasStringId,
   'subtask-updated': hasStringId,
   'subtask-toggled': hasStringId,
@@ -73,6 +89,7 @@ const EVENT_VALIDATORS = {
   'setting-updated': (value) => isObject(value) && typeof value.key === 'string',
   'weekly-rollover': (value) => value === undefined || value === null || isObject(value),
   'rollover-review-started': isRolloverReviewStart,
+  'rollover-review-ended': isRolloverReviewEnd,
   'rollover-published': isRolloverPublication,
   'task-confirmed': hasStringId,
   'task-activity-added': (value) => hasStringId(value) && typeof value.task_id === 'string' && typeof value.action === 'string',
@@ -100,27 +117,56 @@ class SyncEngine {
     this.deviceTrust = options.appDataDir ? new DeviceTrust({ appDataDir: options.appDataDir, sharedDrivePath, source, logger }) : null;
   }
 
+  getFailureSummary() {
+    const failures = [...this.failedFiles.entries()].map(([filename, state]) => ({
+      filename,
+      attempts: state.attempts,
+      error: state.error,
+      nextRetryAt: state.nextRetryAt,
+    }));
+    return {
+      count: failures.length,
+      totalAttempts: failures.reduce((total, failure) => total + failure.attempts, 0),
+      nextRetryAt: failures.reduce((next, failure) => {
+        if (!failure.nextRetryAt) return next;
+        return next === null ? failure.nextRetryAt : Math.min(next, failure.nextRetryAt);
+      }, null),
+      failures,
+    };
+  }
+
+  retryFailedFiles() {
+    for (const state of this.failedFiles.values()) state.nextRetryAt = 0;
+    return this.pull();
+  }
+
   initialize() {
     fs.mkdirSync(this.eventsDir, { recursive: true });
     fs.mkdirSync(this.snapshotsDir, { recursive: true });
 
     this._ensureProcessedFilesLoaded();
     this._seedProcessedFilesFromLegacyCursor();
+    const isFreshDb = !this.db.getLastSyncTimestamp() && this.processedFiles.size === 0;
+    if (isFreshDb) this.restoreSharedSnapshot();
     this.flushOutbox();
 
-    const isFreshDb = !this.db.getLastSyncTimestamp() && this.processedFiles.size === 0;
     const initialEvents = this.pull(isFreshDb);
     this._maybeCleanup();
+    this.writeSharedSnapshot();
     return initialEvents;
   }
 
-  startPolling(onUpdate) {
+  startPolling(onUpdate, onStatusChange) {
     this.stopPolling();
     this.pollInterval = setInterval(() => {
       try {
         this.flushOutbox();
+        const previousFailureState = JSON.stringify(this.getFailureSummary());
         const appliedEvents = this.pull();
+        if (appliedEvents.length > 0) this.writeSharedSnapshot();
         this._maybeCleanup();
+        const failureSummary = this.getFailureSummary();
+        if (JSON.stringify(failureSummary) !== previousFailureState && onStatusChange) onStatusChange(failureSummary);
         if (onUpdate) onUpdate(appliedEvents);
       } catch (err) {
         console.error('Sync pull error:', err.message);
@@ -155,23 +201,28 @@ class SyncEngine {
   pull(includeOwnEvents = false) {
     this._ensureProcessedFilesLoaded();
     this._seedProcessedFilesFromLegacyCursor();
-    let files;
+    let pendingFiles;
 
     try {
-      files = fs.readdirSync(this.eventsDir)
+      const now = Date.now();
+      pendingFiles = fs.readdirSync(this.eventsDir)
         .filter((file) => file.endsWith('.json'))
-        .sort((left, right) => left.localeCompare(right))
-        .map((file) => ({
-          file,
-          filePath: path.join(this.eventsDir, file),
-        }));
+        .map((file) => {
+          if (this.processedFiles.has(file)) return null;
+          const filePath = path.join(this.eventsDir, file);
+          let mtimeMs = 0;
+          try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch (_) {}
+          const failure = this.failedFiles.get(file);
+          if (failure && failure.nextRetryAt > now) return null;
+          return { file, filePath, mtimeMs };
+        })
+        .filter(Boolean)
+        .sort((left, right) => left.mtimeMs - right.mtimeMs || left.file.localeCompare(right.file));
     } catch (err) {
       console.error('Cannot read events directory:', err.message);
       return [];
     }
 
-    // Process only files we have not already applied locally.
-    const pendingFiles = files.filter(({ file }) => !this.processedFiles.has(file));
     if (pendingFiles.length === 0) return [];
 
     const appliedEvents = [];
@@ -189,9 +240,8 @@ class SyncEngine {
           continue;
         }
 
-        this.db.applyEvent(event);
+        this._applyAndMarkEvent(event, entry.file);
         appliedEvents.push(event);
-        this._markFileProcessed(entry.file);
       } catch (err) {
         this._recordFailure(entry.file, err);
       }
@@ -209,12 +259,77 @@ class SyncEngine {
 
     try {
       this.db.queueSyncEvent(event);
-      return this.flushOutbox(event.eventId);
+      const published = this.flushOutbox(event.eventId);
+      if (published) this.writeSharedSnapshot();
+      return published;
     } catch (err) {
       this.logger?.error('Sync outbox queue failed', { type, error: err.message });
       console.error('Error queueing sync event:', err.message);
       return false;
     }
+  }
+
+  _snapshotPath() { return path.join(this.snapshotsDir, 'dashboard-state.json'); }
+
+  _snapshotEventCursor(timestamp) {
+    return String(timestamp || new Date().toISOString()).replace(/[:.]/g, '-');
+  }
+
+  writeSharedSnapshot() {
+    if (this.source !== 'scheduling' || typeof this.db.exportSharedSnapshot !== 'function') return false;
+    try {
+      // Bring in every event already present before taking the authoritative
+      // recovery snapshot. Without this, a MyTasks completion written just
+      // before a Dashboard save could be absent from the snapshot yet later be
+      // treated as covered by its cursor.
+      this.pull();
+      const generatedAt = new Date().toISOString();
+      const snapshot = {
+        schemaVersion: 1,
+        source: 'scheduling',
+        generatedAt,
+        eventCursor: this._snapshotEventCursor(generatedAt),
+        tables: this.db.exportSharedSnapshot(),
+      };
+      const destination = this._snapshotPath();
+      const temporary = `${destination}.${this.instanceId}.tmp`;
+      fs.writeFileSync(temporary, JSON.stringify(snapshot), 'utf8');
+      fs.renameSync(temporary, destination);
+      return true;
+    } catch (err) {
+      this.logger?.warn('Shared snapshot write failed', { error: err.message });
+      return false;
+    }
+  }
+
+  restoreSharedSnapshot() {
+    if (typeof this.db.importSharedSnapshot !== 'function') return false;
+    const source = this._snapshotPath();
+    if (!fs.existsSync(source)) return false;
+    try {
+      const snapshot = JSON.parse(fs.readFileSync(source, 'utf8'));
+      const imported = Boolean(this.db.importSharedSnapshot(snapshot));
+      if (imported) this._markSnapshotHistoryProcessed(snapshot.eventCursor || this._snapshotEventCursor(snapshot.generatedAt));
+      return imported;
+    } catch (err) {
+      this.logger?.warn('Shared snapshot restore failed', { error: err.message });
+      return false;
+    }
+  }
+
+  _markSnapshotHistoryProcessed(cursor) {
+    if (!cursor) return 0;
+    let marked = 0;
+    try {
+      for (const file of fs.readdirSync(this.eventsDir)) {
+        if (!file.endsWith('.json') || file.slice(0, cursor.length) > cursor) continue;
+        this._markFileProcessed(file);
+        marked += 1;
+      }
+    } catch (err) {
+      this.logger?.warn('Could not establish snapshot event cursor', { error: err.message });
+    }
+    return marked;
   }
 
   createEvent(type, data) {
@@ -346,11 +461,29 @@ class SyncEngine {
     this.failedFiles.delete(filename);
   }
 
-  _recordFailure(filename, err) {
-    const attempts = (this.failedFiles.get(filename) || 0) + 1;
-    this.failedFiles.set(filename, attempts);
+  _applyAndMarkEvent(event, filename) {
+    if (typeof this.db.applyEventAndMarkProcessed === 'function') {
+      this.db.applyEventAndMarkProcessed(event, filename);
+    } else {
+      this.db.applyEvent(event);
+      this.db.markSyncFileProcessed(filename);
+      this.db.setLastSyncTimestamp(filename);
+    }
+    this.processedFiles.add(filename);
+    this.failedFiles.delete(filename);
+  }
 
-    if (attempts === 1 || attempts % 12 === 0) {
+  _recordFailure(filename, err) {
+    const previous = this.failedFiles.get(filename);
+    const attempts = (previous?.attempts || 0) + 1;
+    const retryDelay = Math.min(30 * 1000 * (2 ** Math.min(attempts - 1, 5)), 15 * 60 * 1000);
+    this.failedFiles.set(filename, {
+      attempts,
+      error: err?.message || String(err),
+      nextRetryAt: Date.now() + retryDelay,
+    });
+
+    if (attempts === 1 || attempts % 6 === 0) {
       console.error(`Error processing event ${filename}:`, err.message);
     }
   }

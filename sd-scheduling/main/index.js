@@ -27,6 +27,7 @@ let excelWriteQueue = Promise.resolve();
 let startupInitPromise = null;
 let startupInitPath = null;
 let pendingStartupRolloverNotice = null;
+let workCardCarryOverCheckedWeek = null;
 let logger = null;
 let allowWindowClose = false;
 let rolloverClosePromptOpen = false;
@@ -42,6 +43,9 @@ let runtimeStatus = {
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
 const ROLLOVER_PUBLISH_STATE_KEY = 'rollover_publish_state';
+// How long an unfinished weekly review is honoured before other Dashboards may
+// start the rollover themselves.
+const ROLLOVER_REVIEW_STALE_MS = 12 * 60 * 60 * 1000;
 
 const WINDOW_MODES = {
   auth: { width: 500, height: 600, minWidth: 500, minHeight: 560 },
@@ -204,7 +208,8 @@ function appendInputDiagnostics(entry = {}) {
 }
 
 // ── Lock File ────────────────────────────────────────────
-// Prevents two people from opening the main app simultaneously.
+// Prevents two people from running an authorized Dashboard scheduling session
+// simultaneously. Merely opening the sign-in window must not lock MyTasks.
 
 function getLockFilePath(sharedDrivePath = getConfiguredSharedDrivePath()) {
   const lockDir = sharedDrivePath || APP_DATA_DIR;
@@ -369,8 +374,16 @@ function loadConfig() {
   const configPath = getConfigPath();
   let config = null;
 
-  if (fs.existsSync(configPath)) {
-    config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  try {
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      config = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    }
+  } catch (error) {
+    logger?.warn('Configuration file could not be read; using safe defaults', {
+      configPath,
+      error: error.message,
+    });
   }
 
   const envSharedDrivePath = process.env[ENV_SHARED_DRIVE_PATH];
@@ -386,7 +399,16 @@ function loadConfig() {
 
 function saveConfig(config) {
   fs.mkdirSync(APP_DATA_DIR, { recursive: true });
-  fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+  const configPath = getConfigPath();
+  const temporaryPath = `${configPath}.${process.pid}-${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(config || {}, null, 2), 'utf8');
+    fs.renameSync(temporaryPath, configPath);
+  } catch (error) {
+    try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch (_) {}
+    logger?.error('Configuration file could not be saved', { configPath, error: error.message });
+    throw error;
+  }
 }
 
 function inspectSharedDrivePath(selectedPath, { allowEmpty = false } = {}) {
@@ -520,6 +542,10 @@ async function restoreDashboardBackup(backupPath) {
 
 function closeRuntime() {
   const startedAt = Date.now();
+  // A shared Dashboard lock belongs to the active scheduling session, not to
+  // the local connection/setup screen. Releasing it here also makes switching
+  // offices or signing out safe for everyone using MyTasks.
+  releaseLock();
   if (updateManager) {
     updateManager.stop();
   }
@@ -778,6 +804,7 @@ function getRuntimeStatus() {
     updateFolderReachable: updateFolderPath ? fs.existsSync(updateFolderPath) : false,
     lastSyncAt: runtimeStatus.lastSyncAt,
     syncOutbox: sync?.getOutboxSummary?.() || { pending: 0, attempts: 0, lastError: null, oldestQueuedAt: null },
+    syncFailures: sync?.getFailureSummary?.() || { count: 0, totalAttempts: 0, nextRetryAt: null, failures: [] },
     lastExcelWriteAt: runtimeStatus.lastExcelWriteAt,
     lastExcelWriteError: runtimeStatus.lastExcelWriteError,
     updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
@@ -999,6 +1026,10 @@ function publishRolloverChanges() {
   ].every(Boolean);
   saveRolloverPublishState({ ...publishedState, compatibilityPending: !compatibilityWritten });
   markSyncActivity();
+  // The Dashboard mutex protects the scheduling meeting itself. Once the
+  // authoritative weekly publication has been written, other Dashboard users
+  // are free to open the app again and MyTasks receives the unlocked state.
+  releaseLock();
 
   return {
     published: true,
@@ -1010,29 +1041,43 @@ function publishRolloverChanges() {
   };
 }
 
-function hasSharedWeeklyRolloverEvent(weekStr) {
+function getSharedWeeklyRolloverStatus(weekStr) {
+  const status = { published: false, reviewActive: false };
   if (!sync?.eventsDir || !weekStr || !fs.existsSync(sync.eventsDir)) {
-    return false;
+    return status;
   }
 
   try {
     const files = fs.readdirSync(sync.eventsDir)
-      .filter((file) => file.endsWith('.json') && (file.includes('_weekly-rollover_') || file.includes('_rollover-published_')))
-      .sort()
-      .reverse();
+      .filter((file) => file.endsWith('.json') && (
+        file.includes('_weekly-rollover_')
+        || file.includes('_rollover-published_')
+        || file.includes('_rollover-review-started_')
+        || file.includes('_rollover-review-ended_')
+      ))
+      .sort();
 
     for (const file of files) {
       const filePath = path.join(sync.eventsDir, file);
       const event = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      if ((event?.type === 'weekly-rollover' || event?.type === 'rollover-published') && event?.data?.week === weekStr) {
-        return true;
+      if (event?.data?.week !== weekStr) continue;
+      if (event.type === 'weekly-rollover' || event.type === 'rollover-published') {
+        status.published = true;
+        status.reviewActive = false;
+      } else if (event.type === 'rollover-review-started') {
+        // A review whose Dashboard never published or closed it (crash, power
+        // loss) must not block the weekly rollover forever.
+        const startedAt = Date.parse(event.data?.startedAt || event.timestamp || '');
+        status.reviewActive = !Number.isFinite(startedAt) || Date.now() - startedAt < ROLLOVER_REVIEW_STALE_MS;
+      } else if (event.type === 'rollover-review-ended') {
+        status.reviewActive = false;
       }
     }
   } catch (err) {
     console.error('Failed to inspect weekly rollover events:', err.message);
   }
 
-  return false;
+  return status;
 }
 
 function getWeeklyRolloverState() {
@@ -1059,23 +1104,77 @@ function getWeeklyRolloverState() {
     db.setLastRolloverWeek(lastWeek);
   }
 
-  const sharedRolloverRecorded = hasSharedWeeklyRolloverEvent(currentWeek);
+  const sharedRollover = getSharedWeeklyRolloverStatus(currentWeek);
   const localRolloverStaged = getRolloverPublishState()?.week === currentWeek;
+  // A published shared schedule is authoritative for every Dashboard copy.
+  // A newly connected machine may not yet have its local rollover marker, so
+  // align it before deciding whether a new rollover is needed.
+  if (sharedRollover.published && lastWeek !== currentWeek) {
+    db.setLastRolloverWeek(currentWeek);
+    lastWeek = currentWeek;
+  }
   const recoveryNeeded = (
     lastWeek === currentWeek
-    && !sharedRolloverRecorded
+    && !sharedRollover.published
+    && !sharedRollover.reviewActive
     && !localRolloverStaged
     && db.hasTasksOlderThanWeek(currentWeek)
   );
 
   return {
-    needed: lastWeek !== currentWeek || recoveryNeeded,
+    needed: !sharedRollover.published && !sharedRollover.reviewActive && (lastWeek !== currentWeek || recoveryNeeded),
     currentWeek,
     lastWeek,
     initialized,
     inferredFromExistingTasks,
     recoveryNeeded,
+    sharedRolloverPublished: sharedRollover.published,
+    reviewInProgressElsewhere: sharedRollover.reviewActive,
   };
+}
+
+// Unfinished work cards follow the schedule into the new week. The moved cards
+// are published as ordinary work-card updates, which every MyTasks and
+// Dashboard version already understands, so no app needs to be updated first.
+// Publishes tasks whose Project Lead was changed by the project-wide rule, the
+// same way an ordinary edit would be (staged during a rollover review).
+function publishLeadChangedTasks(tasks) {
+  for (const sibling of tasks) {
+    if (shouldStageRolloverTask(sibling)) stageRolloverTaskChange(sibling.id);
+    else if (sync) sync.pushEvent('task-updated', sibling);
+  }
+}
+
+// The Project Lead is one person per project. Copy it to every other assignment
+// on the project so it never has to be set staff member by staff member.
+function shareProjectLead(task) {
+  if (!db || !task?.project_id) return [];
+  try {
+    const changed = db.applyProjectLead(task.project_id, task.lead_id || null, { exceptTaskId: task.id });
+    publishLeadChangedTasks(changed);
+    return changed;
+  } catch (err) {
+    console.error('Sharing the Project Lead failed:', err.message);
+    return [];
+  }
+}
+
+let projectLeadsReconciled = false;
+
+function carryOverWorkCards(weekStr) {
+  if (!db || !weekStr) return 0;
+  let moved = [];
+  try {
+    moved = db.carryOverUnfinishedWorkCards(weekStr);
+  } catch (err) {
+    console.error('Work card carry-over failed:', err.message);
+    return 0;
+  }
+  if (sync) {
+    for (const card of moved) sync.pushEvent('work-card-updated', card);
+  }
+  if (moved.length) appendInputDiagnostics({ scope: 'main', type: 'work-cards-carried-over', week: weekStr, count: moved.length });
+  return moved.length;
 }
 
 function performWeeklyRollover({ force = false, source = 'manual' } = {}) {
@@ -1083,12 +1182,26 @@ function performWeeklyRollover({ force = false, source = 'manual' } = {}) {
   if (!db) return { applied: false, source, ...state };
   if (!force && !state.needed) return { applied: false, source, ...state };
 
+  // A Dashboard sign-in is harmless. Reserve the shared scheduling session
+  // only when an administrator actually begins the weekly rollover.
+  const config = loadConfig() || {};
+  if (!acquireLock(config.sharedDrivePath, { exitOnFailure: false })) {
+    return {
+      applied: false,
+      source,
+      error: 'Another Dashboard scheduling session is already active.',
+      ...state,
+    };
+  }
+
   const originalTasks = db.getTasks();
   const originalTaskIds = originalTasks.map((task) => task.id);
   const baseTaskUpdatedAt = Object.fromEntries(originalTasks.map((task) => [task.id, task.updated_at]));
   const originalPtoUserIds = db.getPTO().map((pto) => pto.user_id);
   db.performWeeklyRollover(state.currentWeek);
   db.setLastRolloverWeek(state.currentWeek);
+  carryOverWorkCards(state.currentWeek);
+  workCardCarryOverCheckedWeek = state.currentWeek;
   saveRolloverPublishState({
     week: state.currentWeek,
     published: false,
@@ -1126,6 +1239,31 @@ function performWeeklyRollover({ force = false, source = 'manual' } = {}) {
   }
 
   return result;
+}
+
+function releaseRolloverReviewWithoutPublishing() {
+  const state = getRolloverPublishState();
+  if (!state || state.week !== getCurrentWeekStartString() || !state.hasUnpublishedChanges) {
+    return { released: true, skipped: true };
+  }
+  if (!sync) {
+    return { released: false, error: 'Dashboard is not connected to the shared folder.' };
+  }
+
+  const released = sync.pushEvent('rollover-review-ended', {
+    week: state.week,
+    endedAt: new Date().toISOString(),
+    reason: 'closed-without-publishing',
+  });
+  if (!released) {
+    return { released: false, error: 'MyTasks could not be unlocked because the shared folder is unavailable.' };
+  }
+
+  saveRolloverPublishState({
+    ...state,
+    reviewLockReleasedAt: new Date().toISOString(),
+  });
+  return { released: true, skipped: false };
 }
 
 async function applyProjectEventsToExcel(events = []) {
@@ -1265,10 +1403,6 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
   startupInitPromise = (async () => {
     pendingStartupRolloverNotice = null;
 
-    if (!switchToSharedLock(resolvedSharedPath)) {
-      throw new Error('StudioSync is already open for this shared folder on another machine.');
-    }
-
     if (sync) sync.stopPolling();
     if (db) {
       try {
@@ -1297,10 +1431,9 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
       skipUpdateSyncHandling: true,
     });
 
-    const rolloverResult = performWeeklyRollover({ source: 'startup' });
-    if (rolloverResult.applied) {
-      notifyDataChanged('startup-rollover', { source: 'startup' });
-    }
+    // Weekly review begins only after an authenticated scheduling
+    // administrator enters Dashboard. Opening the app to connect or test it
+    // must never change the shared weekly schedule.
 
     sync.startPolling(async (events) => {
       if (!events.length) {
@@ -1308,7 +1441,7 @@ async function initializeSharedRuntime(resolvedSharedPath, { runExcelRefresh = f
         return;
       }
       await handlePulledSyncEvents(events);
-    });
+    }, () => emitRuntimeStatus());
 
     if (updateManager) {
       updateManager.start();
@@ -1433,16 +1566,26 @@ function createWindow() {
         title: 'Unpublished scheduling changes',
         message: 'Publish scheduling changes before closing?',
         detail: publication.notReviewedCount > 0
-          ? `${publication.notReviewedCount} task${publication.notReviewedCount === 1 ? '' : 's'} will remain marked Not Reviewed.`
-          : 'MyTasks will receive the finalized scheduling changes in one update.',
-        buttons: ['Publish Changes & Close', 'Save Without Publishing', 'Continue Editing'],
+          ? `${publication.notReviewedCount} task${publication.notReviewedCount === 1 ? '' : 's'} will remain marked Not Reviewed. Closing without publishing keeps changes only on this Dashboard and unlocks MyTasks.`
+          : 'MyTasks will receive the finalized scheduling changes in one update. Closing without publishing keeps changes only on this Dashboard and unlocks MyTasks.',
+        buttons: ['Publish Changes & Close', 'Close & Unlock MyTasks', 'Continue Editing'],
         defaultId: 0,
         cancelId: 2,
         noLink: true,
       });
 
       const publicationResult = result.response === 0 ? publishRolloverChanges() : null;
-      if ((result.response === 0 && publicationResult?.published) || result.response === 1) {
+      const releaseResult = result.response === 1 ? releaseRolloverReviewWithoutPublishing() : null;
+      if (result.response === 1 && !releaseResult?.released) {
+        await dialog.showMessageBox(mainWindow, {
+          type: 'error',
+          title: 'MyTasks remains locked',
+          message: releaseResult?.error || 'Dashboard could not unlock MyTasks.',
+          detail: 'Reconnect to the shared folder, then close Dashboard again or publish the schedule.',
+        });
+        return;
+      }
+      if ((result.response === 0 && publicationResult?.published) || (result.response === 1 && releaseResult?.released)) {
         allowWindowClose = true;
         mainWindow?.close();
       }
@@ -1684,15 +1827,22 @@ function registerIPC() {
         return { success: false, error: inspection.reason };
       }
 
-      // Explicit folder selection should reset the local cache so first-time
-      // setup does not inherit stale local state from a previous environment.
-      resetLocalCache();
-
       const resolvedSharedPath = inspection.resolvedPath;
 
-      // Save config
       const existingConfig = loadConfig() || {};
-      delete existingConfig.loggedInUsername;
+      const isSameSharedDrive = normalizeFsPath(existingConfig.sharedDrivePath) === normalizeFsPath(resolvedSharedPath);
+
+      // Retain the local cache for an intentional reconnect to the same
+      // workspace. Clearing it here can discard queued writes; changing to a
+      // different workspace still starts with a clean local cache.
+      if (isSameSharedDrive) {
+        closeRuntime();
+      } else {
+        resetLocalCache();
+        delete existingConfig.loggedInUsername;
+      }
+
+      // Save config
       const config = { ...existingConfig, sharedDrivePath: resolvedSharedPath };
       saveConfig(config);
 
@@ -1745,14 +1895,14 @@ function registerIPC() {
 
   ipcMain.handle('login', (_e, username) => {
     if (!auth || !db) return null;
-    auth.setUsername(username); // Auth ignores renderer input and binds the Windows account.
+    auth.setUsername(username);
     const user = auth.getCurrentUser();
     if (user) {
       if (sync) sync.setActor(user);
       const config = loadConfig() || {};
       config.loggedInUsername = user.username;
       saveConfig(config);
-      refreshLockMetadata();
+
       runtimeStatus.startupIssue = null;
       emitRuntimeStatus();
       return user;
@@ -1766,7 +1916,7 @@ function registerIPC() {
     const config = loadConfig() || {};
     delete config.loggedInUsername;
     saveConfig(config);
-    refreshLockMetadata();
+    releaseLock();
     runtimeStatus.startupIssue = null;
     emitRuntimeStatus();
     return true;
@@ -1977,6 +2127,38 @@ function registerIPC() {
     return true;
   });
 
+  // Work-card categories are managed in Dashboard Settings and shared with
+  // MyTasks through the same event stream as priorities and staff roles.
+  ipcMain.handle('get-work-card-categories', () => db?.getWorkCardCategories() || []);
+  ipcMain.handle('create-work-card-category', (_e, data) => {
+    if (!db || !auth?.isAdmin?.()) return null;
+    const category = db.createWorkCardCategory(data);
+    sync?.pushEvent('work-card-category-created', category);
+    notifyDataChanged('work-card-categories-updated');
+    return category;
+  });
+  ipcMain.handle('update-work-card-category', (_e, data) => {
+    if (!db || !auth?.isAdmin?.()) return null;
+    const category = db.updateWorkCardCategory(data);
+    if (category) sync?.pushEvent('work-card-category-updated', category);
+    notifyDataChanged('work-card-categories-updated');
+    return category;
+  });
+  ipcMain.handle('delete-work-card-category', (_e, id) => {
+    if (!db || !auth?.isAdmin?.()) return false;
+    db.deleteWorkCardCategory(id);
+    sync?.pushEvent('work-card-category-deleted', { id });
+    notifyDataChanged('work-card-categories-updated');
+    return true;
+  });
+  ipcMain.handle('reorder-work-card-categories', (_e, orders) => {
+    if (!db || !auth?.isAdmin?.()) return [];
+    const categories = db.reorderWorkCardCategories(orders);
+    sync?.pushEvent('work-card-categories-reordered', orders);
+    notifyDataChanged('work-card-categories-updated');
+    return categories;
+  });
+
   ipcMain.handle('reorder-custom-priorities', (_e, orders) => {
     if (!db) return false;
     db.reorderCustomPriorities(orders);
@@ -2003,10 +2185,17 @@ function registerIPC() {
     if (normalizedTaskData.completed !== undefined && normalizedTaskData.status === undefined) {
       normalizedTaskData.status = normalizedTaskData.completed ? 'complete' : 'not_started';
     }
+    // A new assignment on a project takes the project's Lead automatically.
+    if (normalizedTaskData.project_id && !normalizedTaskData.lead_id) {
+      const projectLeadId = db.getProjectLeadId(normalizedTaskData.project_id);
+      if (projectLeadId) normalizedTaskData.lead_id = projectLeadId;
+    }
     const task = db.createTask(normalizedTaskData);
     recordTaskActivity(task, 'created', { title: task.title, assignedTo: task.assigned_to || null });
     if (shouldStageRolloverTask(task, { created: true })) stageRolloverTaskChange(task.id);
     else if (sync) sync.pushEvent('task-created', task);
+    // A Lead chosen while adding the assignment applies to the whole project.
+    if (task.project_id && task.lead_id) shareProjectLead(task);
     notifyDataChanged('task-created', { taskId: task.id });
     return task;
   });
@@ -2017,6 +2206,11 @@ function registerIPC() {
     const normalizedTaskData = { ...taskData };
     if (normalizedTaskData.completed !== undefined && normalizedTaskData.status === undefined) {
       normalizedTaskData.status = normalizedTaskData.completed ? 'complete' : 'not_started';
+    }
+    // Moving an assignment to another project gives it that project's Lead.
+    if (previousTask && normalizedTaskData.project_id !== undefined && normalizedTaskData.lead_id === undefined
+      && (normalizedTaskData.project_id || null) !== (previousTask.project_id || null)) {
+      normalizedTaskData.lead_id = db.getProjectLeadId(normalizedTaskData.project_id, { excludeTaskId: previousTask.id });
     }
     const task = db.updateTask(normalizedTaskData);
     const changedFields = Object.keys(normalizedTaskData).filter((key) => key !== 'id' && previousTask?.[key] !== task?.[key]);
@@ -2029,6 +2223,8 @@ function registerIPC() {
     }
     if (shouldStageRolloverTask(previousTask)) stageRolloverTaskChange(task.id);
     else if (sync) sync.pushEvent('task-updated', task);
+    // Setting or clearing the Lead on one assignment sets it for the project.
+    if (task?.project_id && (previousTask?.lead_id || null) !== (task.lead_id || null)) shareProjectLead(task);
     if (isNoteOnlyTaskUpdate(normalizedTaskData)) {
       appendInputDiagnostics({
         scope: 'main',
@@ -2058,6 +2254,14 @@ function registerIPC() {
     });
     notifyDataChanged('task-deleted', { taskId });
     return true;
+  });
+
+  // V1.3 work cards stay out of the scheduling flow. Dashboard only exposes a
+  // compact, on-demand disclosure beneath an assigned project card so Monday
+  // scheduling remains as fast as V1.2.
+  ipcMain.handle('get-project-work-cards', (_e, projectId, weekOf) => {
+    if (!db || !projectId) return [];
+    return db.getWorkCards({ project_id: projectId, week_of: weekOf || getCurrentWeekStartString() });
   });
 
   ipcMain.handle('reorder-tasks', (_e, taskOrders) => {
@@ -2367,11 +2571,34 @@ function registerIPC() {
 
   // Weekly rollover
   ipcMain.handle('check-rollover', () => {
-    return getWeeklyRolloverState();
+    const state = getWeeklyRolloverState();
+    // Repair, once per session: a Lead that was set on only some of a
+    // project's assignments is copied to the rest.
+    if (db && auth?.isAdmin?.() && !projectLeadsReconciled) {
+      projectLeadsReconciled = true;
+      try {
+        const repaired = db.reconcileProjectLeads();
+        if (repaired.length) {
+          publishLeadChangedTasks(repaired);
+          appendInputDiagnostics({ scope: 'main', type: 'project-leads-reconciled', count: repaired.length });
+          notifyDataChanged('project-leads-reconciled', { count: repaired.length });
+        }
+      } catch (err) {
+        console.error('Project Lead reconcile failed:', err.message);
+      }
+    }
+    // Catch-up, once per week and session: if this week's rollover already
+    // happened (here or on another computer) but unfinished cards were left in
+    // an earlier week, bring them forward now. Never before the rollover itself.
+    if (db && auth?.isAdmin?.() && !state.needed && !state.reviewInProgressElsewhere && state.currentWeek && workCardCarryOverCheckedWeek !== state.currentWeek) {
+      workCardCarryOverCheckedWeek = state.currentWeek;
+      if (carryOverWorkCards(state.currentWeek) > 0) notifyDataChanged('work-cards-carried-over', { source: 'catch-up' });
+    }
+    return state;
   });
 
   ipcMain.handle('perform-rollover', () => {
-    if (!db) return false;
+    if (!db || !auth?.isAdmin?.()) return false;
     const result = performWeeklyRollover({ force: true, source: 'manual' });
     notifyDataChanged('manual-rollover', { source: 'manual' });
     return result.applied;
@@ -2412,10 +2639,19 @@ function registerIPC() {
   ipcMain.handle('force-sync', async () => {
     if (!sync) return true;
     sync.flushOutbox();
-    const events = sync.pull();
+    const events = sync.retryFailedFiles();
     markSyncActivity();
     await handlePulledSyncEvents(events);
-    return true;
+    // The Dashboard owns the full office assignment set. A manual sync is
+    // also the intentional recovery action for a partial MyTasks cache, so
+    // always publish a fresh complete snapshot even when there were no new
+    // event files to process.
+    const snapshotWritten = sync.writeSharedSnapshot();
+    if (!snapshotWritten) {
+      logger?.warn('Manual sync completed but the Dashboard snapshot could not be republished.');
+    }
+    emitRuntimeStatus();
+    return { success: true, snapshotWritten };
   });
 }
 
@@ -2423,9 +2659,6 @@ function registerIPC() {
 
 app.whenReady().then(async () => {
   logger?.info('app-ready', { pid: process.pid });
-  // Acquire lock before doing anything else
-  if (!acquireLock()) return;
-
   app.setAppUserModelId('com.studiosync.dashboard');
   registerIPC();
   createWindow();

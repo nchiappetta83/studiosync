@@ -44,9 +44,12 @@ const PARTNER_APP_WINDOW_BOUNDS = {
 };
 
 const STAFF_APP_WINDOW_BOUNDS = {
-  width: 700,
+  // 775px is the narrowest comfortable split-pane workspace: it preserves a
+  // readable project list beside the Work Cards panel without forcing either
+  // side into its compact layout.
+  width: 775,
   height: 800,
-  minWidth: 700,
+  minWidth: 775,
   minHeight: 600,
 };
 
@@ -60,6 +63,8 @@ const PROJECT_NOTES_WINDOW_BOUNDS = {
 const ENV_APP_DATA_DIR = 'SD_APP_DATA_DIR';
 const ENV_SHARED_DRIVE_PATH = 'SD_SHARED_DRIVE_PATH';
 const APP_USER_MODEL_ID = 'com.studiosync.mytasks';
+const OFFICE_CAPACITY_FILE = 'studiosync-office-settings.json';
+const DEFAULT_OFFICE_CAPACITY = Object.freeze({ dailyHours: 8, weeklyHours: 40 });
 
 function getCurrentWeekStartString(date = new Date()) {
   const local = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -199,12 +204,31 @@ function getConfigPath() {
   return path.join(APP_DATA_DIR, 'config.json');
 }
 
+function pathsReferToSameLocation(left, right) {
+  if (!left || !right) return false;
+  try {
+    return path.resolve(left).replace(/\//g, '\\').toLowerCase()
+      === path.resolve(right).replace(/\//g, '\\').toLowerCase();
+  } catch (_) {
+    return String(left).replace(/\//g, '\\').toLowerCase()
+      === String(right).replace(/\//g, '\\').toLowerCase();
+  }
+}
+
 function loadConfig() {
   const configPath = getConfigPath();
   let config = null;
 
-  if (fs.existsSync(configPath)) {
-    config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  try {
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      config = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    }
+  } catch (error) {
+    logger?.warn('Configuration file could not be read; using safe defaults', {
+      configPath,
+      error: error.message,
+    });
   }
 
   const envSharedDrivePath = process.env[ENV_SHARED_DRIVE_PATH];
@@ -229,7 +253,58 @@ function saveConfig(config) {
     ...(config || {}),
     launchOnStartup: config?.launchOnStartup !== false,
   };
-  fs.writeFileSync(getConfigPath(), JSON.stringify(normalizedConfig, null, 2));
+  const configPath = getConfigPath();
+  const temporaryPath = `${configPath}.${process.pid}-${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(normalizedConfig, null, 2), 'utf8');
+    fs.renameSync(temporaryPath, configPath);
+  } catch (error) {
+    try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch (_) {}
+    logger?.error('Configuration file could not be saved', { configPath, error: error.message });
+    throw error;
+  }
+}
+
+function normalizeOfficeCapacity(value = {}) {
+  const dailyHours = Number(value.dailyHours);
+  const weeklyHours = Number(value.weeklyHours);
+  return {
+    dailyHours: Number.isFinite(dailyHours) && dailyHours > 0 ? dailyHours : DEFAULT_OFFICE_CAPACITY.dailyHours,
+    weeklyHours: Number.isFinite(weeklyHours) && weeklyHours > 0 ? weeklyHours : DEFAULT_OFFICE_CAPACITY.weeklyHours,
+  };
+}
+
+function getOfficeCapacityPath() {
+  const sharedDrivePath = loadConfig()?.sharedDrivePath;
+  return sharedDrivePath ? path.join(sharedDrivePath, OFFICE_CAPACITY_FILE) : null;
+}
+
+function getOfficeCapacity() {
+  const capacityPath = getOfficeCapacityPath();
+  if (!capacityPath || !fs.existsSync(capacityPath)) return { ...DEFAULT_OFFICE_CAPACITY };
+  try {
+    return normalizeOfficeCapacity(JSON.parse(fs.readFileSync(capacityPath, 'utf8')));
+  } catch (error) {
+    logger?.warn('Office capacity settings could not be read; using defaults', { capacityPath, error: error.message });
+    return { ...DEFAULT_OFFICE_CAPACITY };
+  }
+}
+
+function saveOfficeCapacity(value) {
+  const capacityPath = getOfficeCapacityPath();
+  if (!capacityPath) throw new Error('Choose the shared office folder before editing capacity.');
+  const normalized = normalizeOfficeCapacity(value);
+  fs.mkdirSync(path.dirname(capacityPath), { recursive: true });
+  const temporaryPath = `${capacityPath}.${process.pid}-${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(normalized, null, 2), 'utf8');
+    fs.renameSync(temporaryPath, capacityPath);
+    return normalized;
+  } catch (error) {
+    try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch (_) {}
+    logger?.error('Office capacity settings could not be saved', { capacityPath, error: error.message });
+    throw error;
+  }
 }
 
 function getLaunchOnStartupPreference(config = null) {
@@ -401,12 +476,16 @@ function getAuthEntryState() {
 
   const users = db ? db.getUsers() : [];
   if (users.length === 0) {
+    const syncState = sync?.getFailureSummary?.();
+    const failure = syncState?.failures?.[0]?.error || syncState?.bootstrapFailure;
     return {
       screen: 'connect',
       title: 'Connect',
       subtitle: 'Select the StudioSync folder or its data folder to connect.',
-      error: 'No users were found in the configured shared folder yet.',
-      reason: 'no-users',
+      error: failure
+        ? `MyTasks could not restore users from the shared folder: ${failure}`
+        : 'No users were found in the configured shared folder yet. Open Dashboard to publish a recovery snapshot, then try again.',
+      reason: failure ? 'bootstrap-failed' : 'no-users',
     };
   }
 
@@ -840,6 +919,30 @@ function notifyForCommentEvent(event) {
   );
 }
 
+function getProjectLeadIds(projectId) {
+  if (!db || !projectId) return [];
+  return [...new Set(db.getTasks({ project_id: projectId })
+    .map((task) => task.lead_id)
+    .filter(Boolean))];
+}
+
+function notifyForWorkCardCompletion(event) {
+  const currentUserId = getCurrentUserId();
+  const completion = event?.data;
+  if (!currentUserId || !completion?.project_id) return;
+  if (completion.completed_by === currentUserId) return;
+  if (!getProjectLeadIds(completion.project_id).includes(currentUserId)) return;
+
+  const card = completion.id ? db.getWorkCardById(completion.id) : null;
+  const project = db.getProjectById(completion.project_id);
+  const completedBy = getDisplayName(completion.completed_by) || event.author || 'A team member';
+  const projectName = project ? (project.client ? `${project.client} | ${project.name}` : project.name) : 'the project';
+  showWindowsNotification(
+    `Work Card Completed: ${card?.title || completion.title || 'Untitled work card'}`,
+    `${completedBy} completed work on ${projectName}.`
+  );
+}
+
 function processIncomingEvents(events = []) {
   for (const event of events) {
     switch (event.type) {
@@ -854,6 +957,9 @@ function processIncomingEvents(events = []) {
         break;
       case 'comment-added':
         notifyForCommentEvent(event);
+        break;
+      case 'work-card-completed':
+        notifyForWorkCardCompletion(event);
         break;
       default:
         break;
@@ -1095,6 +1201,12 @@ function registerIPC() {
     saveConfig(config);
     return true;
   });
+  ipcMain.handle('get-office-capacity', () => getOfficeCapacity());
+  ipcMain.handle('save-office-capacity', (_e, capacity) => {
+    const actor = currentActor();
+    if (!actor || !isPartner(actor)) return null;
+    return saveOfficeCapacity(capacity);
+  });
   ipcMain.handle('get-launch-on-startup', () => getLaunchOnStartupState());
   ipcMain.handle('set-launch-on-startup', (_e, enabled) => {
     const state = applyLaunchOnStartupPreference(enabled);
@@ -1170,14 +1282,19 @@ function registerIPC() {
         return { success: false, error: inspection.reason };
       }
 
-      // Explicit folder selection should behave like a fresh connection so we
-      // don't carry stale cached data or a remembered login into a new setup.
-      resetLocalCache();
-
       const resolvedSharedPath = inspection.resolvedPath;
-
       const config = loadConfig() || {};
-      delete config.loggedInUsername;
+      const isSameSharedDrive = pathsReferToSameLocation(config.sharedDrivePath, resolvedSharedPath);
+
+      // A reconnect to the same workspace must retain private tasks and any
+      // queued local events. A genuinely different workspace starts cleanly.
+      if (isSameSharedDrive) {
+        closeRuntime();
+      } else {
+        resetLocalCache();
+        delete config.loggedInUsername;
+      }
+
       config.sharedDrivePath = resolvedSharedPath;
       saveConfig(config);
 
@@ -1223,7 +1340,7 @@ function registerIPC() {
 
   ipcMain.handle('login', (_e, username) => {
     if (!auth || !db) return null;
-    auth.setUsername(username); // Auth ignores renderer input and binds the Windows account.
+    auth.setUsername(username);
     const user = auth.getCurrentUser();
     if (user) {
       if (sync) sync.setActor(user);
@@ -1261,6 +1378,10 @@ function registerIPC() {
   ipcMain.handle('get-tasks', (_e, filters) => {
     if (!db) return [];
     return db.getTasks(filters);
+  });
+  ipcMain.handle('get-staff-overview-assignments', () => {
+    if (!db) return [];
+    return db.getStaffOverviewAssignments();
   });
   ipcMain.handle('get-task-activity', (_e, taskId) => {
     const task = db?.getTaskById(taskId);
@@ -1317,6 +1438,123 @@ function registerIPC() {
     return true;
   });
 
+  // Work cards (V1.3): a shared, project-level layer beneath the existing
+  // scheduled project assignments.  Existing V1 "tasks" remain untouched.
+  const canViewWorkCardsForProject = (actor, projectId) => {
+    if (!actor || !projectId) return false;
+    if (isPartner(actor)) return true;
+    return db.getProjectParticipants(projectId).some((participant) => participant.id === actor.id);
+  };
+
+  ipcMain.handle('get-project-work-cards', (_e, projectId, weekOf) => {
+    const actor = currentActor();
+    if (!db || !canViewWorkCardsForProject(actor, projectId)) return { cards: [], focus: null, participants: [] };
+    return {
+      cards: db.getWorkCards({ project_id: projectId, ...(weekOf ? { week_of: weekOf } : {}) }),
+      focus: db.getWorkCardFocus(actor.id),
+      participants: db.getProjectParticipants(projectId),
+    };
+  });
+
+  // The left project list needs a lightweight status summary for each project
+  // the signed-in user can already open. Keep this authorization identical to
+  // the project-detail endpoint rather than exposing an office-wide card list.
+  ipcMain.handle('get-my-project-work-cards', () => {
+    const actor = currentActor();
+    if (!db || !actor) return [];
+    if (isPartner(actor)) return db.getWorkCards();
+    const visibleProjectIds = new Set(db.getProjectIdsForParticipant(actor.id));
+    return db.getWorkCards().filter((card) => visibleProjectIds.has(card.project_id));
+  });
+
+  ipcMain.handle('get-my-week-work-cards', (_e, weekOf) => {
+    const actor = currentActor();
+    if (!db || !actor) return { cards: [], focus: null };
+    return {
+      cards: db.getWorkCards({ assignee_id: actor.id, ...(weekOf ? { week_of: weekOf } : {}) }),
+      focus: db.getWorkCardFocus(actor.id),
+    };
+  });
+
+  // The Team Calendar is intentionally office-wide. Category visibility is
+  // controlled by Dashboard Settings so only the types the office agrees are
+  // useful for shared scheduling are exposed here.
+  ipcMain.handle('get-team-calendar-work-cards', () => {
+    const actor = currentActor();
+    if (!db || !actor) return [];
+    const visibleCategoryIds = new Set(
+      db.getWorkCardCategories()
+        .filter((category) => category.show_on_team_calendar !== 0)
+        .map((category) => category.id),
+    );
+    return db.getWorkCards().filter((card) => {
+      const project = db.getProjectById(card.project_id);
+      return !card.completed
+        && project
+        && project.status !== 'inactive'
+        && visibleCategoryIds.has(card.category_id)
+        && (card.start_date || card.end_date);
+    });
+  });
+
+  ipcMain.handle('create-work-card', (_e, data) => {
+    const actor = currentActor();
+    if (!db || isRolloverReviewActive() || !isPartner(actor) || !data?.project_id) return null;
+    const card = db.createWorkCard({ ...data, created_by: actor.id, updated_by: actor.id });
+    if (sync) sync.pushEvent('work-card-created', card);
+    notifyDataChanged();
+    return card;
+  });
+
+  ipcMain.handle('update-work-card', (_e, data) => {
+    const actor = currentActor();
+    const existing = db?.getWorkCardById(data?.id);
+    const isAssignee = Boolean(actor && existing?.assignee_ids?.includes(actor.id));
+    const isStatusOnly = data && Object.keys(data).every((key) => ['id', 'status', 'paused', 'paused_at', 'completed'].includes(key));
+    // Starting, pausing, stopping, completing, and reopening are personal
+    // work actions. Partners may still edit card details, but cannot run a
+    // workflow action for a card they are not assigned to.
+    if (!db || isRolloverReviewActive() || !existing || (isStatusOnly ? !isAssignee : !isPartner(actor))) return null;
+    const card = db.updateWorkCard({ ...data, updated_by: actor.id });
+    if (sync && card) sync.pushEvent('work-card-updated', card);
+    const wasDone = existing.status === 'done' || Boolean(existing.completed);
+    const isDone = card?.status === 'done' || Boolean(card?.completed);
+    if (sync && card && !wasDone && isDone) {
+      sync.pushEvent('work-card-completed', {
+        id: card.id,
+        project_id: card.project_id,
+        title: card.title,
+        completed_by: actor.id,
+        completed_at: card.updated_at,
+      });
+    }
+    notifyDataChanged();
+    return card;
+  });
+
+  ipcMain.handle('delete-work-card', (_e, id) => {
+    const actor = currentActor();
+    const existing = db?.getWorkCardById(id);
+    if (!db || isRolloverReviewActive() || !existing || !isPartner(actor)) return false;
+    db.deleteWorkCard(id);
+    if (sync) sync.pushEvent('work-card-deleted', { id, updated_at: new Date().toISOString() });
+    notifyDataChanged();
+    return true;
+  });
+
+  ipcMain.handle('set-work-card-focus', (_e, workCardId) => {
+    const actor = currentActor();
+    if (!db || !actor) return null;
+    const focus = db.setWorkCardFocus(actor.id, workCardId || null);
+    if (sync) sync.pushEvent('work-card-focus-set', {
+      user_id: actor.id,
+      work_card_id: workCardId || null,
+      updated_at: new Date().toISOString(),
+    });
+    notifyDataChanged();
+    return focus;
+  });
+
   // Private Tasks (local only, not synced)
   ipcMain.handle('get-private-tasks', () => {
     if (!db || !auth) return [];
@@ -1328,7 +1566,10 @@ function registerIPC() {
   ipcMain.handle('create-private-task', (_e, data) => {
     if (!db || !auth) return null;
     const user = auth.getCurrentUser();
-    if (!user) return null;
+    // Private project/task entries are a senior/partner planning feature.
+    // Enforce this here as well as in the renderer so a regular staff member
+    // cannot create one by invoking the IPC channel directly.
+    if (!user || !isPartner(user) || !(user.can_self_assign === 1 || user.can_self_assign === true)) return null;
     return db.createPrivateTask({ ...data, owner_id: user.id });
   });
 
@@ -1501,6 +1742,7 @@ function registerIPC() {
     if (!db) return [];
     return db.getCustomPriorities();
   });
+  ipcMain.handle('get-work-card-categories', () => db?.getWorkCardCategories() || []);
   ipcMain.handle('get-priority-menu-order', () => getPriorityMenuOrder());
   ipcMain.handle('get-priority-display-styles', () => getPriorityDisplayStyles());
 
@@ -1508,13 +1750,21 @@ function registerIPC() {
   ipcMain.handle('force-sync', async () => {
     if (!sync) return false;
     sync.flushOutbox();
+    const snapshotRefreshed = sync.refreshSharedSnapshot?.() === true;
     const events = sync.retryFailedFiles();
-    if (events.length === 0) {
+    if (events.length === 0 && !snapshotRefreshed) {
       markSyncActivity();
     }
     await handlePulledSyncEvents(events);
+    if (snapshotRefreshed && events.length === 0) {
+      markSyncActivity();
+      // Snapshot-only repairs do not have a new event to trigger the normal
+      // renderer refresh. Notify it explicitly so Staff Overview redraws at
+      // once with the repaired assignment set.
+      notifyDataChanged();
+    }
     emitRuntimeStatus();
-    return true;
+    return { success: true, snapshotRefreshed };
   });
 }
 

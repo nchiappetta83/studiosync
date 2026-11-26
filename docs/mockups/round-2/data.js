@@ -1,17 +1,18 @@
 /* StudioSync V2 — Phase 1, round 2 mockup data.
    Entirely fictional. Field names and meanings follow the V1.3 baseline
    (fixtures/v1.3-baseline): tasks carry priority / due / status / lead and NO hours;
-   Work Cards carry planned_minutes, optional dates, status, logged_hours.
-   Office capacity targets mirror V1.3 MyTasks defaults (8 h/day, 40 h/week). */
+   Work Cards carry optional dates, status, and optional planned_minutes / logged_hours
+   (the office does not track hours, so several cards have none). */
 
 const DATA = (() => {
   const TODAY = '2026-11-10';           // Tuesday (matches fixture event timestamps)
   const WEEK_OF = '2026-11-09';         // Monday
   const DAYS = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13'];
-  const CAPACITY = { day: 8, week: 40 };
 
   const people = [
     { id: 'morgan', name: 'Morgan Ellis', init: 'ME', role: 'Partner', lane: false, color: '#3d5a80' },
+    { id: 'tkim', name: 'Taylor Kim', init: 'TK', role: 'Partner', lane: false, color: '#4a5a7a' },
+    { id: 'drowe', name: 'Dana Rowe', init: 'DR', role: 'Partner', lane: false, color: '#6a4a5a' },
     { id: 'avery', name: 'Avery Rivera', init: 'AR', role: 'Designer', lane: true, color: '#2f6f68' },
     { id: 'blair', name: 'Blair Jordan', init: 'BJ', role: 'Designer', lane: true, color: '#8a4f66' },
     { id: 'riley', name: 'Riley Chen', init: 'RC', role: 'Senior staff', lane: true, color: '#5b50a0' },
@@ -48,8 +49,15 @@ const DATA = (() => {
     ['copper', 'Copper Mill Flats', 'Copper Mill Developers', 'future'],
     ['dunmore', 'Dunmore Civic Hall', 'Dunmore Municipality', 'future'],
   ];
+  // Shaped like real usage (V1.3.1 screenshot): "Client | Project" titles, one or two partner initials,
+  // a short scheduling note (often blank), and a status. Entirely fictional.
+  const partnerSets = [['morgan'], ['tkim'], ['drowe'], ['tkim', 'drowe'], ['morgan', 'drowe']];
+  const projectNotes = ['Concept Plans', '', 'Need Building Layout', 'Renderings', 'Revised Yield Study Parking / Layout', 'Resolution Compliance', 'Permit set', '', 'Need proposal - Concept Yield Study'];
   const projects = projectSeed.map(([id, name, client, category], i) => ({
-    id, name, client, category, partner: 'morgan', lead: i % 3 === 0 ? 'riley' : 'riley',
+    id, name, client, category, display: `${client} | ${name}`,
+    partners: partnerSets[i % partnerSets.length], lead: 'riley',
+    note: projectNotes[i % projectNotes.length],
+    status: id === 'pine' ? 'inactive' : 'active',
     folder: `C:\\Fictional Studio\\${name}`,
   }));
 
@@ -68,14 +76,15 @@ const DATA = (() => {
       actions: [{ t: 'Incorporate client markups', done: false }], comments: [{ who: 'morgan', at: 'Tue 9:14 AM', text: 'Please use the latest fictional client markup set.' }] },
     { id: 't2', project: 'harbor', person: 'blair', title: 'Drawing QA', prio: -1, status: 'in_progress', due: '2026-11-14', lead: 'riley',
       notes: '', actions: [], comments: [{ who: 'riley', at: 'Mon 4:40 PM', text: 'Holding until the client responds on unit count.' }] },
-    { id: 't3', project: 'maple', person: 'avery', title: 'Permit response', prio: 2, status: 'in_progress', due: '2026-11-13', lead: 'riley',
+    { id: 't3', project: 'maple', person: 'avery', title: 'Permit response', prio: null, status: 'in_progress', due: '2026-11-13', lead: null,
       notes: 'Respond to permit review comments.', actions: [{ t: 'Draft comment responses', done: true }, { t: 'Update sheet index', done: false }], comments: [] },
     { id: 't4', project: 'maple', person: 'blair', title: 'Survey reconciliation', prio: 3, status: 'done', due: '2026-11-11', lead: 'riley',
       notes: '', actions: [], comments: [] },
   ];
   const staff = people.filter((p) => p.lane);
-  const prioPool = [1, 2, 2, 3, 3, 3, 4, -1];
-  const currentIds = projects.filter((p) => p.category === 'current').map((p) => p.id);
+  // Real usage: most assignments have no priority, many have no due date, and the lead is usually "None".
+  const prioPool = [null, null, null, null, 1, 2, 3, 4, -1];
+  const currentIds = projects.filter((p) => p.category === 'current' && p.status === 'active').map((p) => p.id);
   const dueChoices = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-12', '2026-11-13', '2026-11-13', '2026-11-14'];
   let tn = 5;
   staff.forEach((p) => {
@@ -85,8 +94,8 @@ const DATA = (() => {
     }
     const n = p.id === 'avery' || p.id === 'blair' ? 1 : 3 + Math.floor(rnd() * 3);
     for (let i = 0; i < n; i++) {
-      tasks.push({ id: 't' + tn++, project: pick(currentIds), person: p.id, title: cap(pick(taskTitles)), prio: pick(prioPool),
-        status: rnd() > 0.55 ? 'in_progress' : 'not_started', due: pick(dueChoices), lead: 'riley',
+      tasks.push({ id: 't' + tn++, project: pick(currentIds), person: p.id, title: rnd() > 0.25 ? cap(pick(taskTitles)) : '', prio: pick(prioPool),
+        status: rnd() > 0.55 ? 'in_progress' : 'not_started', due: rnd() > 0.5 ? pick(dueChoices) : null, lead: rnd() > 0.8 ? 'riley' : null,
         notes: '', actions: rnd() > 0.7 ? [{ t: 'Follow up with consultant', done: false }] : [], comments: rnd() > 0.8 ? [{ who: 'riley', at: 'Mon 2:05 PM', text: 'Please confirm scope before issuing.' }] : [] });
     }
   });
@@ -98,21 +107,21 @@ const DATA = (() => {
   const cards = [];
   let cn = 1;
   const card = (project, title, assignees, min, start, end, status, logged = 0, extra = {}) =>
-    cards.push({ id: 'c' + cn++, project, week: WEEK_OF, title, assignees, min, start, end, status, logged, lead: 'riley', desc: '', ...extra });
+    cards.push({ id: 'c' + cn++, project, week: WEEK_OF, title, assignees, min, start, end, status, logged, desc: '', ...extra });
 
   card('harbor', 'Update layout overlay', ['avery', 'blair'], 240, '2026-11-10', '2026-11-12', 'in_progress', 2.5, { desc: 'Fictional coordination card.' });
-  card('harbor', 'Run drawing QA', ['blair'], 90, null, null, 'todo');
+  card('harbor', 'Run drawing QA', ['blair'], 0, null, null, 'todo');
   card('harbor', 'Confirm unit count', ['avery'], 60, '2026-11-09', '2026-11-09', 'done', 1);
   card('maple', 'Permit comment responses', ['avery'], 360, '2026-11-11', '2026-11-13', 'todo');
   card('maple', 'Survey reconciliation', ['blair'], 180, '2026-11-09', '2026-11-10', 'done', 3);
-  card('maple', 'Site photo log', ['emery'], 120, '2026-11-10', '2026-11-11', 'in_progress', 1);
+  card('maple', 'Site photo log', ['emery'], 0, '2026-11-10', '2026-11-11', 'in_progress', 1);
   card('summit', 'Massing options', ['riley'], 300, '2026-11-12', '2026-11-13', 'todo');
   card('cedar', 'Detail sheets', ['blair'], 1200, '2026-11-09', '2026-11-13', 'in_progress', 8);
   card('juniper', 'RFI log', ['blair'], 960, '2026-11-10', '2026-11-13', 'todo');
   card('lakeside', 'Submittal review', ['blair'], 600, null, null, 'paused', 3);
   card('cedar', 'Door schedule', ['avery'], 840, '2026-11-09', '2026-11-13', 'in_progress', 5);
-  card('lakeside', 'Wayfinding mockups', ['avery'], 120, null, null, 'todo');
-  card('northgate', 'Team review prep', ['riley'], 120, '2026-11-11', '2026-11-11', 'todo');
+  card('lakeside', 'Wayfinding mockups', ['avery'], 0, null, null, 'todo');
+  card('northgate', 'Team review prep', ['riley'], 0, '2026-11-11', '2026-11-11', 'todo');
   // Remaining staff: generated card sets that land on each load state.
   const sets = {
     emery: [600, 720, 480],      // 30 h  On target
@@ -132,7 +141,16 @@ const DATA = (() => {
       card(proj, cardTitles[(pid.length + i) % cardTitles.length], [pid], m, s, e, i === 0 ? 'in_progress' : 'todo', i === 0 ? 2 : 0);
     });
   });
-  const focus = { avery: 'c1', blair: 'c8' };   // personal "Work on this" selections
+  // Availability story: most people with an active card are "working", one is paused, a few are available.
+  const firstCard = (pid) => cards.find((x) => x.assignees.includes(pid));
+  cards.filter((x) => x.assignees.includes('harper')).forEach((x) => { x.status = 'done'; x.logged = x.logged || 2; });   // Harper: every card done -> Available
+  const gc = firstCard('gray'); if (gc) gc.status = 'paused';
+  const focus = { avery: 'c1', blair: 'c8' };   // the card each person has started ("Working on now")
+  ['emery', 'finley', 'indigo', 'jules'].forEach((pid) => { const c = cards.find((x) => x.assignees.includes(pid) && x.status === 'in_progress'); if (c) focus[pid] = c.id; });
+
+  // Work Card Types (the real app lets the office define these in Dashboard settings).
+  const CATS = [{ id: 'planning', label: 'Planning', color: '#4a5fe0' }, { id: 'elevations', label: 'Elevations', color: '#2f7a6a' }, { id: 'diagrams', label: 'Diagrams', color: '#9a6a2f' }, { id: 'details', label: 'Details', color: '#8a4f66' }, { id: 'coordination', label: 'Coordination', color: '#486581' }];
+  cards.forEach((c, i) => { c.cat = CATS[(i * 2 + c.title.length) % CATS.length].id; });
 
   const privateTasks = [
     { id: 'p1', title: 'Review partner meeting agenda', due: '2026-11-11' },
@@ -144,5 +162,5 @@ const DATA = (() => {
     t2: [{ at: 'Mon 4:40 PM', text: 'Riley Chen set priority to Waiting' }],
   };
 
-  return { TODAY, WEEK_OF, DAYS, CAPACITY, people, pto, projects, tasks, cards, focus, privateTasks, activity };
+  return { TODAY, WEEK_OF, DAYS, people, pto, projects, tasks, cards, categories: CATS, focus, privateTasks, activity };
 })();

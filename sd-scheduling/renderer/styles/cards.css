@@ -358,10 +358,36 @@
   margin-top: 4px;
 }
 
+.task-work-card-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin: 7px 0 0 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.task-work-card-toggle:hover { color: var(--accent); }
+.task-work-card-list { margin: 7px 0 0 24px; border-left: 2px solid rgba(77, 74, 213, 0.2); }
+.task-work-card-list.hidden { display: none; }
+.task-work-card, .task-work-card-empty { display: flex; align-items: baseline; gap: 7px; padding: 5px 8px; color: var(--text-secondary); font-size: 11px; line-height: 1.35; }
+.task-work-card strong { color: var(--text-primary); font-size: 11px; }
+.task-work-card span { color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-work-card em { margin-left: auto; color: var(--text-tertiary); font-style: normal; white-space: nowrap; }
+.task-work-card.completed { opacity: 0.55; }
+.task-work-card-empty { color: var(--text-tertiary); font-style: italic; }
+
 /* Inline-editable notes input (V4 style) */
 .task-notes-input {
   display: block;
   width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   border: none;
   background: transparent;
   font-size: 12px;
@@ -391,6 +417,30 @@
   cursor: text;
 }
 
+/* Project Lead is stored on the scheduled assignment. Keep it directly below
+   the due date/partner metadata so it remains fast to review and change. */
+.task-lead-control {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.task-lead-control:hover { color: var(--accent); }
+.task-lead-control:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 2px; border-radius: 3px; }
+.task-lead-readonly { cursor: default; }
+.task-lead-readonly:hover { color: var(--text-secondary); }
+.task-lead-menu { min-width: 176px; }
+.task-lead-menu-selected { color: var(--accent); font-weight: 700; }
+
 /* ── Priority Menu Popup ── */
 
 .priority-menu {
@@ -403,6 +453,11 @@
   z-index: 2000;
   min-width: 140px;
   animation: menuPop 0.12s var(--ease-out);
+  overscroll-behavior: contain;
+}
+
+.priority-menu.opens-up {
+  transform-origin: bottom left;
 }
 
 /* ── Date Picker Popup (V4 style) ── */

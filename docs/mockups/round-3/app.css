@@ -1,0 +1,10 @@
+/* Full-size test mode (app.html): the window fills the browser below a slim role switcher. */
+html, body { height: 100%; }
+#app { display: flex; flex-direction: column; height: 100vh; }
+.appbar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-height: 44px; padding: 6px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: var(--t-sm); }
+.appbar-title { font-size: var(--t-md); }
+.appbar-note, .appbar-label { color: var(--sub); }
+.appbar-gap { flex: 1; min-width: 4px; }
+.appbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--sub); }
+.appbar select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; color: var(--ink); }
+#app > .win { flex: 1; min-height: 0; height: auto; width: 100%; max-width: none; margin: 0; border: 0; border-radius: 0; box-shadow: none; animation: none; }

@@ -212,6 +212,11 @@ const Toolbar = {
     if (!this._syncIndicator || !this._syncStatusText) return;
     this._lastRuntimeStatus = status || null;
 
+    // "Syncing" is only a temporary manual-action state. A completed runtime
+    // status must always clear it; otherwise the dot keeps flashing yellow
+    // even after Dashboard has successfully finished the shared sync.
+    this._syncIndicator.querySelector('.sync-dot')?.classList.remove('syncing');
+
     const syncText = this._formatRuntimeTimestamp(status?.lastSyncAt, 'No recent sync');
     this._syncStatusText.textContent = syncText;
 

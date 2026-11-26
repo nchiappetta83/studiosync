@@ -8,8 +8,19 @@ const {
   PRIORITY_CUSTOM,
   buildCustomPriorityLabel,
 } = require('./priority');
-const DB_SCHEMA_VERSION = 20;
+const DB_SCHEMA_VERSION = 31;
 const AVATAR_COLOR_PATTERN = /^#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?$/;
+// Keep person badges visually distinct from each other and from the work-card
+// category palette. The list is deliberately muted so overlapping initials
+// remain readable without competing with project or status colors.
+const AVATAR_COLOR_PALETTE = [
+  '#586F91', '#8B6678', '#4E8172', '#96764D', '#766D9B', '#A15F5F',
+  '#3F8097', '#8A6E4E', '#5B7B59', '#936C96', '#6A7397', '#945C70',
+  '#4E7B8A', '#997451', '#637F9B', '#9B6976', '#4F8877', '#7E6E96',
+  '#A06E54', '#637D72', '#4D7192', '#81657D', '#668256', '#956C5D',
+  '#4B8490', '#8C7559', '#706E92', '#9A6178', '#59816D', '#7D7892',
+  '#557990', '#8D6370', '#597E62', '#92715A', '#6B6E8A', '#9A665C',
+];
 
 function normalizeSharedTaskTitle(value) {
   return String(value || '')
@@ -26,6 +37,36 @@ function normalizeAvatarColor(value, fallback = '#5856A6') {
   return value.toUpperCase();
 }
 
+function getNextAvailableAvatarColor(usedColors) {
+  const available = AVATAR_COLOR_PALETTE.find((color) => !usedColors.has(color));
+  if (available) return available;
+
+  // Offices normally have far fewer people than the curated palette. Keep a
+  // deterministic fallback for unusually large offices without reusing a hue.
+  for (let index = 0; index < 360; index += 1) {
+    const hue = (index * 137.508) % 360;
+    const color = hslToHex(hue, 32, 43);
+    if (!usedColors.has(color)) return color;
+  }
+  return '#5856A6';
+}
+
+function hslToHex(hue, saturation, lightness) {
+  const s = saturation / 100;
+  const l = lightness / 100;
+  const chroma = (1 - Math.abs((2 * l) - 1)) * s;
+  const segment = hue / 60;
+  const match = chroma * (1 - Math.abs((segment % 2) - 1));
+  const [red, green, blue] = segment < 1 ? [chroma, match, 0]
+    : segment < 2 ? [match, chroma, 0]
+      : segment < 3 ? [0, chroma, match]
+        : segment < 4 ? [0, match, chroma]
+          : segment < 5 ? [match, 0, chroma]
+            : [chroma, 0, match];
+  const offset = l - (chroma / 2);
+  return `#${[red, green, blue].map((channel) => Math.round((channel + offset) * 255).toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+}
+
 class Database {
   constructor(dbPath, logger = null) {
     this.dbPath = dbPath;
@@ -37,6 +78,7 @@ class Database {
     this.db = new BetterSqlite3(this.dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    this.db.pragma('busy_timeout = 5000');
     this._migrate();
   }
 
@@ -73,6 +115,91 @@ class Database {
         this.db.exec('VACUUM');
       } catch (_) {}
     }
+  }
+
+  exportSharedSnapshot() {
+    if (!this.db) throw new Error('Database is not open.');
+
+    const tables = [
+      'business_roles', 'custom_priorities', 'users', 'projects', 'tasks',
+      'work_cards', 'work_card_assignees', 'work_card_focus', 'sub_tasks',
+      'comments', 'staff_pto', 'staff_pto_dates', 'project_notes',
+      'task_activity', 'task_tombstones', 'applied_rollover_publications',
+    ];
+
+    const exported = {};
+    for (const table of tables) {
+      try {
+        exported[table] = this.db.prepare(`SELECT * FROM ${table}`).all();
+      } catch (_) {
+        // A newly introduced table may not exist in an older peer yet.
+      }
+    }
+
+    return exported;
+  }
+
+  importSharedSnapshot(snapshot) {
+    if (!this.db) throw new Error('Database is not open.');
+    const tables = snapshot?.tables;
+    const requiredTables = ['users', 'projects', 'tasks'];
+    if (
+      snapshot?.schemaVersion !== 1
+      || snapshot?.source !== 'scheduling'
+      || !Number.isFinite(Date.parse(snapshot?.generatedAt || ''))
+      || !tables
+      || typeof tables !== 'object'
+      || Array.isArray(tables)
+      || requiredTables.some((table) => !Array.isArray(tables[table]))
+    ) {
+      throw new Error('The shared recovery snapshot is invalid.');
+    }
+
+    const importOrder = [
+      'business_roles', 'custom_priorities', 'users', 'projects', 'tasks',
+      'work_cards', 'work_card_assignees', 'work_card_focus', 'sub_tasks',
+      'comments', 'staff_pto', 'staff_pto_dates', 'project_notes',
+      'task_activity', 'task_tombstones', 'applied_rollover_publications',
+    ];
+
+    const tableColumns = new Map();
+    for (const table of importOrder) {
+      try {
+        tableColumns.set(table, this.db.pragma(`table_info(${table})`).map((column) => column.name));
+      } catch (_) {}
+    }
+
+    const imported = this.db.transaction(() => {
+      if (this.db.prepare('SELECT 1 FROM users LIMIT 1').get()) return 0;
+
+      let rowCount = 0;
+      for (const table of importOrder) {
+        const columns = tableColumns.get(table);
+        const rows = Array.isArray(tables[table]) ? tables[table] : [];
+        if (!columns?.length || rows.length === 0) continue;
+
+        // Only columns the snapshot row carries are written, so a column the
+        // snapshot's schema lacks keeps its SQLite default instead of being
+        // forced to NULL (which would violate NOT NULL and abort the import).
+        const insertCache = new Map();
+        for (const row of rows) {
+          const rowColumns = columns.filter((column) => Object.hasOwn(row, column));
+          if (rowColumns.length === 0) continue;
+          const key = rowColumns.join(',');
+          if (!insertCache.has(key)) {
+            insertCache.set(key, this.db.prepare(
+              `INSERT OR REPLACE INTO ${table} (${rowColumns.join(', ')}) VALUES (${rowColumns.map(() => '?').join(', ')})`,
+            ));
+          }
+          insertCache.get(key).run(...rowColumns.map((column) => row[column] ?? null));
+          rowCount += 1;
+        }
+      }
+      return rowCount;
+    })();
+
+    if (imported) this._ensureDistinctAvatarColors();
+    return imported;
   }
 
   _createMigrationBackup(label) {
@@ -195,6 +322,7 @@ class Database {
           partner_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
           partner_ids   TEXT NOT NULL DEFAULT '[]',
           partner_initials TEXT NOT NULL DEFAULT '',
+          project_lead_ids TEXT DEFAULT '[]',
           sort_order    INTEGER NOT NULL DEFAULT 0,
           created_at    TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -203,6 +331,7 @@ class Database {
           id            TEXT PRIMARY KEY,
           project_id    TEXT REFERENCES projects(id) ON DELETE SET NULL,
           assigned_to   TEXT REFERENCES users(id) ON DELETE SET NULL,
+          lead_id       TEXT REFERENCES users(id) ON DELETE SET NULL,
           created_by    TEXT REFERENCES users(id) ON DELETE SET NULL,
           title         TEXT NOT NULL DEFAULT '',
           notes         TEXT NOT NULL DEFAULT '',
@@ -487,6 +616,138 @@ class Database {
         );
       `);
     });
+
+    this._runMigrationIfNeeded(version, 21, function migrateV21() {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS work_cards (
+          id              TEXT PRIMARY KEY,
+          project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          week_of         TEXT NOT NULL,
+          title           TEXT NOT NULL DEFAULT '',
+          description     TEXT NOT NULL DEFAULT '',
+          planned_minutes INTEGER,
+          start_date      TEXT,
+          end_date        TEXT,
+          completed       INTEGER NOT NULL DEFAULT 0,
+          sort_order      INTEGER NOT NULL DEFAULT 0,
+          created_by      TEXT REFERENCES users(id) ON DELETE SET NULL,
+          updated_by      TEXT REFERENCES users(id) ON DELETE SET NULL,
+          created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS work_card_assignees (
+          work_card_id TEXT NOT NULL REFERENCES work_cards(id) ON DELETE CASCADE,
+          user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          PRIMARY KEY (work_card_id, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS work_card_focus (
+          user_id      TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          work_card_id TEXT NOT NULL REFERENCES work_cards(id) ON DELETE CASCADE,
+          updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_work_cards_project_week ON work_cards(project_id, week_of, sort_order);
+        CREATE INDEX IF NOT EXISTS idx_work_card_assignees_user ON work_card_assignees(user_id, work_card_id);
+      `);
+    });
+
+    this._runMigrationIfNeeded(version, 22, function migrateV22() {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS work_card_categories (
+          id         TEXT PRIMARY KEY,
+          label      TEXT NOT NULL,
+          color      TEXT NOT NULL DEFAULT '#5964A8',
+          sort_order INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+      this._addColumnIfMissing('work_cards', 'category_id', 'TEXT REFERENCES work_card_categories(id) ON DELETE SET NULL');
+    });
+
+    this._runMigrationIfNeeded(version, 23, function migrateV23() {
+      this._addColumnIfMissing('work_cards', 'status', "TEXT NOT NULL DEFAULT 'todo'");
+      this._addColumnIfMissing('work_cards', 'paused', 'INTEGER NOT NULL DEFAULT 0');
+      this._addColumnIfMissing('work_cards', 'paused_at', 'TEXT');
+      this._addColumnIfMissing('work_cards', 'logged_hours', 'REAL NOT NULL DEFAULT 0');
+      this._addColumnIfMissing('work_card_categories', 'show_on_team_calendar', 'INTEGER NOT NULL DEFAULT 1');
+      this._seedWorkCardCategories();
+      this.db.prepare("UPDATE work_cards SET status = CASE WHEN completed = 1 THEN 'done' ELSE 'todo' END WHERE status IS NULL OR status NOT IN ('todo', 'in_progress', 'done')").run();
+      this.db.prepare("UPDATE work_cards SET category_id = 'work-card-planning'").run();
+    });
+
+    this._runMigrationIfNeeded(version, 24, function migrateV24() {
+      this._addColumnIfMissing('users', 'is_senior_staff', 'INTEGER NOT NULL DEFAULT 0');
+      // Preserve the prior project-lead convention while making the
+      // designation explicit and editable from staff management.
+      this.db.exec("UPDATE users SET is_senior_staff = 1 WHERE role = 'staff' AND COALESCE(is_admin, 0) = 1");
+    });
+
+    this._runMigrationIfNeeded(version, 27, function migrateV27() {
+      this._ensureDistinctAvatarColors();
+    });
+
+    this._runMigrationIfNeeded(version, 28, function migrateV28() {
+      this._addColumnIfMissing('work_card_categories', 'show_on_team_calendar', 'INTEGER NOT NULL DEFAULT 1');
+    });
+
+    this._runMigrationIfNeeded(version, 29, function migrateV29() {
+      this._addColumnIfMissing('work_cards', 'lead_id', 'TEXT REFERENCES users(id) ON DELETE SET NULL');
+    });
+
+    this._runMigrationIfNeeded(version, 30, function migrateV30() {
+      this._addColumnIfMissing('projects', 'project_lead_ids', "TEXT DEFAULT '[]'");
+    });
+
+    this._runMigrationIfNeeded(version, 31, function migrateV31() {
+      // Leads belong to scheduled assignments (the legacy Dashboard task),
+      // rather than to the project-wide partner record.
+      this._addColumnIfMissing('tasks', 'lead_id', 'TEXT REFERENCES users(id) ON DELETE SET NULL');
+    });
+  }
+
+  _getDistinctAvatarColor(candidate, excludedUserId = null) {
+    const query = excludedUserId
+      ? this.db.prepare('SELECT avatar_color FROM users WHERE id != ?')
+      : this.db.prepare('SELECT avatar_color FROM users');
+    const rows = excludedUserId ? query.all(excludedUserId) : query.all();
+    const usedColors = new Set(rows
+      .map((user) => String(user.avatar_color || '').toUpperCase())
+      .filter((color) => AVATAR_COLOR_PATTERN.test(color)));
+    const normalized = AVATAR_COLOR_PATTERN.test(String(candidate || ''))
+      ? String(candidate).toUpperCase()
+      : null;
+    return normalized && !usedColors.has(normalized)
+      ? normalized
+      : getNextAvailableAvatarColor(usedColors);
+  }
+
+  // A colour published by another Dashboard is stored as received so every app
+  // shows the same badge; only a colour created on this machine is made
+  // distinct from the people already known here.
+  _resolveAvatarColor(candidate, excludedUserId = null) {
+    if (this._replayingSyncEvent && AVATAR_COLOR_PATTERN.test(String(candidate || ''))) {
+      return String(candidate).toUpperCase();
+    }
+    return this._getDistinctAvatarColor(candidate, excludedUserId);
+  }
+
+  _ensureDistinctAvatarColors() {
+    const users = this.db.prepare(`
+      SELECT id, avatar_color
+      FROM users
+      ORDER BY CASE WHEN active = 1 THEN 0 ELSE 1 END, sort_order, display_name COLLATE NOCASE, id
+    `).all();
+    const usedColors = new Set();
+    const updateColor = this.db.prepare('UPDATE users SET avatar_color = ? WHERE id = ?');
+
+    for (const user of users) {
+      const current = String(user.avatar_color || '').toUpperCase();
+      if (AVATAR_COLOR_PATTERN.test(current) && !usedColors.has(current)) {
+        usedColors.add(current);
+        continue;
+      }
+      const replacement = getNextAvailableAvatarColor(usedColors);
+      updateColor.run(replacement, user.id);
+      usedColors.add(replacement);
+    }
   }
 
   _getMetaInt(key, defaultVal) {
@@ -519,6 +780,12 @@ class Database {
   // older-stamped later edit be silently discarded.
   _getNextTaskTimestamp(taskId) {
     const previous = this.db.prepare('SELECT updated_at FROM tasks WHERE id = ?').get(taskId)?.updated_at;
+    return new Date(Math.max(Date.now(), this._timestampMillis(previous) + 1)).toISOString();
+  }
+
+  // Work Cards follow the same newest-update-wins rule as assigned projects.
+  _getNextWorkCardTimestamp(cardId) {
+    const previous = this.db.prepare('SELECT updated_at FROM work_cards WHERE id = ?').get(cardId)?.updated_at;
     return new Date(Math.max(Date.now(), this._timestampMillis(previous) + 1)).toISOString();
   }
 
@@ -600,6 +867,15 @@ class Database {
       INSERT OR REPLACE INTO sync_processed_events (filename, processed_at)
       VALUES (?, datetime('now'))
     `).run(filename);
+  }
+
+  applyEventAndMarkProcessed(event, filename) {
+    if (!filename) throw new Error('A sync event filename is required.');
+    return this.runInTransaction(() => {
+      this.applyEvent(event);
+      this.markSyncFileProcessed(filename);
+      this.setLastSyncTimestamp(filename);
+    });
   }
 
   cleanupProcessedSyncFiles(cutoffStr) {
@@ -875,8 +1151,7 @@ class Database {
 
   createUser(data) {
     const id = data.id || uuidv4();
-    const avatarColors = ['#5856A6', '#3D8A6E', '#A8803F', '#5478A3', '#A65C5C', '#7E5FA6', '#3D8A9E'];
-    const color = normalizeAvatarColor(data.avatar_color, avatarColors[Math.floor(Math.random() * avatarColors.length)]);
+    const color = this._resolveAvatarColor(data.avatar_color);
     const maxOrder = this.db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM users').get().m;
 
     const firstName = data.first_name || '';
@@ -890,11 +1165,12 @@ class Database {
     const windowsUsername = data.windows_username || null;
 
     this.db.prepare(`
-      INSERT INTO users (id, username, display_name, role, avatar_color, sort_order, first_name, last_name, business_role_id, is_admin, windows_username, can_self_assign)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, username, display_name, role, avatar_color, sort_order, first_name, last_name, business_role_id, is_admin, windows_username, can_self_assign, is_senior_staff)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, username, displayName, data.role, color, data.sort_order ?? maxOrder + 1,
-      firstName, lastName, data.business_role_id || null, isAdmin, windowsUsername, data.can_self_assign ? 1 : 0
+      firstName, lastName, data.business_role_id || null, isAdmin, windowsUsername, data.can_self_assign ? 1 : 0,
+      data.role === 'staff' && data.is_senior_staff ? 1 : 0
     );
 
     return this.getUserById(id);
@@ -903,8 +1179,11 @@ class Database {
   updateUser(data) {
     const fields = [];
     const values = [];
-    if (data.avatar_color !== undefined) data = { ...data, avatar_color: normalizeAvatarColor(data.avatar_color) };
-    for (const key of ['display_name', 'role', 'avatar_color', 'sort_order', 'active', 'username', 'first_name', 'last_name', 'business_role_id', 'is_admin', 'windows_username', 'can_self_assign']) {
+    if (data.avatar_color !== undefined) data = {
+      ...data,
+      avatar_color: this._resolveAvatarColor(normalizeAvatarColor(data.avatar_color), data.id),
+    };
+    for (const key of ['display_name', 'role', 'avatar_color', 'sort_order', 'active', 'username', 'first_name', 'last_name', 'business_role_id', 'is_admin', 'windows_username', 'can_self_assign', 'is_senior_staff']) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
         values.push(data[key]);
@@ -1048,17 +1327,19 @@ class Database {
 
   createTask(data) {
     const id = data.id || uuidv4();
+    const leadId = this._normalizeTaskLeadId(data.lead_id);
     const maxOrder = this.db.prepare(
       'SELECT COALESCE(MAX(sort_order), 0) as m FROM tasks WHERE assigned_to = ?'
     ).get(data.assigned_to || null)?.m || 0;
 
     this.db.prepare(`
-      INSERT INTO tasks (id, project_id, assigned_to, created_by, title, notes, priority, priority_label, due_date, sort_order, confirmed, partner_id, category, status, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, project_id, assigned_to, lead_id, created_by, title, notes, priority, priority_label, due_date, sort_order, confirmed, partner_id, category, status, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.project_id || null,
       data.assigned_to || null,
+      leadId,
       data.created_by || null,
       data.title || '',
       data.notes || '',
@@ -1085,6 +1366,10 @@ class Database {
         values.push(data[key]);
       }
     }
+    if (data.lead_id !== undefined) {
+      fields.push('lead_id = ?');
+      values.push(this._normalizeTaskLeadId(data.lead_id, this.getTaskById(data.id)?.lead_id || null));
+    }
     if (fields.length === 0) return this.getTaskById(data.id);
     fields.push('updated_at = ?');
     values.push(data.updated_at || this._getNextTaskTimestamp(data.id));
@@ -1093,8 +1378,390 @@ class Database {
     return this.getTaskById(data.id);
   }
 
+  // A Project Lead belongs to the project, not to one person's assignment. The
+  // lead is still stored on each task row (every MyTasks and Dashboard version
+  // already reads it from there), so these helpers keep every row of a project
+  // in step instead of changing the stored format.
+  getProjectLeadId(projectId, { excludeTaskId = null } = {}) {
+    if (!projectId) return null;
+    const row = this.db.prepare(`
+      SELECT lead_id FROM tasks
+      WHERE project_id = ? AND lead_id IS NOT NULL AND lead_id != '' AND id != ?
+      ORDER BY datetime(updated_at) DESC, id DESC
+      LIMIT 1
+    `).get(projectId, excludeTaskId || '');
+    return row?.lead_id || null;
+  }
+
+  // Sets the lead on every other task of the project and returns the rows that
+  // actually changed so the caller can publish them.
+  applyProjectLead(projectId, leadId, { exceptTaskId = null } = {}) {
+    if (!projectId) return [];
+    const normalizedLeadId = this._normalizeTaskLeadId(leadId);
+    const rows = this.db.prepare(`
+      SELECT id FROM tasks
+      WHERE project_id = ? AND id != ? AND COALESCE(lead_id, '') != ?
+    `).all(projectId, exceptTaskId || '', normalizedLeadId || '');
+    const update = this.db.prepare('UPDATE tasks SET lead_id = ?, updated_at = ? WHERE id = ?');
+    const changed = [];
+    for (const row of rows) {
+      update.run(normalizedLeadId, this._getNextTaskTimestamp(row.id), row.id);
+      changed.push(this.getTaskById(row.id));
+    }
+    return changed;
+  }
+
+  // One-time repair for projects whose lead was only set on some assignments:
+  // when a project has exactly one lead, every task of that project gets it.
+  // Projects with two different leads are left alone for the user to settle.
+  reconcileProjectLeads() {
+    const projects = this.db.prepare(`
+      SELECT project_id FROM tasks
+      WHERE project_id IS NOT NULL AND project_id != ''
+      GROUP BY project_id
+      HAVING SUM(CASE WHEN lead_id IS NULL OR lead_id = '' THEN 1 ELSE 0 END) > 0
+         AND COUNT(DISTINCT CASE WHEN lead_id IS NOT NULL AND lead_id != '' THEN lead_id END) = 1
+    `).all();
+    const changed = [];
+    for (const { project_id: projectId } of projects) {
+      const leadId = this.getProjectLeadId(projectId);
+      if (!leadId) continue;
+      try {
+        changed.push(...this.applyProjectLead(projectId, leadId));
+      } catch (_) {
+        // A lead who is no longer senior staff is left as it was.
+      }
+    }
+    return changed;
+  }
+
+  // Runs `apply` with lead-designation checks relaxed. Those checks guard local
+  // edits; a synced event records something another machine already accepted,
+  // and rejecting it would make that event fail and retry forever.
+  _asSyncReplay(apply) {
+    const previous = this._replayingSyncEvent;
+    this._replayingSyncEvent = true;
+    try {
+      return apply();
+    } finally {
+      this._replayingSyncEvent = previous;
+    }
+  }
+
+  _normalizeTaskLeadId(leadId, currentLeadId = null) {
+    if (!leadId) return null;
+    const lead = this.getUserById(leadId);
+    if (lead && (leadId === currentLeadId || this._replayingSyncEvent)) return lead.id;
+    if (!lead || lead.role !== 'staff' || !(lead.is_senior_staff === 1 || lead.is_senior_staff === true)) {
+      throw new Error('Project Lead must be designated senior staff.');
+    }
+    return lead.id;
+  }
+
   deleteTask(id) {
     this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+  }
+
+  // ── Shared Work Cards (V1.3) ───────────────────────────
+
+  // ── Work Card Categories ───────────────────────────────
+
+  _seedWorkCardCategories() {
+    const seeds = [
+      ['work-card-planning', 'Planning', '#4A5FE0'],
+      ['work-card-elevations', 'Elevations', '#0B8A78'],
+      ['work-card-submission', 'Submission', '#C4601A'],
+      ['work-card-zoning', 'Zoning', '#7D4CC9'],
+      ['work-card-details', 'Details', '#B0386B'],
+      ['work-card-coordination', 'Coordination', '#5B6B7F'],
+    ];
+    const insert = this.db.prepare('INSERT OR IGNORE INTO work_card_categories (id, label, color, sort_order, show_on_team_calendar) VALUES (?, ?, ?, ?, 1)');
+    seeds.forEach(([id, label, color], sortOrder) => insert.run(id, label, color, sortOrder));
+  }
+
+  getWorkCardCategories() {
+    return this.db.prepare('SELECT * FROM work_card_categories ORDER BY sort_order, label COLLATE NOCASE').all();
+  }
+
+  getWorkCardCategoryById(id) {
+    return this.db.prepare('SELECT * FROM work_card_categories WHERE id = ?').get(id);
+  }
+
+  createWorkCardCategory(data = {}) {
+    const id = data.id || uuidv4();
+    const label = String(data.label || '').trim();
+    if (!label) throw new Error('A category needs a name.');
+    const maxOrder = this.db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS value FROM work_card_categories').get().value;
+    this.db.prepare('INSERT INTO work_card_categories (id, label, color, sort_order, show_on_team_calendar) VALUES (?, ?, ?, ?, ?)')
+      .run(id, label, String(data.color || '#5964A8'), data.sort_order ?? maxOrder + 1, data.show_on_team_calendar === false || data.show_on_team_calendar === 0 ? 0 : 1);
+    return this.getWorkCardCategoryById(id);
+  }
+
+  updateWorkCardCategory(data = {}) {
+    const existing = this.getWorkCardCategoryById(data.id);
+    if (!existing) return null;
+    const label = data.label === undefined ? existing.label : String(data.label || '').trim();
+    if (!label) throw new Error('A category needs a name.');
+    const showOnTeamCalendar = data.show_on_team_calendar === undefined
+      ? existing.show_on_team_calendar
+      : (data.show_on_team_calendar ? 1 : 0);
+    this.db.prepare('UPDATE work_card_categories SET label = ?, color = ?, sort_order = ?, show_on_team_calendar = ? WHERE id = ?')
+      .run(label, String(data.color || existing.color), data.sort_order ?? existing.sort_order, showOnTeamCalendar, data.id);
+    return this.getWorkCardCategoryById(data.id);
+  }
+
+  // Default categories are seeded once by the migration. They must not be
+  // re-created here or on every card save, or a deleted type would return.
+  _getFallbackWorkCardCategoryId() {
+    return this.getWorkCardCategoryById('work-card-planning') ? 'work-card-planning' : null;
+  }
+
+  deleteWorkCardCategory(id) {
+    this.db.prepare('DELETE FROM work_card_categories WHERE id = ?').run(id);
+    const fallbackId = this._getFallbackWorkCardCategoryId();
+    if (fallbackId) {
+      this.db.prepare('UPDATE work_cards SET category_id = ? WHERE category_id IS NULL OR category_id = ?').run(fallbackId, id);
+    }
+    return true;
+  }
+
+  reorderWorkCardCategories(orders = []) {
+    const update = this.db.prepare('UPDATE work_card_categories SET sort_order = ? WHERE id = ?');
+    this.runInTransaction(() => orders.forEach((item, index) => update.run(item.sort_order ?? index, item.id)));
+    return this.getWorkCardCategories();
+  }
+
+  _normalizeWorkCardAssignees(value) {
+    const raw = Array.isArray(value) ? value : [];
+    return [...new Set(raw.filter((id) => typeof id === 'string').map((id) => id.trim()).filter(Boolean))];
+  }
+
+  _normalizeWorkCardPayload(data = {}, existing = null) {
+    const now = this._getCurrentTimestamp();
+    const assigneeIds = Object.hasOwn(data, 'assignee_ids')
+      ? this._normalizeWorkCardAssignees(data.assignee_ids)
+      : (existing?.assignee_ids || []);
+    const minutes = data.planned_minutes === undefined ? existing?.planned_minutes : data.planned_minutes;
+    if (minutes !== null && minutes !== undefined && (!Number.isFinite(Number(minutes)) || Number(minutes) < 0)) {
+      throw new Error('Planned work-card time must be zero or greater.');
+    }
+    const startDate = data.start_date === undefined ? existing?.start_date : (data.start_date || null);
+    const endDate = data.end_date === undefined ? existing?.end_date : (data.end_date || null);
+    if (startDate && endDate && String(startDate) > String(endDate)) throw new Error('A work-card end date cannot be before its start date.');
+    const title = data.title === undefined ? existing?.title : String(data.title || '').trim();
+    if (!title) throw new Error('A work card needs a title.');
+    const requestedCategoryId = data.category_id === undefined ? existing?.category_id : data.category_id;
+    const categoryId = requestedCategoryId && this.getWorkCardCategoryById(requestedCategoryId)
+      ? requestedCategoryId
+      : this._getFallbackWorkCardCategoryId();
+    const requestedStatus = data.status !== undefined
+      ? data.status
+      : (data.completed !== undefined ? (data.completed ? 'done' : 'todo') : (existing?.status || (existing?.completed ? 'done' : 'todo')));
+    const status = ['todo', 'in_progress', 'done'].includes(requestedStatus) ? requestedStatus : 'todo';
+    const statusChanged = Boolean(existing && status !== (existing.status || (existing.completed ? 'done' : 'todo')));
+    const paused = status !== 'in_progress' || statusChanged ? 0 : (data.paused === undefined ? (existing?.paused ? 1 : 0) : (data.paused ? 1 : 0));
+    const pausedAt = paused ? (data.paused_at || existing?.paused_at || now) : null;
+    const loggedHours = data.logged_hours === undefined ? Number(existing?.logged_hours || 0) : Number(data.logged_hours || 0);
+    if (!Number.isFinite(loggedHours) || loggedHours < 0) throw new Error('Logged hours must be zero or greater.');
+    const leadId = data.lead_id === undefined ? (existing?.lead_id || null) : (data.lead_id || null);
+    // An unchanged lead, or one arriving from sync, is never re-validated: the
+    // person may have lost senior status since being assigned.
+    if (leadId && leadId !== (existing?.lead_id || null) && !this._replayingSyncEvent) {
+      const lead = this.getUserById(leadId);
+      if (!lead || lead.role !== 'staff' || !(lead.is_senior_staff === 1 || lead.is_senior_staff === true)) {
+        throw new Error('A work-card team lead must be designated senior staff.');
+      }
+    }
+    return {
+      id: data.id || existing?.id || uuidv4(),
+      project_id: data.project_id || existing?.project_id || null,
+      week_of: data.week_of || existing?.week_of || null,
+      title,
+      description: data.description === undefined ? (existing?.description || '') : String(data.description || '').trim(),
+      category_id: categoryId,
+      status,
+      paused,
+      paused_at: pausedAt,
+      logged_hours: Math.round(loggedHours * 100) / 100,
+      lead_id: leadId,
+      planned_minutes: minutes === null || minutes === undefined || minutes === '' ? null : Math.round(Number(minutes)),
+      start_date: startDate,
+      end_date: endDate,
+      completed: status === 'done' ? 1 : 0,
+      sort_order: data.sort_order === undefined ? (existing?.sort_order || 0) : Number(data.sort_order) || 0,
+      created_by: existing?.created_by || data.created_by || null,
+      updated_by: data.updated_by === undefined ? (existing?.updated_by || data.created_by || null) : (data.updated_by || null),
+      created_at: existing?.created_at || data.created_at || now,
+      updated_at: data.updated_at || (existing ? this._getNextWorkCardTimestamp(existing.id) : now),
+      assignee_ids: assigneeIds,
+    };
+  }
+
+  _workCardWithAssignees(row) {
+    if (!row) return null;
+    const assignees = this.db.prepare(`
+      SELECT users.id, users.display_name, users.avatar_color
+      FROM work_card_assignees
+      JOIN users ON users.id = work_card_assignees.user_id
+      WHERE work_card_assignees.work_card_id = ?
+      ORDER BY users.display_name COLLATE NOCASE
+    `).all(row.id);
+    return { ...row, completed: Boolean(row.completed), assignee_ids: assignees.map((assignee) => assignee.id), assignees };
+  }
+
+  getWorkCardById(id) {
+    return this._workCardWithAssignees(this.db.prepare('SELECT * FROM work_cards WHERE id = ?').get(id));
+  }
+
+  getWorkCards(filters = {}) {
+    let sql = 'SELECT * FROM work_cards WHERE 1=1';
+    const params = [];
+    if (filters.project_id) { sql += ' AND project_id = ?'; params.push(filters.project_id); }
+    if (filters.week_of) { sql += ' AND week_of = ?'; params.push(filters.week_of); }
+    if (filters.completed !== undefined) { sql += ' AND completed = ?'; params.push(filters.completed ? 1 : 0); }
+    if (filters.assignee_id) { sql += ' AND EXISTS (SELECT 1 FROM work_card_assignees WHERE work_card_assignees.work_card_id = work_cards.id AND work_card_assignees.user_id = ?)'; params.push(filters.assignee_id); }
+    sql += ' ORDER BY completed ASC, sort_order ASC, created_at ASC';
+    return this.db.prepare(sql).all(...params).map((row) => this._workCardWithAssignees(row));
+  }
+
+  getProjectParticipants(projectId) {
+    return this.db.prepare(`
+      SELECT DISTINCT users.id, users.display_name, users.avatar_color
+      FROM tasks
+      JOIN users ON users.id = tasks.assigned_to
+      WHERE tasks.project_id = ? AND tasks.category = 'current' AND tasks.completed = 0 AND users.active = 1
+      ORDER BY users.display_name COLLATE NOCASE
+    `).all(projectId);
+  }
+
+  _replaceWorkCardAssignees(workCardId, assigneeIds) {
+    const remove = this.db.prepare('DELETE FROM work_card_assignees WHERE work_card_id = ?');
+    const add = this.db.prepare('INSERT OR IGNORE INTO work_card_assignees (work_card_id, user_id) VALUES (?, ?)');
+    remove.run(workCardId);
+    for (const userId of assigneeIds) add.run(workCardId, userId);
+    if (assigneeIds.length) {
+      this.db.prepare(`DELETE FROM work_card_focus WHERE work_card_id = ? AND user_id NOT IN (${assigneeIds.map(() => '?').join(', ')})`).run(workCardId, ...assigneeIds);
+    } else {
+      this.db.prepare('DELETE FROM work_card_focus WHERE work_card_id = ?').run(workCardId);
+    }
+  }
+
+  createWorkCard(data = {}) {
+    const card = this._normalizeWorkCardPayload(data);
+    if (!card.project_id || !this.getProjectById(card.project_id)) throw new Error('Choose an existing project for this work card.');
+    if (!card.week_of) throw new Error('A work card needs a scheduling week.');
+    const maxOrder = this.db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS value FROM work_cards WHERE project_id = ? AND week_of = ?').get(card.project_id, card.week_of).value;
+    card.sort_order = data.sort_order === undefined ? maxOrder + 1 : card.sort_order;
+    this.runInTransaction(() => {
+      this.db.prepare(`
+        INSERT INTO work_cards (id, project_id, week_of, title, description, category_id, status, paused, paused_at, logged_hours, lead_id, planned_minutes, start_date, end_date, completed, sort_order, created_by, updated_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(card.id, card.project_id, card.week_of, card.title, card.description, card.category_id, card.status, card.paused, card.paused_at, card.logged_hours, card.lead_id, card.planned_minutes, card.start_date, card.end_date, card.completed, card.sort_order, card.created_by, card.updated_by, card.created_at, card.updated_at);
+      this._replaceWorkCardAssignees(card.id, card.assignee_ids);
+    });
+    return this.getWorkCardById(card.id);
+  }
+
+  updateWorkCard(data = {}) {
+    const existing = this.getWorkCardById(data.id);
+    if (!existing) return null;
+    const card = this._normalizeWorkCardPayload(data, existing);
+    this.runInTransaction(() => {
+      this.db.prepare(`
+        UPDATE work_cards
+        SET project_id = ?, week_of = ?, title = ?, description = ?, category_id = ?, status = ?, paused = ?, paused_at = ?, logged_hours = ?, lead_id = ?, planned_minutes = ?, start_date = ?, end_date = ?, completed = ?, sort_order = ?, updated_by = ?, updated_at = ?
+        WHERE id = ?
+      `).run(card.project_id, card.week_of, card.title, card.description, card.category_id, card.status, card.paused, card.paused_at, card.logged_hours, card.lead_id, card.planned_minutes, card.start_date, card.end_date, card.completed, card.sort_order, card.updated_by, card.updated_at, card.id);
+      if (Object.hasOwn(data, 'assignee_ids')) this._replaceWorkCardAssignees(card.id, card.assignee_ids);
+    });
+    return this.getWorkCardById(card.id);
+  }
+
+  deleteWorkCard(id) {
+    this.db.prepare('DELETE FROM work_cards WHERE id = ?').run(id);
+    return true;
+  }
+
+  // Weekly rollover: work that is not finished follows the schedule into the
+  // new week instead of being left behind in a week that is over. Done cards
+  // stay in the week they were completed. Only the week, the card's dates
+  // (shifted by the same number of days so the weekdays are kept) and its place
+  // in the list change; status, pause state, assignees, lead and hours do not.
+  // Returns the cards that moved, so the caller can publish them. Running it
+  // again is a no-op, which lets it double as a catch-up.
+  carryOverUnfinishedWorkCards(weekStr) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekStr || ''))) return [];
+    const dayNumber = (value) => Math.round(Date.parse(`${String(value).slice(0, 10)}T00:00:00Z`) / 86400000);
+    const shiftDate = (value, days) => {
+      if (!value) return null;
+      const parsed = new Date(`${String(value).slice(0, 10)}T00:00:00Z`);
+      if (Number.isNaN(parsed.getTime())) return value;
+      parsed.setUTCDate(parsed.getUTCDate() + days);
+      return parsed.toISOString().slice(0, 10);
+    };
+
+    const candidates = this.db.prepare(`
+      SELECT id FROM work_cards
+      WHERE completed = 0 AND status != 'done' AND week_of < ?
+      ORDER BY week_of ASC, sort_order ASC, created_at ASC
+    `).all(weekStr);
+    if (candidates.length === 0) return [];
+
+    const lastOrder = this.db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS value FROM work_cards WHERE project_id = ? AND week_of = ?');
+    const nextOrderByProject = new Map();
+    const moved = [];
+    this.runInTransaction(() => {
+      for (const { id } of candidates) {
+        const card = this.getWorkCardById(id);
+        if (!card) continue;
+        if (!nextOrderByProject.has(card.project_id)) {
+          nextOrderByProject.set(card.project_id, lastOrder.get(card.project_id, weekStr).value);
+        }
+        const sortOrder = nextOrderByProject.get(card.project_id) + 1;
+        const days = dayNumber(weekStr) - dayNumber(card.week_of);
+        try {
+          moved.push(this.updateWorkCard({
+            id,
+            week_of: weekStr,
+            start_date: shiftDate(card.start_date, days),
+            end_date: shiftDate(card.end_date, days),
+            sort_order: sortOrder,
+          }));
+          nextOrderByProject.set(card.project_id, sortOrder);
+        } catch (error) {
+          // One card that no longer validates (for example a lead who is no
+          // longer designated) must not stop the rest from carrying over.
+          console.warn(`Work card ${id} could not be carried over: ${error.message}`);
+        }
+      }
+    });
+    return moved;
+  }
+
+  getWorkCardFocus(userId) {
+    const row = this.db.prepare('SELECT work_card_id FROM work_card_focus WHERE user_id = ?').get(userId);
+    return row ? this.getWorkCardById(row.work_card_id) : null;
+  }
+
+  setWorkCardFocus(userId, workCardId, updatedAt = this._getCurrentTimestamp(), options = {}) {
+    if (!workCardId) {
+      this.db.prepare('DELETE FROM work_card_focus WHERE user_id = ?').run(userId);
+      return null;
+    }
+    const card = this.getWorkCardById(workCardId);
+    if (!card) throw new Error('The selected work card no longer exists.');
+    if (!card.assignee_ids.includes(userId)) {
+      // A delayed focus event may arrive after an assignment change. It is not
+      // a sync failure and must not recreate focus for someone removed from a card.
+      if (options.allowUnassigned) return null;
+      throw new Error('Only a work-card assignee can activate this card.');
+    }
+    this.db.prepare(`
+      INSERT INTO work_card_focus (user_id, work_card_id, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET work_card_id = excluded.work_card_id, updated_at = excluded.updated_at
+    `).run(userId, workCardId, updatedAt);
+    return this.getWorkCardFocus(userId);
   }
 
   getTaskTombstone(taskId) {
@@ -1246,14 +1913,39 @@ class Database {
     return normalized;
   }
 
+  _normalizeProjectLeadFields(data) {
+    if (data.project_lead_ids === undefined) return {};
+    let rawIds = [];
+    if (Array.isArray(data.project_lead_ids)) {
+      rawIds = data.project_lead_ids;
+    } else if (typeof data.project_lead_ids === 'string' && data.project_lead_ids.trim()) {
+      try {
+        const parsed = JSON.parse(data.project_lead_ids);
+        rawIds = Array.isArray(parsed) ? parsed : [];
+      } catch (_) {
+        rawIds = [];
+      }
+    }
+    const leadIds = [...new Set((Array.isArray(rawIds) ? rawIds : []).filter(Boolean))];
+    for (const id of leadIds) {
+      if (this._replayingSyncEvent) break;
+      const user = this.getUserById(id);
+      if (!user || user.role !== 'staff' || !(user.is_senior_staff === 1 || user.is_senior_staff === true)) {
+        throw new Error('Project leads must be designated senior staff.');
+      }
+    }
+    return { project_lead_ids: JSON.stringify(leadIds) };
+  }
+
   createProject(data) {
     const id = data.id || uuidv4();
     const maxOrder = this.db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM projects').get().m;
     const partnerData = this._normalizeProjectPartnerFields(data);
+    const leadData = this._normalizeProjectLeadFields(data);
 
     this.db.prepare(`
-      INSERT INTO projects (id, client, name, status, category, notes, partner_id, partner_ids, partner_initials, folder_link, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (id, client, name, status, category, notes, partner_id, partner_ids, partner_initials, project_lead_ids, folder_link, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.client || '',
@@ -1264,6 +1956,7 @@ class Database {
       partnerData.partner_id ?? null,
       partnerData.partner_ids ?? '[]',
       partnerData.partner_initials ?? '',
+      leadData.project_lead_ids ?? '[]',
       data.folder_link || '',
       data.sort_order ?? maxOrder + 1
     );
@@ -1275,6 +1968,7 @@ class Database {
     const fields = [];
     const values = [];
     const partnerData = this._normalizeProjectPartnerFields(data);
+    const leadData = this._normalizeProjectLeadFields(data);
     for (const key of ['client', 'name', 'status', 'category', 'notes', 'folder_link', 'sort_order']) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
@@ -1286,6 +1980,10 @@ class Database {
         fields.push(`${key} = ?`);
         values.push(partnerData[key]);
       }
+    }
+    if (leadData.project_lead_ids !== undefined) {
+      fields.push('project_lead_ids = ?');
+      values.push(leadData.project_lead_ids);
     }
     if (fields.length === 0) return this.getProjectById(data.id);
     values.push(data.id);
@@ -1595,6 +2293,15 @@ class Database {
       case 'task-updated':    return this._applyCompatibilityEvent(event.data, () => this._upsertTask({ ...event.data, updated_at: event.data.updated_at || event.timestamp }));
       case 'task-deleted':    return this._applyCompatibilityEvent(event.data, () => this._applyTaskDeletion(event.data, event.timestamp));
       case 'tasks-reordered': return this.reorderTasks(event.data);
+      case 'work-card-created': return this._upsertWorkCard(event.data);
+      case 'work-card-updated': return this._upsertWorkCard(event.data);
+      case 'work-card-completed': return null;
+      case 'work-card-deleted': return this.deleteWorkCard(event.data.id);
+      case 'work-card-focus-set': return this.setWorkCardFocus(event.data.user_id, event.data.work_card_id || null, event.data.updated_at || event.timestamp, { allowUnassigned: true });
+      case 'work-card-category-created': return this._upsertWorkCardCategory(event.data);
+      case 'work-card-category-updated': return this._upsertWorkCardCategory(event.data);
+      case 'work-card-category-deleted': return this.deleteWorkCardCategory(event.data.id);
+      case 'work-card-categories-reordered': return this.reorderWorkCardCategories(event.data);
       case 'subtask-created': return this._upsertSubTask(event.data);
       case 'subtask-updated': return this._upsertSubTask(event.data);
       case 'subtask-toggled': return this._upsertSubTask(event.data);
@@ -1620,6 +2327,8 @@ class Database {
       case 'priorities-reordered': return this.reorderCustomPriorities(event.data);
       case 'setting-updated':   return this._applyGlobalSetting(event.data);
       case 'weekly-rollover':   return this._applyRollover(event.data);
+      case 'rollover-review-started': return null;
+      case 'rollover-review-ended': return null;
       case 'rollover-published': return this.applyRolloverPublication(event.data);
       case 'task-confirmed':    return this.confirmTask(event.data.id);
       case 'task-activity-added': return this.addTaskActivity(event.data);
@@ -1629,12 +2338,10 @@ class Database {
   }
 
   _upsertUser(data) {
-    const existing = this.getUserById(data.id);
-    if (existing) {
-      return this.updateUser(data);
-    } else {
-      return this.createUser(data);
-    }
+    return this._asSyncReplay(() => {
+      const existing = this.getUserById(data.id);
+      return existing ? this.updateUser(data) : this.createUser(data);
+    });
   }
 
   _applyCompatibilityEvent(data, apply) {
@@ -1652,11 +2359,22 @@ class Database {
     const existing = this.getTaskById(data.id);
     if (existing && this._compareTimestamps(existing.updated_at, incomingUpdatedAt) > 0) return existing;
     if (tombstone) this.db.prepare('DELETE FROM task_tombstones WHERE task_id = ?').run(data.id);
-    if (existing) {
-      return this.updateTask({ ...data, updated_at: incomingUpdatedAt });
-    } else {
-      return this.createTask({ ...data, updated_at: incomingUpdatedAt });
-    }
+    return this._asSyncReplay(() => existing
+      ? this.updateTask({ ...data, updated_at: incomingUpdatedAt })
+      : this.createTask({ ...data, updated_at: incomingUpdatedAt }));
+  }
+
+  _upsertWorkCard(data) {
+    const incomingUpdatedAt = data.updated_at || this._getCurrentTimestamp();
+    const existing = this.getWorkCardById(data.id);
+    if (existing && this._compareTimestamps(existing.updated_at, incomingUpdatedAt) > 0) return existing;
+    return this._asSyncReplay(() => existing
+      ? this.updateWorkCard({ ...data, updated_at: incomingUpdatedAt })
+      : this.createWorkCard({ ...data, updated_at: incomingUpdatedAt }));
+  }
+
+  _upsertWorkCardCategory(data) {
+    return this.getWorkCardCategoryById(data.id) ? this.updateWorkCardCategory(data) : this.createWorkCardCategory(data);
   }
 
   _applyTaskDeletion(data = {}, eventTimestamp = null) {
@@ -1689,12 +2407,10 @@ class Database {
   }
 
   _upsertProject(data) {
-    const existing = this.getProjectById(data.id);
-    if (existing) {
-      return this.updateProject(data);
-    } else {
-      return this.createProject(data);
-    }
+    return this._asSyncReplay(() => {
+      const existing = this.getProjectById(data.id);
+      return existing ? this.updateProject(data) : this.createProject(data);
+    });
   }
 
   _upsertPTO(data) {

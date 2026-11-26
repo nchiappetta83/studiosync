@@ -6,8 +6,8 @@
   --ui-control-radius: 6px;
   --ui-surface-radius: 8px;
   --ui-border-strong: #D7DEE6;
-  --ui-focus-border: rgba(77, 74, 213, 0.55);
-  --ui-focus-ring: rgba(77, 74, 213, 0.1);
+  --ui-focus-border: rgba(var(--accent-rgb, 77, 74, 213), 0.55);
+  --ui-focus-ring: rgba(var(--accent-rgb, 77, 74, 213), 0.1);
   --ui-danger-bg: #FFF1F1;
   --ui-danger-hover: #FFE5E5;
   --ui-menu-shadow: 0 10px 28px rgba(27, 36, 42, 0.16), 0 2px 8px rgba(27, 36, 42, 0.08);
@@ -19,8 +19,8 @@
 
 body.theme-dark {
   --ui-border-strong: #4A525F;
-  --ui-focus-border: rgba(139, 125, 255, 0.62);
-  --ui-focus-ring: rgba(139, 125, 255, 0.14);
+  --ui-focus-border: rgba(var(--accent-rgb, 139, 125, 255), 0.62);
+  --ui-focus-ring: rgba(var(--accent-rgb, 139, 125, 255), 0.14);
   --ui-danger-bg: rgba(217, 95, 95, 0.14);
   --ui-danger-hover: rgba(217, 95, 95, 0.22);
 }
@@ -92,7 +92,7 @@ select:focus,
 }
 
 .btn-accent {
-  border-color: rgba(77, 74, 213, 0.16);
+  border-color: rgba(var(--accent-rgb, 77, 74, 213), 0.16);
 }
 
 .btn-ghost {

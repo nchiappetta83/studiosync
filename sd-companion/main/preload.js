@@ -11,12 +11,24 @@ contextBridge.exposeInMainWorld('api', {
 
   // Tasks (shared, from main app)
   getTasks:           (filters)   => ipcRenderer.invoke('get-tasks', filters),
+  getStaffOverviewAssignments: () => ipcRenderer.invoke('get-staff-overview-assignments'),
   getTaskActivity:    (taskId)    => ipcRenderer.invoke('get-task-activity', taskId),
   getProjectActivity: (projectId) => ipcRenderer.invoke('get-project-activity', projectId),
   getRolloverReviewState: ()      => ipcRenderer.invoke('get-rollover-review-state'),
   createTask:         (data)      => ipcRenderer.invoke('create-task', data),
   updateTask:         (data)      => ipcRenderer.invoke('update-task', data),
   deleteTask:         (id)        => ipcRenderer.invoke('delete-task', id),
+
+  // Work cards (shared project work, introduced in V1.3)
+  getProjectWorkCards: (projectId, weekOf) => ipcRenderer.invoke('get-project-work-cards', projectId, weekOf),
+  getMyProjectWorkCards: () => ipcRenderer.invoke('get-my-project-work-cards'),
+  getMyWeekWorkCards:  (weekOf)    => ipcRenderer.invoke('get-my-week-work-cards', weekOf),
+  getTeamCalendarWorkCards: ()      => ipcRenderer.invoke('get-team-calendar-work-cards'),
+  createWorkCard:      (data)      => ipcRenderer.invoke('create-work-card', data),
+  updateWorkCard:      (data)      => ipcRenderer.invoke('update-work-card', data),
+  deleteWorkCard:      (id)        => ipcRenderer.invoke('delete-work-card', id),
+  setWorkCardFocus:    (id)        => ipcRenderer.invoke('set-work-card-focus', id),
+  getWorkCardCategories: ()         => ipcRenderer.invoke('get-work-card-categories'),
 
   // Private tasks (companion-only, not synced)
   getPrivateTasks:    ()          => ipcRenderer.invoke('get-private-tasks'),
@@ -61,6 +73,8 @@ contextBridge.exposeInMainWorld('api', {
   // Config & setup
   getConfig:          ()          => ipcRenderer.invoke('get-config'),
   saveConfig:         (config)    => ipcRenderer.invoke('save-config', config),
+  getOfficeCapacity:  ()          => ipcRenderer.invoke('get-office-capacity'),
+  saveOfficeCapacity: (capacity)  => ipcRenderer.invoke('save-office-capacity', capacity),
   getLaunchOnStartup: ()          => ipcRenderer.invoke('get-launch-on-startup'),
   setLaunchOnStartup: (enabled)   => ipcRenderer.invoke('set-launch-on-startup', enabled),
   checkForUpdates:    ()          => ipcRenderer.invoke('check-for-updates'),

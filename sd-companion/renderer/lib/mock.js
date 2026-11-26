@@ -135,6 +135,7 @@ if (!window.api) {
     getCustomPriorities:      async () => [],
     getPriorityMenuOrder:     async () => [],
     getPriorityDisplayStyles: async () => ({}),
+    getWorkCardCategories: async () => [],
 
     // Config & setup
     getConfig:          async () => ({ sharedDrivePath: 'C:\\MockSharedDrive', rememberedUsername: currentUser?.username || '' }),

@@ -34,6 +34,10 @@ const SettingsDialog = {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
               Priorities
             </button>
+            <button class="settings-nav-item" data-section="work-categories">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83V2H4v7h1.83l9.58 9.59a2 2 0 0 0 2.83 0l2.35-2.35a2 2 0 0 0 0-2.83Z"/><circle cx="6.5" cy="6.5" r=".5" fill="currentColor"/></svg>
+              Work Card Types
+            </button>
             <button class="settings-nav-item" data-section="paths">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               File Paths
@@ -101,16 +105,101 @@ const SettingsDialog = {
 
   _renderSection() {
     const content = this._overlay.querySelector('#settings-content');
+    content.classList.remove('settings-content-work-categories');
     UserDialog.detachEmbedded?.();
     switch (this._activeSection) {
       case 'staff': return UserDialog.showEmbedded(content);
       case 'roles': return this._renderRoles(content);
       case 'priorities': return this._renderPriorities(content);
+      case 'work-categories': return this._renderWorkCardCategories(content);
       case 'paths': return this._renderPaths(content);
       case 'status': return this._renderStatus(content);
       case 'devices': return this._renderDevices(content);
       case 'about': return this._renderAbout(content);
     }
+  },
+
+  // ── Work Card Categories Section ─────────────────────
+
+  async _renderWorkCardCategories(container) {
+    container.classList.add('settings-content-work-categories');
+    container.innerHTML = '<div class="settings-section"><h2 class="settings-section-title">Work Card Types</h2><p class="settings-section-desc">Loading categories…</p></div>';
+    const categories = await window.api.getWorkCardCategories();
+    const rows = Array.isArray(categories) ? categories : [];
+    container.innerHTML = `
+      <div class="settings-section settings-work-categories-section">
+        <h2 class="settings-section-title">Work Card Types</h2>
+        <p class="settings-section-desc">Create the labels used to classify project work, such as Planning, Elevations, or Diagrams. They are available to senior staff and partners when adding a work card.</p>
+        <div class="settings-list settings-work-category-list">
+          ${rows.length ? rows.map((item, index) => `
+            <div class="settings-list-item" data-category-id="${this._esc(item.id)}">
+              <div class="settings-reorder-btns">
+                <button class="settings-arrow-btn${index === 0 ? ' disabled' : ''}" data-action="move-work-category" data-direction="-1" data-id="${this._esc(item.id)}" ${index === 0 ? 'disabled' : ''}>${this._upArrow}</button>
+                <button class="settings-arrow-btn${index === rows.length - 1 ? ' disabled' : ''}" data-action="move-work-category" data-direction="1" data-id="${this._esc(item.id)}" ${index === rows.length - 1 ? 'disabled' : ''}>${this._downArrow}</button>
+              </div>
+              <span class="settings-priority-dot" style="background:${this._esc(item.color)}"></span>
+              <span class="settings-list-label">${this._esc(item.label)}</span>
+              <div class="settings-list-actions settings-work-category-actions">
+                <button class="task-action-btn" data-action="edit-work-category" data-id="${this._esc(item.id)}" title="Edit">Edit</button>
+                <button class="task-action-btn" data-action="delete-work-category" data-id="${this._esc(item.id)}" title="Delete">Delete</button>
+                <label class="settings-work-category-calendar"><span>Team Calendar</span><input type="checkbox" data-work-category-calendar-toggle data-id="${this._esc(item.id)}" ${item.show_on_team_calendar === 0 ? '' : 'checked'} aria-label="Show ${this._esc(item.label)} on Team Calendar"></label>
+              </div>
+            </div>`).join('') : '<div class="settings-empty">No work card types yet. Add your first one below.</div>'}
+        </div>
+        <div class="settings-add-row">
+          <input type="color" id="work-category-color" value="#5964A8" style="width:36px;height:36px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;">
+          <input type="text" class="input" id="work-category-label" placeholder="e.g. Planning" style="flex:1;">
+          <label class="settings-work-category-calendar settings-work-category-calendar-add"><input type="checkbox" id="work-category-calendar" checked> Show on Team Calendar</label>
+          <button class="btn btn-primary btn-sm" id="work-category-add">Add Type</button>
+        </div>
+      </div>`;
+
+    const rerender = () => this._renderWorkCardCategories(container);
+    const labelInput = container.querySelector('#work-category-label');
+    const add = async () => {
+      const label = labelInput.value.trim();
+      if (!label) { labelInput.style.borderColor = 'var(--danger)'; return; }
+      await window.api.createWorkCardCategory({ label, color: container.querySelector('#work-category-color').value, show_on_team_calendar: container.querySelector('#work-category-calendar').checked });
+      rerender();
+    };
+    container.querySelector('#work-category-add').addEventListener('click', add);
+    labelInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') add(); });
+    container.querySelectorAll('[data-action="move-work-category"]').forEach((button) => button.addEventListener('click', async () => {
+      const index = rows.findIndex((item) => item.id === button.dataset.id);
+      const target = index + Number(button.dataset.direction);
+      if (index < 0 || target < 0 || target >= rows.length) return;
+      const next = [...rows];
+      [next[index], next[target]] = [next[target], next[index]];
+      await window.api.reorderWorkCardCategories(next.map((item, order) => ({ id: item.id, sort_order: order })));
+      rerender();
+    }));
+    container.querySelectorAll('[data-action="edit-work-category"]').forEach((button) => button.addEventListener('click', () => {
+      const category = rows.find((item) => item.id === button.dataset.id);
+      const item = button.closest('.settings-list-item');
+      if (!category || !item) return;
+      item.innerHTML = `<input type="color" id="edit-work-category-color" value="${this._esc(category.color)}" style="width:36px;height:36px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;"><input class="input settings-inline-edit" id="edit-work-category-label" value="${this._esc(category.label)}"><label class="settings-work-category-calendar"><input type="checkbox" id="edit-work-category-calendar" ${category.show_on_team_calendar === 0 ? '' : 'checked'}> Show on Team Calendar</label><div class="settings-list-actions"><button class="btn btn-ghost btn-sm" data-edit-cancel>Cancel</button><button class="btn btn-primary btn-sm" data-edit-save>Save</button></div>`;
+      const input = item.querySelector('#edit-work-category-label');
+      item.querySelector('[data-edit-cancel]').addEventListener('click', rerender);
+      item.querySelector('[data-edit-save]').addEventListener('click', async () => {
+        const label = input.value.trim();
+        if (!label) return;
+        await window.api.updateWorkCardCategory({ id: category.id, label, color: item.querySelector('#edit-work-category-color').value, show_on_team_calendar: item.querySelector('#edit-work-category-calendar').checked });
+        rerender();
+      });
+      input.focus(); input.select();
+    }));
+    container.querySelectorAll('[data-work-category-calendar-toggle]').forEach((input) => input.addEventListener('change', async () => {
+      const category = rows.find((item) => item.id === input.dataset.id);
+      if (!category) return;
+      await window.api.updateWorkCardCategory({ ...category, show_on_team_calendar: input.checked });
+      rerender();
+    }));
+    container.querySelectorAll('[data-action="delete-work-category"]').forEach((button) => button.addEventListener('click', async () => {
+      const category = rows.find((item) => item.id === button.dataset.id);
+      if (!category || !(await ConfirmDialog.show({ title: 'Delete work card type?', message: `Delete "${category.label}"? Existing work cards of this type will move to Planning (or be left uncategorized if Planning has been removed).`, confirmLabel: 'Delete', tone: 'danger' }))) return;
+      await window.api.deleteWorkCardCategory(category.id);
+      rerender();
+    }));
   },
 
   // ── Staff Roles Section ──────────────────────────────

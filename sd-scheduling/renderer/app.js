@@ -105,6 +105,7 @@ const App = {
     await this._ensureApiBridge();
     this._initWindowChrome();
     this._bindResizePerfMode();
+    this._bindAdaptiveScrollSmoothing();
     this._bindBackgroundRefreshGuards();
     this._bindInputDiagnostics();
     this._initUpdatePrompt();
@@ -276,6 +277,20 @@ const App = {
     };
 
     window.addEventListener('resize', markResizing, { passive: true });
+  },
+
+  _bindAdaptiveScrollSmoothing() {
+    window.StudioSyncScrollSmoothing?.init({
+      selector: [
+        '.sidebar-list',
+        '.tasks-scroll',
+        '.projects-scroll',
+        '.dialog-body',
+        '.dialog-project-picker-list',
+        '.settings-list-scroll',
+        '.task-activity-list',
+      ].join(', '),
+    });
   },
 
   _bindBackgroundRefreshGuards() {
@@ -879,6 +894,10 @@ const App = {
   },
 
   async _checkWeeklyRollover() {
+    // Only the scheduling administrator may begin the office-wide review.
+    // Other staff can open Dashboard without affecting MyTasks.
+    if (!AppState.isAdmin()) return;
+
     const startupRollover = await window.api.consumeRolloverNotice();
     if (startupRollover?.applied) {
       Toast.show('Weekly rollover ready for review', 'success');

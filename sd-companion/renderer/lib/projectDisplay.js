@@ -10,6 +10,17 @@
     }
   }
 
+  function getProjectLeadIds(project) {
+    if (!project) return [];
+
+    try {
+      const parsed = JSON.parse(project.project_lead_ids || '[]');
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
   function isFutureProject(project) {
     return project?.category === 'future' || project?.status === 'future';
   }
@@ -44,6 +55,7 @@
 
   window.MyTasksProjectDisplay = {
     getProjectPartnerIds,
+    getProjectLeadIds,
     isFutureProject,
     getProjectSection,
     getProjectDisplayTitle,

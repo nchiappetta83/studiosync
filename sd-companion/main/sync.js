@@ -39,6 +39,13 @@ function isRolloverReviewStart(value) {
     && (value.startedAt === undefined || typeof value.startedAt === 'string');
 }
 
+function isRolloverReviewEnd(value) {
+  return isObject(value)
+    && typeof value.week === 'string'
+    && value.week.trim().length > 0
+    && (value.endedAt === undefined || typeof value.endedAt === 'string');
+}
+
 const EVENT_VALIDATORS = {
   'user-created': hasStringId,
   'user-updated': hasStringId,
@@ -47,6 +54,15 @@ const EVENT_VALIDATORS = {
   'task-updated': hasStringId,
   'task-deleted': hasStringId,
   'tasks-reordered': hasSortableItems,
+  'work-card-created': hasStringId,
+  'work-card-updated': hasStringId,
+  'work-card-completed': (value) => hasStringId(value) && typeof value.project_id === 'string' && typeof value.completed_by === 'string',
+  'work-card-deleted': hasStringId,
+  'work-card-focus-set': (value) => isObject(value) && typeof value.user_id === 'string' && (typeof value.work_card_id === 'string' || value.work_card_id === null),
+  'work-card-category-created': hasStringId,
+  'work-card-category-updated': hasStringId,
+  'work-card-category-deleted': hasStringId,
+  'work-card-categories-reordered': hasSortableItems,
   'subtask-created': hasStringId,
   'subtask-updated': hasStringId,
   'subtask-toggled': hasStringId,
@@ -73,6 +89,7 @@ const EVENT_VALIDATORS = {
   'setting-updated': (value) => isObject(value) && typeof value.key === 'string',
   'weekly-rollover': (value) => value === undefined || value === null || isObject(value),
   'rollover-review-started': isRolloverReviewStart,
+  'rollover-review-ended': isRolloverReviewEnd,
   'rollover-published': isRolloverPublication,
   'task-confirmed': hasStringId,
   'task-activity-added': (value) => hasStringId(value) && typeof value.task_id === 'string' && typeof value.action === 'string',
@@ -96,6 +113,7 @@ class SyncEngine {
     this.processedFiles = new Set();
     this.processedFilesLoaded = false;
     this.failedFiles = new Map();
+    this.bootstrapFailure = null;
     this.logger = logger;
     this.deviceTrust = options.appDataDir ? new DeviceTrust({ appDataDir: options.appDataDir, sharedDrivePath, source, logger }) : null;
   }
@@ -115,6 +133,8 @@ class SyncEngine {
         if (!failure.nextRetryAt) return next;
         return next === null ? failure.nextRetryAt : Math.min(next, failure.nextRetryAt);
       }, null),
+      failures,
+      bootstrapFailure: this.bootstrapFailure,
     };
   }
 
@@ -131,15 +151,24 @@ class SyncEngine {
 
     this._ensureProcessedFilesLoaded();
     this._seedProcessedFilesFromLegacyCursor();
+    const isFreshDb = !this.db.getLastSyncTimestamp() && this.processedFiles.size === 0;
+    if (isFreshDb && this.db.getUsers().length === 0) {
+      this.restoreSharedSnapshot();
+    } else if (isFreshDb) {
+      // One-time upgrade path: a build that restored the Dashboard snapshot but
+      // could not record an event cursor. After this launch a cursor exists, so
+      // later launches replay events normally instead of skipping them.
+      this.adoptSharedSnapshotCursor();
+    }
     this.flushOutbox();
 
-    const isFreshDb = !this.db.getLastSyncTimestamp() && this.processedFiles.size === 0;
     // The caller needs the initial events as well.  The window may already
     // have loaded its cached rows while this synchronous catch-up is running;
     // without returning them, the renderer never receives a data-updated
     // notification because the next polling pass finds nothing new.
     const initialEvents = this.pull(isFreshDb);
     this._maybeCleanup();
+    this.writeSharedSnapshot();
     return initialEvents;
   }
 
@@ -150,6 +179,7 @@ class SyncEngine {
         this.flushOutbox();
         const previousFailureState = JSON.stringify(this.getFailureSummary());
         const appliedEvents = this.pull();
+        if (appliedEvents.length > 0) this.writeSharedSnapshot();
         this._maybeCleanup();
         const failureSummary = this.getFailureSummary();
         if (JSON.stringify(failureSummary) !== previousFailureState && onStatusChange) onStatusChange(failureSummary);
@@ -196,20 +226,19 @@ class SyncEngine {
       // more as it grows (a network round trip each on a shared drive).
       pendingFiles = fs.readdirSync(this.eventsDir)
         .filter((file) => file.endsWith('.json'))
-        .filter((file) => {
-          if (this.processedFiles.has(file)) return false;
-          const failure = this.failedFiles.get(file);
-          return !failure || failure.nextRetryAt <= now;
-        })
         .map((file) => {
+          if (this.processedFiles.has(file)) return null;
           const filePath = path.join(this.eventsDir, file);
           let mtimeMs = 0;
           try {
             mtimeMs = fs.statSync(filePath).mtimeMs;
           } catch (_) {}
+          const failure = this.failedFiles.get(file);
+          if (failure && failure.nextRetryAt > now) return null;
 
           return { file, filePath, mtimeMs };
         })
+        .filter(Boolean)
         .sort((left, right) => {
           if (left.mtimeMs !== right.mtimeMs) return left.mtimeMs - right.mtimeMs;
           return left.file.localeCompare(right.file);
@@ -236,9 +265,8 @@ class SyncEngine {
           continue;
         }
 
-        this.db.applyEvent(event);
+        this._applyAndMarkEvent(event, entry.file);
         appliedEvents.push(event);
-        this._markFileProcessed(entry.file);
       } catch (err) {
         this._recordFailure(entry.file, err);
       }
@@ -256,12 +284,136 @@ class SyncEngine {
 
     try {
       this.db.queueSyncEvent(event);
-      return this.flushOutbox(event.eventId);
+      const published = this.flushOutbox(event.eventId);
+      if (published) this.writeSharedSnapshot();
+      return published;
     } catch (err) {
       this.logger?.error('Sync outbox queue failed', { type, error: err.message });
       console.error('Error queueing sync event:', err.message);
       return false;
     }
+  }
+
+  _snapshotPath() { return path.join(this.snapshotsDir, 'dashboard-state.json'); }
+
+  _snapshotEventCursor(timestamp) {
+    return String(timestamp || new Date().toISOString()).replace(/[:.]/g, '-');
+  }
+
+  writeSharedSnapshot() {
+    // Dashboard is the shared-state authority. MyTasks must never replace its
+    // snapshot with a partial per-user cache.
+    if (this.source !== 'scheduling' || typeof this.db.exportSharedSnapshot !== 'function') return false;
+    try {
+      const generatedAt = new Date().toISOString();
+      const snapshot = {
+        schemaVersion: 1,
+        source: 'scheduling',
+        generatedAt,
+        // A restored snapshot already contains every event written before
+        // this cursor. Replaying that older history can revive deleted rows
+        // or fail on legacy event formats.
+        eventCursor: this._snapshotEventCursor(generatedAt),
+        tables: this.db.exportSharedSnapshot(),
+      };
+      const destination = this._snapshotPath();
+      const temporary = `${destination}.${this.instanceId}.tmp`;
+      fs.writeFileSync(temporary, JSON.stringify(snapshot), 'utf8');
+      fs.renameSync(temporary, destination);
+      return true;
+    } catch (err) {
+      this.logger?.warn('Shared snapshot write failed', { error: err.message });
+      return false;
+    }
+  }
+
+  restoreSharedSnapshot() {
+    if (typeof this.db.importSharedSnapshot !== 'function') return false;
+    const source = this._snapshotPath();
+    if (!fs.existsSync(source)) {
+      this.bootstrapFailure = 'No Dashboard recovery snapshot is available in the shared folder.';
+      return false;
+    }
+    try {
+      const snapshot = JSON.parse(fs.readFileSync(source, 'utf8'));
+      const imported = this.db.importSharedSnapshot(snapshot);
+      if (!imported || this.db.getUsers().length === 0) {
+        this.bootstrapFailure = 'The Dashboard recovery snapshot contains no users.';
+        return false;
+      }
+      this._markSnapshotHistoryProcessed(snapshot.eventCursor || this._snapshotEventCursor(snapshot.generatedAt));
+      this.bootstrapFailure = null;
+      return true;
+    } catch (err) {
+      this.bootstrapFailure = `Could not restore the Dashboard recovery snapshot: ${err.message}`;
+      this.logger?.warn('Shared snapshot restore failed', { error: err.message });
+      return false;
+    }
+  }
+
+  // `markHistory` skips every event file at or before the snapshot cursor. That
+  // is only safe when the local state was just built from that snapshot (the
+  // one-time upgrade case). Events written afterwards must be replayed, because
+  // merging rows can add and update them but can never delete.
+  adoptSharedSnapshotCursor({ markHistory = true } = {}) {
+    if (typeof this.db.matchesSharedSnapshot !== 'function' || typeof this.db.importSharedSnapshot !== 'function') return false;
+    const source = this._snapshotPath();
+    if (!fs.existsSync(source)) return false;
+    try {
+      const snapshot = JSON.parse(fs.readFileSync(source, 'utf8'));
+      if (!this.db.matchesSharedSnapshot(snapshot)) {
+        const outbox = this.db.getSyncOutboxSummary?.();
+        // A snapshot is a recovery aid, not permission to discard a richer
+        // local cache. A Dashboard snapshot can temporarily lag behind its
+        // event stream; replacing local shared rows in that situation would
+        // make scheduled assignments disappear. Merge missing rows instead,
+        // retaining any local version newer than the snapshot. Private tasks,
+        // sync metadata, and the outbox remain untouched as well.
+        const reconciled = this.db.importSharedSnapshot(snapshot, { mergeExisting: true });
+        if (!reconciled) {
+          if (markHistory) this._markSnapshotHistoryProcessed(snapshot.eventCursor || this._snapshotEventCursor(snapshot.generatedAt));
+          return false;
+        }
+        this.logger?.info('Reconciled Dashboard recovery snapshot with MyTasks shared cache', {
+          snapshotGeneratedAt: snapshot.generatedAt,
+          importedRows: reconciled,
+          queuedLocalChanges: Number(outbox?.pending) || 0,
+        });
+        if (markHistory) this._markSnapshotHistoryProcessed(snapshot.eventCursor || this._snapshotEventCursor(snapshot.generatedAt));
+        return true;
+      }
+      if (markHistory) this._markSnapshotHistoryProcessed(snapshot.eventCursor || this._snapshotEventCursor(snapshot.generatedAt));
+      return markHistory;
+    } catch (err) {
+      this.logger?.warn('Could not adopt shared snapshot event cursor', { error: err.message });
+      return false;
+    }
+  }
+
+  // A Dashboard may republish its authoritative recovery snapshot after a
+  // data repair even when no new append-only events exist. Expose a safe
+  // refresh path so MyTasks' manual sync can adopt those missing shared rows
+  // without requiring the user to close and reopen the application.
+  // Event files are left alone here: any events newer than the snapshot, and
+  // any deletions, still arrive through the normal pull. Returns true only when
+  // rows were actually recovered.
+  refreshSharedSnapshot() {
+    return this.adoptSharedSnapshotCursor({ markHistory: false });
+  }
+
+  _markSnapshotHistoryProcessed(cursor) {
+    if (!cursor) return 0;
+    let marked = 0;
+    try {
+      for (const file of fs.readdirSync(this.eventsDir)) {
+        if (!file.endsWith('.json') || file.slice(0, cursor.length) > cursor) continue;
+        this._markFileProcessed(file);
+        marked += 1;
+      }
+    } catch (err) {
+      this.logger?.warn('Could not establish snapshot event cursor', { error: err.message });
+    }
+    return marked;
   }
 
   createEvent(type, data) {
@@ -389,6 +541,18 @@ class SyncEngine {
   _markFileProcessed(filename) {
     this.db.markSyncFileProcessed(filename);
     this.db.setLastSyncTimestamp(filename);
+    this.processedFiles.add(filename);
+    this.failedFiles.delete(filename);
+  }
+
+  _applyAndMarkEvent(event, filename) {
+    if (typeof this.db.applyEventAndMarkProcessed === 'function') {
+      this.db.applyEventAndMarkProcessed(event, filename);
+    } else {
+      this.db.applyEvent(event);
+      this.db.markSyncFileProcessed(filename);
+      this.db.setLastSyncTimestamp(filename);
+    }
     this.processedFiles.add(filename);
     this.failedFiles.delete(filename);
   }

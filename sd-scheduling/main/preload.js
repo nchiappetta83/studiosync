@@ -59,6 +59,13 @@ contextBridge.exposeInMainWorld('api', {
   getPriorityDisplayStyles: ()    => ipcRenderer.invoke('get-priority-display-styles'),
   setPriorityDisplayStyles: (styles) => ipcRenderer.invoke('set-priority-display-styles', styles),
 
+  // Work-card categories
+  getWorkCardCategories: () => ipcRenderer.invoke('get-work-card-categories'),
+  createWorkCardCategory: (data) => ipcRenderer.invoke('create-work-card-category', data),
+  updateWorkCardCategory: (data) => ipcRenderer.invoke('update-work-card-category', data),
+  deleteWorkCardCategory: (id) => ipcRenderer.invoke('delete-work-card-category', id),
+  reorderWorkCardCategories: (orders) => ipcRenderer.invoke('reorder-work-card-categories', orders),
+
   // Tasks
   getTasks:         (filters)   => ipcRenderer.invoke('get-tasks', filters),
   getTaskActivity:  (taskId)    => ipcRenderer.invoke('get-task-activity', taskId),
@@ -67,6 +74,9 @@ contextBridge.exposeInMainWorld('api', {
   updateTask:       (data)      => ipcRenderer.invoke('update-task', data),
   deleteTask:       (id)        => ipcRenderer.invoke('delete-task', id),
   reorderTasks:     (orders)    => ipcRenderer.invoke('reorder-tasks', orders),
+
+  // V1.3 work cards (read-only compact disclosure during scheduling)
+  getProjectWorkCards: (projectId, weekOf) => ipcRenderer.invoke('get-project-work-cards', projectId, weekOf),
 
   // Sub-tasks
   getSubTasks:      (taskId)    => ipcRenderer.invoke('get-subtasks', taskId),

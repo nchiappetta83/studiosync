@@ -69,9 +69,14 @@ class DeviceTrust {
     const registry = this._registry();
     if (!event.signature) return registry?.enforceSignedEvents ? { valid: false, error: 'Unsigned event rejected by trusted-device policy.' } : { valid: true };
     const device = registry?.devices?.find((item) => item.deviceId === event.signature.deviceId && item.active);
-    return device && this._verify(unsigned(event), event.signature.value, device.publicKey)
-      ? { valid: true }
-      : { valid: false, error: 'Event signature is invalid or the device is not trusted.' };
+    if (!device || !this._verify(unsigned(event), event.signature.value, device.publicKey)) {
+      return { valid: false, error: 'Event signature is invalid or the device is not trusted.' };
+    }
+    const author = String(event.author || '').trim().toLowerCase();
+    const enrolledUsername = String(device.username || '').trim().toLowerCase();
+    return author && enrolledUsername && author !== enrolledUsername
+      ? { valid: false, error: 'Event author does not match the enrolled device identity.' }
+      : { valid: true };
   }
 }
 

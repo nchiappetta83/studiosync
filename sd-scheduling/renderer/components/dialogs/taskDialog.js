@@ -25,11 +25,13 @@ const TaskDialog = {
       `<option value="${u.id}" ${u.id === taskData.assigned_to ? 'selected' : ''}>${u.display_name}</option>`
     ).join('');
 
-    const partners = users
-      .filter((u) => u.role === 'partner' && u.active !== 0)
+    // A Project Lead is a property of this scheduled assignment, not of the
+    // project record. Only designated senior staff may be selected as a lead.
+    const seniorStaff = users
+      .filter((u) => u.role === 'staff' && u.active !== 0 && (u.is_senior_staff === 1 || u.is_senior_staff === true))
       .sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''), undefined, { sensitivity: 'base' }));
-    const partnerOptions = partners.map((u) =>
-      `<option value="${u.id}" ${u.id === taskData.partner_id ? 'selected' : ''}>${u.display_name}</option>`
+    const leadOptions = seniorStaff.map((u) =>
+      `<option value="${u.id}" ${u.id === taskData.lead_id ? 'selected' : ''}>${u.display_name}</option>`
     ).join('');
 
     const projectOptions = isEdit ? projects.map((p) =>
@@ -86,10 +88,10 @@ const TaskDialog = {
             </select>
           </div>` : ''}
           <div class="form-group">
-            <label>Partner</label>
-            <select class="select" id="dialog-task-partner">
-              <option value="">None</option>
-              ${partnerOptions}
+            <label>Project Lead</label>
+            <select class="select" id="dialog-task-lead">
+              <option value="">No Lead</option>
+              ${leadOptions}
             </select>
           </div>
           <div class="form-group">
@@ -155,7 +157,7 @@ const TaskDialog = {
         priority: priorityValue.priority,
         priority_label: priorityValue.priority_label,
         due_date: document.getElementById('dialog-task-due').value || null,
-        partner_id: document.getElementById('dialog-task-partner').value || null,
+        lead_id: document.getElementById('dialog-task-lead').value || null,
         notes: document.getElementById('dialog-task-notes').value.trim(),
         completed: document.getElementById('dialog-task-completed')?.checked ? 1 : 0
       };
@@ -378,7 +380,6 @@ const TaskDialog = {
       data.partner_id = partnerIds[0] || null;
       data.partner_ids = partnerIds;
       data.partner_initials = this._getPartnerInitialsForIds(partnerIds, users);
-
       if (!isEdit) {
         data.category = projectType;
       }

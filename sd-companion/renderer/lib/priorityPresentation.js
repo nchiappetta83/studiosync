@@ -78,7 +78,7 @@
     return rgbToHex(hslToRgb({
       h: hsl.h,
       s: Math.min(hsl.s, 0.72),
-      l: Math.max(hsl.l, 0.74),
+      l: Math.max(hsl.l, 0.8),
     }));
   }
 
@@ -90,7 +90,7 @@
 
   function getPriorityDisplayStyles(overrides = {}) {
     return {
-      numbered: { color: '#4D4AD5', ...(overrides?.numbered || {}) },
+      numbered: { color: '#3B608F', ...(overrides?.numbered || {}) },
       wait: { color: '#6E7680', ...(overrides?.wait || {}) },
       clear: { color: '#9CA6B4', ...(overrides?.clear || {}) },
       customDefault: { color: '#5C6B75', ...(overrides?.customDefault || {}) },
