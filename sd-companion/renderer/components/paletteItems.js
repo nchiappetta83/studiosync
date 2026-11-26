@@ -214,7 +214,7 @@
     emptyHint: 'Try a project, a person, or a command.',
     canOpen() {
       if (!currentUser) return false; // not signed in yet
-      return !document.querySelector('.dialog-overlay:not(.hidden), .rollover-review-overlay:not(.hidden)');
+      return !document.querySelector('.dialog-overlay:not(.hidden):not(.is-leaving), .rollover-review-overlay:not(.hidden)');
     },
     beforeOpen() {
       if (typeof ContextMenu !== 'undefined') ContextMenu.dismiss();

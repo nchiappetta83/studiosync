@@ -181,7 +181,7 @@ const App = {
       // Escape — close dialogs/overlays, clear search
       if (e.key === 'Escape') {
         // Close any open dialog overlay
-        const overlay = document.querySelector('.dialog-overlay:not(.hidden)');
+        const overlay = document.querySelector('.dialog-overlay:not(.hidden):not(.is-leaving)');
         if (overlay) {
           if (overlay.id === 'update-overlay') {
             App._deferUpdatePrompt();

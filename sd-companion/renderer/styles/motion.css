@@ -1,0 +1,250 @@
+/* ── Motion system ────────────────────────────────────────────
+   Shared by the Dashboard and MyTasks: keep this file identical in both (the smoke tests check).
+
+   Feel: quick and quiet, physical, interruptible.
+   - Feedback (hover, press) is about 140ms. Entrances take about 220ms. Exits take about 130ms,
+     faster than entrances, because leaving should never make you wait.
+   - Entrances decelerate and exits accelerate. Springs settle softly instead of stopping dead.
+   - Moves use transform and opacity only, so they stay smooth.
+   - prefers-reduced-motion collapses every duration below to 1ms and drops press and slide movement.
+   - lib/motion.js adds exits for removed popups and dialogs, sliding indicators and list transitions. */
+
+:root {
+  --motion-instant: 80ms;
+  --motion-fast: 140ms;
+  --motion-base: 220ms;
+  --motion-slow: 340ms;
+  --motion-exit: 130ms;
+
+  --ease-standard: cubic-bezier(0.22, 1, 0.36, 1); /* decelerate: entrances and moves */
+  --ease-exit: cubic-bezier(0.4, 0, 0.7, 0.2);     /* accelerate: things leaving */
+
+  /* Damped springs, sampled into linear(). Duration is how long each takes to settle.
+     snappy: damping ratio 0.86, overshoot 0.5%  (controls, indicators)
+     gentle: damping ratio 0.74, overshoot 3.1%  (dialogs, pops)
+     press:  damping ratio 1.0,  no overshoot    (press and release) */
+  --spring-snappy-duration: 300ms;
+  --spring-snappy: linear(0, 0.0287 3.6%, 0.0991 7.1%, 0.1924 10.7%, 0.2955 14.3%, 0.3993 17.9%, 0.4981 21.4%, 0.5882 25%, 0.6681 28.6%, 0.7371 32.1%, 0.7955 35.7%, 0.8438 39.3%, 0.8832 42.9%, 0.9147 46.4%, 0.9395 50%, 0.9586 53.6%, 0.9731 57.1%, 0.9838 60.7%, 0.9916 64.3%, 0.997 67.9%, 1.0006 71.4%, 1.0029 75%, 1.0043 78.6%, 1.0049 82.1%, 1.005 85.7%, 1.0048 89.3%, 1.0045 92.9%, 1.004 96.4%, 1);
+  --spring-gentle-duration: 420ms;
+  --spring-gentle: linear(0, 0.0387 3.6%, 0.1329 7.1%, 0.2558 10.7%, 0.3883 14.3%, 0.5174 17.9%, 0.6351 21.4%, 0.7369 25%, 0.8211 28.6%, 0.8881 32.1%, 0.9391 35.7%, 0.9762 39.3%, 1.0018 42.9%, 1.018 46.4%, 1.0271 50%, 1.031 53.6%, 1.0313 57.1%, 1.0292 60.7%, 1.0258 64.3%, 1.0217 67.9%, 1.0175 71.4%, 1.0136 75%, 1.0101 78.6%, 1.0071 82.1%, 1.0047 85.7%, 1.0028 89.3%, 1.0014 92.9%, 1.0004 96.4%, 1);
+  --spring-press-duration: 240ms;
+  --spring-press: linear(0, 0.0377 3.6%, 0.1243 7.1%, 0.2314 10.7%, 0.3425 14.3%, 0.4481 17.9%, 0.5435 21.4%, 0.6268 25%, 0.6977 28.6%, 0.7571 32.1%, 0.8061 35.7%, 0.8461 39.3%, 0.8785 42.9%, 0.9044 46.4%, 0.9251 50%, 0.9415 53.6%, 0.9545 57.1%, 0.9647 60.7%, 0.9726 64.3%, 0.9788 67.9%, 0.9837 71.4%, 0.9874 75%, 0.9903 78.6%, 0.9926 82.1%, 0.9943 85.7%, 0.9957 89.3%, 0.9967 92.9%, 0.9975 96.4%, 1);
+
+  /* The existing tokens now follow the new feel. */
+  --duration: var(--motion-fast);
+  --ease-out: var(--ease-standard);
+}
+
+/* ── Keyframes ──────────────────────────────────────────────── */
+
+@keyframes motionFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes motionFadeOut {
+  to { opacity: 0; }
+}
+
+@keyframes motionPopIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.965); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes motionPopOut {
+  to { opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+
+@keyframes motionMenuIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes motionMenuOut {
+  to { opacity: 0; transform: scale(0.97); }
+}
+
+@keyframes motionToastIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes motionToastOut {
+  to { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+
+/* ── Entrances ──────────────────────────────────────────────── */
+
+.dialog-overlay {
+  animation: motionFadeIn var(--motion-base) var(--ease-standard);
+}
+
+.dialog,
+.dialog-card,
+.choice-dialog {
+  animation: motionPopIn var(--spring-gentle-duration) var(--spring-gentle);
+}
+
+.context-menu,
+.priority-menu,
+.date-picker-popup {
+  animation: motionMenuIn var(--motion-base) var(--ease-standard);
+}
+
+.toast {
+  animation: motionToastIn var(--spring-snappy-duration) var(--spring-snappy);
+}
+
+/* ── Exits ──────────────────────────────────────────────────────
+   lib/motion.js keeps a removed popup in place with .is-leaving until its exit has played. */
+
+.is-leaving {
+  pointer-events: none;
+}
+
+.dialog-overlay.is-leaving,
+.palette-overlay.is-leaving {
+  animation: motionFadeOut var(--motion-exit) var(--ease-exit) forwards;
+}
+
+.dialog-overlay.is-leaving > :is(.dialog, .dialog-card, .choice-dialog),
+.palette-overlay.is-leaving > .palette {
+  animation: motionPopOut var(--motion-exit) var(--ease-exit) forwards;
+}
+
+.context-menu.is-leaving,
+.priority-menu.is-leaving,
+.date-picker-popup.is-leaving {
+  animation: motionMenuOut var(--motion-exit) var(--ease-exit) forwards;
+}
+
+.toast.is-leaving {
+  animation: motionToastOut var(--motion-exit) var(--ease-exit) forwards;
+}
+
+/* Dialogs that are shown and hidden with the .hidden class (rather than removed) fade out too.
+   display is animated as a discrete step so the overlay stays visible while it fades. */
+.dialog-overlay {
+  transition: opacity var(--motion-base) var(--ease-standard), display var(--motion-base) allow-discrete;
+}
+
+.dialog-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transition-duration: var(--motion-exit);
+  transition-timing-function: var(--ease-exit);
+}
+
+.dialog-overlay > :is(.dialog, .dialog-card) {
+  transition: transform var(--motion-exit) var(--ease-exit);
+}
+
+.dialog-overlay.hidden > :is(.dialog, .dialog-card) {
+  transform: translateY(4px) scale(0.98);
+}
+
+/* ── Press feedback ─────────────────────────────────────────────
+   Controls dip a little under the finger and spring back. Colours still change at the base speed. */
+
+:is(.btn, .icon-btn, .toolbar-btn, .panel-more-btn, .project-search-toggle, .palette-hint, .detail-close,
+  .task-complete-btn, .task-rollover-action-btn, .task-card-menu-btn, .project-row-menu, .window-control-btn) {
+  transition-property: background-color, background, color, border-color, box-shadow, opacity, transform;
+  transition-duration: var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--spring-press-duration);
+  transition-timing-function: var(--ease-standard), var(--ease-standard), var(--ease-standard), var(--ease-standard), var(--ease-standard), var(--ease-standard), var(--spring-press);
+}
+
+:is(.btn, .icon-btn, .toolbar-btn, .panel-more-btn, .project-search-toggle, .palette-hint, .detail-close,
+  .task-complete-btn, .task-rollover-action-btn, .task-card-menu-btn, .project-row-menu):active:not(:disabled) {
+  transform: scale(0.96);
+  transition-duration: var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--motion-fast), var(--motion-instant);
+  transition-timing-function: var(--ease-standard);
+}
+
+/* ── Navigation ─────────────────────────────────────────────── */
+
+@keyframes motionRise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A tab bar's underline is one element that glides to the active tab (see Motion.indicator).
+   The tab's own underline steps aside once the indicator is in place. */
+.motion-indicator {
+  position: absolute;
+  left: 0;
+  bottom: var(--indicator-bottom, 0);
+  width: var(--indicator-w, 0);
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translateX(var(--indicator-x, 0));
+  pointer-events: none;
+  opacity: 0;
+}
+
+.has-motion-indicator > .motion-indicator {
+  opacity: 1;
+}
+
+.has-motion-indicator.is-indicator-ready > .motion-indicator {
+  transition:
+    transform var(--spring-snappy-duration) var(--spring-snappy),
+    width var(--spring-snappy-duration) var(--spring-snappy);
+}
+
+.has-motion-indicator > .tab.active {
+  border-bottom-color: transparent;
+}
+
+/* Switching views, or a panel switching to different content, fades and lifts the new content in.
+   backwards (not both) leaves no animation hold behind, so nothing keeps a stacking context. */
+.view:not(.hidden) > *,
+.motion-swap-in > * {
+  animation: motionRise var(--motion-base) var(--ease-standard) backwards;
+}
+
+/* ── Materials ──────────────────────────────────────────────────
+   The page behind a dialog or the palette is softened rather than just dimmed, so the sheet in front
+   reads as sitting above it. */
+
+.dialog-overlay,
+.palette-overlay {
+  -webkit-backdrop-filter: blur(6px) saturate(1.08);
+  backdrop-filter: blur(6px) saturate(1.08);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .dialog-overlay,
+  .palette-overlay {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ── Lists that move ────────────────────────────────────────────
+   Nothing to style here: Motion.run (lib/motion.js) glides the live elements with the Web Animations
+   API, using --spring-snappy for moves and --ease-standard for entrances, so the page stays interactive. */
+
+/* ── Reduced motion ─────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-instant: 1ms;
+    --motion-fast: 1ms;
+    --motion-base: 1ms;
+    --motion-slow: 1ms;
+    --motion-exit: 1ms;
+    --spring-snappy-duration: 1ms;
+    --spring-gentle-duration: 1ms;
+    --spring-press-duration: 1ms;
+  }
+
+  :is(.btn, .icon-btn, .toolbar-btn, .panel-more-btn, .project-search-toggle, .palette-hint, .detail-close,
+    .task-complete-btn, .task-rollover-action-btn, .task-card-menu-btn, .project-row-menu):active:not(:disabled) {
+    transform: none;
+  }
+
+  .dialog-overlay.hidden > :is(.dialog, .dialog-card) {
+    transform: none;
+  }
+}

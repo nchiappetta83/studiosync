@@ -4912,6 +4912,7 @@ async function openDetailPanel(taskId) {
 
   const detailBody = document.getElementById('detail-body');
   detailBody.className = 'detail-body';
+  Motion.swap(detailBody, `task:${taskId}`); // a different task rises in; a refresh of the same one does not
   detailBody.innerHTML = `
     <section class="detail-panel-section">
       <div class="detail-section-heading">Details</div>
@@ -5628,6 +5629,7 @@ async function openProjectDetailPanel(projectId) {
 
   const detailBody = document.getElementById('detail-body');
   detailBody.className = 'detail-body project-detail-body';
+  Motion.swap(detailBody, `project:${project.id}`);
   detailBody.innerHTML = `
     <section class="detail-panel-section project-work-cards-panel ${projectDetailTab === 'work-cards' ? '' : 'hidden'}" data-project-detail-panel="work-cards">
       <div class="project-work-cards-heading">
@@ -5831,6 +5833,8 @@ function setupTabBar() {
   // adjusted for a role. Binding to the stable bar also avoids stale direct
   // listeners if its buttons are replaced during a UI refresh.
   tabBar.dataset.handlersBound = 'true';
+  // One underline that glides to the active tab (see lib/motion.js).
+  Motion.indicator(tabBar, { item: 'button.tab', active: 'button.tab.active' });
   tabBar.addEventListener('click', async (event) => {
     const tab = event.target.closest('button.tab[data-tab]');
     if (!tab || !tabBar.contains(tab) || tab.classList.contains('hidden')) return;

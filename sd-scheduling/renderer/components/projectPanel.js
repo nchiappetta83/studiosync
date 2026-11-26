@@ -118,6 +118,9 @@ const ProjectPanel = {
     this._updateTabs();
     this.render();
 
+    // The tab underline glides between Current and Future (the list itself moves via lib/motion.js).
+    Motion.indicator(this._tabs, { item: '.tab', active: '.tab.active', bottom: '-1px' });
+
     // Initialize alpha strip
     AlphaStrip.init();
   },

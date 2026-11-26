@@ -177,7 +177,7 @@
     emptyHint: 'Try a person, a project, a task, or a command.',
     canOpen() {
       if (!AppState.get('currentUser')) return false; // not signed in yet
-      return !document.querySelector('.dialog-overlay:not(.hidden)'); // a dialog is already open
+      return !document.querySelector('.dialog-overlay:not(.hidden):not(.is-leaving)'); // a dialog is already open
     },
     beforeOpen() {
       if (typeof ContextMenu !== 'undefined') ContextMenu.dismiss();

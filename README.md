@@ -53,6 +53,7 @@ Core capabilities:
 - Export the schedule as PDF and HTML for office-wide visibility
 - Configure a shared update folder used by both apps
 - Press Ctrl+K for a command palette: type to jump to a person, project, or task, run commands such as Add Task, New Project, Print/Export, and Publish Changes, or open a Settings section. Commands you are not allowed to use are left out, and Ctrl+F still focuses the search box
+- Quiet, spring-based motion: buttons dip when pressed, dialogs, menus, and toasts ease in and out, the Current/Future underline glides, and rows slide to their new places after your own changes. Background syncs and typing never animate, and all of it switches off when Windows is set to reduce motion
 - Work through task rows entirely from the keyboard: Tab to a priority chip, due date, calendar icon, or project lead and press Enter or Space; menus support the arrow keys, Home, End, and Escape (which returns focus to where you were); the date picker is a keyboard date grid (arrows, Home/End, Page Up/Down); and the Menu key or Shift+F10 opens a task's full action menu
 - Run the weekly rollover flow to carry unfinished work forward cleanly with explicit Keep/Delete review actions
 - Preserve custom rollover priorities while clearing only numbered weekly priorities
@@ -85,6 +86,7 @@ Core capabilities:
 - Let selected staff adjust priority on their own shared tasks
 - Search projects, or staff and projects, quickly (Ctrl+F jumps to the search box of the current view)
 - Press Ctrl+K for a command palette: type to jump to a project, a person, or a private task, switch views, add a project or private task, open Preferences, edit office capacity, or change the theme. Commands you are not allowed to use are left out
+- Quiet, spring-based motion: buttons dip when pressed, dialogs and menus ease in and out, the tab underline glides, a Work Card slides to its new column, completed checkboxes pop, and bars ease to their new values after your own changes. Background syncs and typing never animate, and all of it switches off when Windows is set to reduce motion
 - Choose an accent colour, a light, dark, or automatic theme, and how the details pane opens
 - Detect new installers from the shared update folder
 - Start in a compact branded sign-in window that mirrors the StudioSync auth flow

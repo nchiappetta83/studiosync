@@ -137,8 +137,14 @@ function testDashboardShellGuards() {
   assertFilesEqual('sd-scheduling/renderer/lib/paletteSearch.js', 'sd-companion/renderer/lib/paletteSearch.js');
   assertFilesEqual('sd-scheduling/renderer/components/commandPalette.js', 'sd-companion/renderer/components/commandPalette.js');
   assertFilesEqual('sd-scheduling/renderer/styles/palette.css', 'sd-companion/renderer/styles/palette.css');
+  // The motion system (timing, springs, exits) is shared the same way.
+  assertFilesEqual('sd-scheduling/renderer/lib/motion.js', 'sd-companion/renderer/lib/motion.js');
+  assertFilesEqual('sd-scheduling/renderer/styles/motion.css', 'sd-companion/renderer/styles/motion.css');
   for (const app of ['sd-scheduling', 'sd-companion']) {
     const html = readRepoFile(`${app}/renderer/index.html`);
+    assert.match(html, /lib\/motion\.js/, `${app} should load the motion helpers`);
+    assert.match(html, /styles\/motion\.css/, `${app} should load the motion styles`);
+    assert.ok(html.indexOf('lib/motion.js') < html.indexOf('components/'), `${app} should load motion.js before its components so exits apply to every popup`);
     assert.match(html, /lib\/paletteSearch\.js/, `${app} should load the palette search`);
     assert.match(html, /components\/commandPalette\.js/, `${app} should load the command palette`);
     assert.match(html, /components\/paletteItems\.js/, `${app} should register its palette items`);

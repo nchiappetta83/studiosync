@@ -9,7 +9,7 @@
   align-items: flex-start;
   padding-top: 11vh;
   background: rgba(27, 36, 42, 0.42);
-  animation: paletteFade 0.12s var(--ease-out);
+  animation: motionFadeIn var(--motion-base) var(--ease-standard);
 }
 
 .palette {
@@ -22,7 +22,7 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
   overflow: hidden;
-  animation: paletteRise 0.14s var(--ease-out);
+  animation: motionPopIn var(--spring-gentle-duration) var(--spring-gentle);
 }
 
 .palette-search {
@@ -252,16 +252,7 @@
   animation: paletteFlash 1.6s ease-out;
 }
 
-@keyframes paletteFade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes paletteRise {
-  from { opacity: 0; transform: translateY(-6px) scale(0.985); }
-  to { opacity: 1; transform: none; }
-}
-
+/* Enter and exit use the shared motionFadeIn and motionPopIn keyframes from motion.css. */
 @keyframes paletteFlash {
   0%, 35% { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.45); background-color: var(--accent-light); }
   100% { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0); }
