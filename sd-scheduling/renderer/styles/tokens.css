@@ -14,18 +14,26 @@
   --sidebar-selected:     #1E2629;
   --sidebar-pill:         #3D4A52;
   --sidebar-text:         #E8ECF0;
-  --sidebar-text-secondary: #8A9AA6;
+  --sidebar-text-secondary: #AEBAC3;
 
   /* Accent */
-  --accent:           #4D4AD5;
-  --accent-hover:     #3F3CC4;
-  --accent-light:     #EDEDFB;
+  --accent:           #3B608F;
+  --accent-hover:     #2F4F78;
+  --accent-light:     #E8EEF5;
+  --accent-rgb:       59, 96, 143;
+  --accent-text-strong: #2B466B;
+  --accent-hover-bg: rgba(59, 96, 143, 0.04);
+  --accent-active-bg: rgba(59, 96, 143, 0.08);
+  --accent-hover-border: rgba(59, 96, 143, 0.24);
+  --accent-active-border: rgba(59, 96, 143, 0.35);
+  --accent-active-shadow: rgba(59, 96, 143, 0.1);
+  --accent-focus-ring: rgba(59, 96, 143, 0.1);
 
   /* Priority colors */
-  --priority-1:       #D95F5F;
-  --priority-2:       #D4883A;
-  --priority-3:       #2EAD7F;
-  --priority-4:       #4880C8;
+  --priority-1:       #B04E4E;
+  --priority-2:       #96651F;
+  --priority-3:       #2F7D60;
+  --priority-4:       #3F6A9E;
   --priority-w:       #8899AA;
 
   /* Priority backgrounds */
@@ -37,28 +45,28 @@
 
   /* Text */
   --text-primary:     #2A3439;
-  --text-secondary:   #5C6B75;
-  --text-tertiary:    #94A3AF;
+  --text-secondary:   #4F5D67;
+  --text-tertiary:    #627079;
 
   /* Borders */
   --border:           #E4EAF0;
   --border-light:     #F0F4F7;
 
   /* Badges */
-  --badge-bg:         #2EAD7F;
+  --badge-bg:         #2F7D60;
   --badge-fg:         #FFFFFF;
 
   /* Special */
-  --status-active:    #D4A017;
+  --status-active:    #B88A0C; /* sync-dot fill; 3:1 against white (non-text) */
   --pto-bg:           #F7E0B8;
   --pto-text:         #8C5817;
-  --danger:           #D95F5F;
-  --danger-hover:     #C74E4E;
-  --success:          #2EAD7F;
+  --danger:           #C25555;
+  --danger-hover:     #AE4848;
+  --success:          #2F7D60;
 
   /* Typography */
-  --font-display:     'Rubik', 'Segoe UI', 'SF Pro Display', 'Helvetica Neue', sans-serif;
-  --font-body:        'Source Sans 3', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --font-display:     'Segoe UI Variable Display', 'Segoe UI', sans-serif;
+  --font-body:        'Segoe UI Variable Text', 'Segoe UI', sans-serif;
 
   /* Spacing */
   --space-xs:   4px;
@@ -168,11 +176,11 @@ input::placeholder, textarea::placeholder {
 
 .btn-accent {
   background: var(--accent-light);
-  color: var(--accent);
+  color: var(--accent-text-strong);
 }
 
 .btn-accent:hover {
-  background: #DDDCF8;
+  background: rgba(var(--accent-rgb), 0.16);
 }
 
 .btn-danger {

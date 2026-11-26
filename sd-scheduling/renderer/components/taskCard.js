@@ -974,7 +974,7 @@ globalScope.TaskCard = {
   _priorityDisplayStyles() {
     const saved = AppState.get('priorityDisplayStyles');
     return {
-      numbered: { color: '#4D4AD5', ...(saved?.numbered || {}) },
+      numbered: { color: '#3B608F', ...(saved?.numbered || {}) },
       wait: { color: '#6E7680', ...(saved?.wait || {}) },
       clear: { color: '#9CA6B4', ...(saved?.clear || {}) },
       customDefault: { color: '#5C6B75', ...(saved?.customDefault || {}) },

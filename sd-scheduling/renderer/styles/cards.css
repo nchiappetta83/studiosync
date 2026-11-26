@@ -24,7 +24,7 @@
 
 .task-card:hover {
   background: rgba(247, 249, 251, 0.88);
-  border-left-color: rgba(77, 74, 213, 0.42);
+  border-left-color: rgba(var(--accent-rgb), 0.42);
 }
 
 .task-card.dragging {
@@ -37,7 +37,7 @@
 
 .task-card:has(.priority-numeric),
 .task-card:has(.priority-custom) {
-  border-left-color: rgba(77, 74, 213, 0.86);
+  border-left-color: rgba(var(--accent-rgb), 0.86);
 }
 
 .task-card:has(.priority-w) {
@@ -78,7 +78,7 @@
 .task-priority-pill.priority-3,
 .task-priority-pill.priority-4,
 .task-priority-pill.priority-numeric,
-.task-priority-pill.priority-custom { color: #3C3489; background: #EEEDFE; }
+.task-priority-pill.priority-custom { color: #2B466B; background: #E8EEF5; }
 .task-priority-pill.priority-w { color: #444441; background: #D3D1C7; font-size: 10px; }
 .task-priority-pill.priority-unset { color: #9CA6B4; background: #EEF1F4; }
 
@@ -373,7 +373,7 @@
 }
 
 .task-work-card-toggle:hover { color: var(--accent); }
-.task-work-card-list { margin: 7px 0 0 24px; border-left: 2px solid rgba(77, 74, 213, 0.2); }
+.task-work-card-list { margin: 7px 0 0 24px; border-left: 2px solid rgba(var(--accent-rgb), 0.2); }
 .task-work-card-list.hidden { display: none; }
 .task-work-card, .task-work-card-empty { display: flex; align-items: baseline; gap: 7px; padding: 5px 8px; color: var(--text-secondary); font-size: 11px; line-height: 1.35; }
 .task-work-card strong { color: var(--text-primary); font-size: 11px; }
@@ -875,7 +875,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(77, 74, 213, 0.85);
+  background: rgba(var(--accent-rgb), 0.85);
   color: #FFFFFF;
   font-size: 9pt;
   font-weight: 600;
@@ -885,7 +885,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  box-shadow: 0 4px 12px rgba(77, 74, 213, 0.3);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.3);
   animation: chipFadeIn 0.1s ease-out;
 }
 

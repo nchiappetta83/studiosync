@@ -373,7 +373,7 @@ const SettingsDialog = {
                   ${row.styleKey ? `
                   <input
                     type="color"
-                    value="${this._esc(row.color || '#4D4AD5')}"
+                    value="${this._esc(row.color || '#3B608F')}"
                     data-action="priority-style-color"
                     data-style-key="${row.styleKey}"
                     title="Choose ${this._esc(row.label)} color"
@@ -399,7 +399,7 @@ const SettingsDialog = {
             `).join('')}
         </div>
         <div class="settings-add-row">
-          <input type="color" id="settings-priority-color" value="#4D4AD5" style="width:36px;height:36px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;">
+          <input type="color" id="settings-priority-color" value="#3B608F" style="width:36px;height:36px;padding:2px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;">
           <input type="text" class="input" id="settings-priority-input" placeholder="e.g. Rush" style="flex:1;">
           <label class="settings-priority-carryover settings-priority-carryover-add" title="Keep this priority on tasks during weekly rollover">
             <input type="checkbox" id="settings-priority-carryover" checked>
@@ -632,7 +632,7 @@ const SettingsDialog = {
   _getPriorityDisplayStyles() {
     const saved = AppState.get('priorityDisplayStyles');
     return {
-      numbered: { color: '#4D4AD5', ...(saved?.numbered || {}) },
+      numbered: { color: '#3B608F', ...(saved?.numbered || {}) },
       wait: { color: '#6E7680', ...(saved?.wait || {}) },
       clear: { color: '#9CA6B4', ...(saved?.clear || {}) },
     };

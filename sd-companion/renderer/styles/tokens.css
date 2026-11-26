@@ -68,8 +68,8 @@
   --success:          #2F7D60;
 
   /* Typography */
-  --font-display:     'Segoe UI Variable Display', 'Segoe UI', 'SF Pro Display', 'Helvetica Neue', sans-serif;
-  --font-body:        'Source Sans 3', 'Segoe UI', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --font-display:     'Segoe UI Variable Display', 'Segoe UI', sans-serif;
+  --font-body:        'Segoe UI Variable Text', 'Segoe UI', sans-serif;
 
   /* Spacing */
   --space-xs:   4px;
@@ -242,7 +242,7 @@ body.theme-dark select {
 }
 
 .btn-accent:hover {
-  background: #DDDCF8;
+  background: rgba(var(--accent-rgb), 0.16);
 }
 
 .btn-danger {

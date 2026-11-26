@@ -192,7 +192,7 @@
 
 .dialog-project-picker-freeform.selected,
 .dialog-project-picker-item.selected {
-  background: rgba(77, 74, 213, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .dialog-project-picker-freeform .pp-name {
@@ -351,7 +351,7 @@
 
 .dialog-project-type-option.active {
   background: var(--accent-light);
-  border-color: rgba(77, 74, 213, 0.28);
+  border-color: rgba(var(--accent-rgb), 0.28);
   color: var(--accent);
 }
 
@@ -462,7 +462,7 @@
 .update-dialog-hero {
   padding: 26px 24px 18px;
   background:
-    radial-gradient(circle at top right, rgba(77, 74, 213, 0.22), transparent 42%),
+    radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.22), transparent 42%),
     linear-gradient(135deg, #2A3439 0%, #353F45 100%);
   color: #FFFFFF;
 }
@@ -1120,7 +1120,7 @@
 }
 
 .settings-priority-carryover:hover {
-  background: rgba(77, 74, 213, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
   color: var(--text-primary);
 }
 
