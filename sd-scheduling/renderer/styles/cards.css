@@ -173,6 +173,18 @@
   transition: background var(--duration), color var(--duration);
 }
 
+/* Invisible hit-area padding: icon stays 18px, clickable area is 24px
+   (WCAG 2.2 target size minimum). */
+.task-cal-icon {
+  position: relative;
+}
+
+.task-cal-icon::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+}
+
 .task-cal-icon svg {
   width: 13px;
   height: 13px;

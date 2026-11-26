@@ -780,6 +780,34 @@ body.window-resizing .projects-panel {
   padding-top: 4px;
 }
 
+.panel-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition: background var(--duration), color var(--duration);
+}
+
+/* The Projects header gutter matches the toolbar row below it (18px), and the
+   32px button's 16px icon sits 8px inside its box. Pull the button out by that
+   8px so the dots' right edge lines up with the end of "Active Only". */
+.projects-header {
+  padding-right: 18px;
+}
+
+.projects-header .panel-more-btn {
+  margin-right: -8px;
+}
+
+.panel-more-btn:hover,
+.panel-more-btn[aria-expanded="true"] {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
 .panel-title {
   font-family: var(--font-display);
   font-size: 18px;

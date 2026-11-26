@@ -1428,6 +1428,19 @@ body.window-resizing .sidebar {
   border-color: var(--accent);
 }
 
+/* Invisible hit-area padding: the box stays 15px, the clickable area is 25px
+   (WCAG 2.2 target size minimum is 24px). The inset is measured from inside
+   the 1px border, hence -6px. ::after is already the check mark. */
+.task-checkbox {
+  position: relative;
+}
+
+.task-checkbox::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+
 .task-card.read-only .task-checkbox {
   cursor: default;
 }

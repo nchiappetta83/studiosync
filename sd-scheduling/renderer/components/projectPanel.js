@@ -16,7 +16,7 @@ const ProjectPanel = {
     this._scroller = document.getElementById('projects-scroll');
     this._tabs = document.getElementById('projects-tabs');
     this._addBtn = document.getElementById('btn-add-project');
-    this._importBtn = document.getElementById('btn-import-projects');
+    this._moreBtn = document.getElementById('btn-project-more');
     this._activeOnlyCheckbox = document.getElementById('projects-active-only');
     this._searchToggle = document.getElementById('btn-project-search');
     this._searchBar = document.getElementById('project-search-bar');
@@ -38,22 +38,27 @@ const ProjectPanel = {
       });
     });
 
-    // Excel import
-    if (this._importBtn) {
-      this._importBtn.addEventListener('click', async () => {
-        this._importBtn.disabled = true;
-        try {
-          const result = await window.api.importExcel();
-          if (result && !result.error) {
-            await AppState.refresh();
-            Toast.show(`Imported ${result.imported} new, updated ${result.updated} projects`, 'success');
-          } else if (result && result.error) {
-            Toast.show(result.error, 'error');
-          }
-        } catch (err) {
-          Toast.show('Import failed: ' + err.message, 'error');
+    // Overflow menu (Excel import lives here to keep the header uncluttered)
+    if (this._moreBtn) {
+      this._moreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this._moreBtn.getAttribute('aria-expanded') === 'true') {
+          ContextMenu.dismiss();
+          this._moreBtn.setAttribute('aria-expanded', 'false');
+          return;
         }
-        this._importBtn.disabled = false;
+        const menu = ContextMenu.create([
+          { label: 'Import from Excel', action: () => this._importProjects() },
+        ]);
+        const rect = this._moreBtn.getBoundingClientRect();
+        menu.style.top = (rect.bottom + 4) + 'px';
+        menu.style.left = Math.max(8, rect.right - menu.offsetWidth) + 'px';
+        this._moreBtn.setAttribute('aria-expanded', 'true');
+        const reset = () => this._moreBtn.setAttribute('aria-expanded', 'false');
+        const observer = new MutationObserver(() => {
+          if (!menu.isConnected) { reset(); observer.disconnect(); }
+        });
+        observer.observe(document.body, { childList: true });
       });
     }
 
@@ -115,6 +120,23 @@ const ProjectPanel = {
 
     // Initialize alpha strip
     AlphaStrip.init();
+  },
+
+  async _importProjects() {
+    if (this._importing) return;
+    this._importing = true;
+    try {
+      const result = await window.api.importExcel();
+      if (result && !result.error) {
+        await AppState.refresh();
+        Toast.show(`Imported ${result.imported} new, updated ${result.updated} projects`, 'success');
+      } else if (result && result.error) {
+        Toast.show(result.error, 'error');
+      }
+    } catch (err) {
+      Toast.show('Import failed: ' + err.message, 'error');
+    }
+    this._importing = false;
   },
 
   _openSearch() {
