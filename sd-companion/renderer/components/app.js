@@ -212,6 +212,7 @@ let SYNC_STATUS_RESET_TIMER = null;
 let RESIZE_PERF_TIMER = null;
 let RUNTIME_STATUS_BOUND = false;
 let LAST_RUNTIME_STATUS = null;
+let LAST_SYNC_RECOVERY_NOTICE_AT = null;
 let SYNC_BANNER_DISMISSED = false;
 let SYSTEM_THEME_LISTENER_BOUND = false;
 let ACTIVE_PROJECT_FOLDER_EDIT = null;
@@ -579,10 +580,6 @@ function getLastName(user) {
 
 function getProjectSharedNotes(projectId) {
   return orderProjectNotes(PROJECT_SHARED_NOTES_CACHE[projectId] || []);
-}
-
-function getPrimaryProjectSharedNote(projectId) {
-  return getProjectSharedNotes(projectId)[0] || null;
 }
 
 function getProjectSharedNotesPreview(projectId) {
@@ -1105,21 +1102,6 @@ function restoreCommentDrawerState() {
   if (storedTaskId) forgetCommentDrawerTask();
 }
 
-function getTodayDateString() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const day = String(today.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function isTaskDueToday(task) {
-  const dueDate = String(task?.due_date || '').slice(0, 10);
-  // The focus section deliberately keeps overdue work alongside today's work
-  // so a missed deadline does not disappear into the general task list.
-  return !task?.completed && Boolean(dueDate) && dueDate <= getTodayDateString();
-}
-
 function getTaskIdForDetailRestore({ allowFallback = false } = {}) {
   const visibleTasks = getMyTasksForCurrentView();
 
@@ -1215,14 +1197,6 @@ function getUserById(id) {
 
 function getProjectById(id) {
   return PROJECTS.find(p => p.id === id);
-}
-
-function getTaskPartnerLabel(task, project = null) {
-  const linkedProject = project || getProjectById(task.project_id);
-  if (linkedProject?.partner_initials) return linkedProject.partner_initials;
-
-  const partner = getUserById(task.partner_id || linkedProject?.partner_id);
-  return partner ? getInitials(partner) : '';
 }
 
 function isProjectManagedByCurrentPartner(project) {
@@ -1477,12 +1451,6 @@ function getTaskAssignees(task) {
 function getTaskActionItems(task) {
   const ownerTask = getTaskThreadOwner(task);
   return ownerTask ? (SUBTASK_CACHE[ownerTask.id] || []) : [];
-}
-
-function getProjectActionItemTask(project) {
-  if (!project) return null;
-  const projectTasks = TASKS.filter((task) => String(task.project_id || '') === String(project.id || ''));
-  return sortTasksLikeScheduling(projectTasks)[0] || null;
 }
 
 function getTaskComments(task) {
@@ -2579,9 +2547,10 @@ async function enterApp() {
   document.getElementById('app-shell').classList.remove('hidden');
 
   syncCurrentUserUI();
-  // My Tasks is the daily landing place for every role. Staff Overview is a
-  // deliberate review workspace rather than the screen users return to.
-  activeTab = getDefaultTabForCurrentUser();
+  // Reopen on the tab the person last used. If that tab is no longer available to them (a role or
+  // permission change removed it) or nothing is stored yet, land on My Work, which opens the first
+  // project in the list.
+  activeTab = readLastActiveTab() || getDefaultTabForCurrentUser();
   restoreViewPreferences();
 
   // Sidebar collapse toggle
@@ -3037,7 +3006,7 @@ function setupKeyboardShortcuts() {
     }
 
     if (event.key === 'Escape' && !isEditableShortcutTarget(event.target)) {
-      const openOverlay = document.querySelector('.dialog-overlay:not(.hidden)');
+      const openOverlay = document.querySelector('.dialog-overlay:not(.hidden):not(.is-leaving)');
       if (openOverlay) return;
       if (activeTab === 'my-tasks' && myTaskSearchQuery) {
         const input = document.getElementById('my-task-search-input');
@@ -3777,13 +3746,6 @@ function renderProjectRowSummary(summary, task) {
   return `${escapeHtml(summary.text)}${dueMarkup}`;
 }
 
-function getProjectStatusLabel(project) {
-  const section = getProjectSection(project);
-  if (section === 'future') return 'Future';
-  if (section === 'inactive') return 'Inactive';
-  return 'Active';
-}
-
 function renderProjectListRow(task) {
   const project = getProjectById(task.project_id);
   if (!project) return renderTaskCard(task);
@@ -4000,13 +3962,6 @@ function workCardPlannedLabel(card) {
   if (!card?.planned_minutes) return '';
   const hours = card.planned_minutes / 60;
   return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h planned`;
-}
-
-function getMyWeekProjectAccent(project, card) {
-  const accents = ['#5964a8', '#397b6d', '#9a7046', '#8a5c78', '#4f7893', '#74609a'];
-  const key = String(project?.id || project?.name || card?.project_id || card?.id || 'work');
-  const hash = [...key].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0, 7);
-  return accents[hash % accents.length];
 }
 
 function formatMyWeekCardDateRange(card) {
@@ -4665,82 +4620,6 @@ function openStaffProjectWorkCardsDialog(staffUser, project, opener, { openedWit
 }
 
 // ── Add Task to Staff (project picker, non-editable title) ──
-
-function openAddStaffTaskDialog(staffId) {
-  const staffUser = getUserById(staffId);
-  if (!staffUser) return;
-
-  const overlay = document.getElementById('add-task-overlay');
-  overlay.classList.remove('hidden');
-
-  document.getElementById('add-task-title').textContent = 'Add Task';
-  document.getElementById('add-task-subtitle').textContent = `Start typing to filter projects, or browse and select below. Assigning to ${staffUser.display_name}`;
-
-  const titleInput = document.getElementById('add-task-title-input');
-  document.getElementById('add-task-notes-input').value = '';
-  populatePrioritySelect(staffId);
-  document.getElementById('add-task-due').value = '';
-  titleInput.value = '';
-  titleInput.placeholder = 'Task title / search projects...';
-  titleInput.dataset.projectLocked = 'false';
-  titleInput.readOnly = false;
-  titleInput.classList.remove('task-title-locked');
-
-  let selectedProjectId = null;
-
-  const picker = document.getElementById('project-picker');
-  bindProjectPickerSelection(picker, getAvailableProjectsForTaskCreation(), titleInput, (projectId) => {
-    selectedProjectId = projectId;
-  });
-
-  const close = () => {
-    document.removeEventListener('keydown', escHandler);
-    overlay.classList.add('hidden');
-  };
-  document.getElementById('add-task-close').onclick = close;
-  document.getElementById('add-task-cancel').onclick = close;
-  overlay.onclick = (e) => { if (e.target === overlay) close(); };
-
-  document.getElementById('add-task-save').onclick = async () => {
-    const project = getProjectById(selectedProjectId);
-    if (!requireTextInput(titleInput, 'Enter a task title.')) return;
-    const title = titleInput.value.trim();
-
-    const payload = buildSharedTaskPayloadFromInput({
-      title,
-      notes: document.getElementById('add-task-notes-input').value,
-      priorityValue: document.getElementById('add-task-priority').value,
-      dueDate: document.getElementById('add-task-due').value,
-      base: {
-        project_id: selectedProjectId,
-        assigned_to: staffId,
-        created_by: currentUser.id,
-        partner_id: project?.partner_id || currentUser.id,
-      },
-    });
-
-    const button = document.getElementById('add-task-save');
-    const outcome = await runUiAction(async () => {
-      // The main process answers null when it refuses the request (no permission,
-      // or a weekly review is locking edits); that must not read as success.
-      const created = await window.api.createTask(payload);
-      if (!created) throw new Error('Task was not created.');
-      await loadAllData();
-      await refreshAll();
-    }, {
-      button,
-      pendingLabel: 'Adding...',
-      successMessage: 'Task assigned.',
-      errorMessage: 'Task could not be assigned. Check your permissions, or try again once the weekly review is finished.',
-    });
-    if (outcome.ok) close();
-  };
-
-  const escHandler = (e) => {
-    if (e.key === 'Escape') close();
-  };
-  document.addEventListener('keydown', escHandler);
-}
 
 // ── Detail Panel ────────────────────────────────────
 
@@ -5780,7 +5659,7 @@ async function openProjectDetailPanel(projectId) {
       if (!card || !action) return;
       if (action === 'edit') return openWorkCardEditor(project, workCardData?.participants || [], card);
       if (action === 'delete') {
-        const confirmed = await ConfirmDialog.show({ title: 'Delete work card?', message: `Delete "${card.title}"?`, confirmLabel: 'Delete', tone: 'danger' });
+        const confirmed = await window.MyTasksConfirmDialog.show({ title: 'Delete work card?', message: `Delete "${card.title}"?`, confirmLabel: 'Delete', tone: 'danger' });
         if (!confirmed || !(await window.api.deleteWorkCard(card.id))) return;
         showToast('Work card deleted.', { tone: 'success' });
         return refreshWorkCardBoard();
@@ -6248,6 +6127,13 @@ function applyRuntimeStatus(status) {
   const userName = document.getElementById('user-name');
   if (!indicator) return;
   LAST_RUNTIME_STATUS = status || null;
+
+  // After a long absence the shared data was rebuilt from the Dashboard's latest snapshot. Say so once.
+  const recoveredAt = status?.syncRecovery?.at || null;
+  if (recoveredAt && recoveredAt !== LAST_SYNC_RECOVERY_NOTICE_AT) {
+    LAST_SYNC_RECOVERY_NOTICE_AT = recoveredAt;
+    showToast('This computer was offline for a long time, so your shared data was refreshed from the Dashboard.', { tone: 'info', duration: 8000 });
+  }
 
   const failureCount = status?.syncFailures?.count || 0;
   const text = failureCount > 0

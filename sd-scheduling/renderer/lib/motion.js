@@ -151,6 +151,7 @@
   let snapshot = null;          // { at, items, fills, checked }: how things looked when the person last clicked or pressed a key
   let burstUntil = 0;
   let animatedInBurst = new WeakSet();
+  const controlGlides = new Map(); // control key -> { anim, dx, dy }: a slide that may be replaced part-way
 
   // If the app renders again while items are still gliding (the old elements are replaced), a new
   // glide must start from where each item currently appears, not from where it began, or it would
@@ -178,6 +179,10 @@
     requestAnimationFrame(tick);
   }
 
+  // Keys that only move focus or the caret: they never ask for a list to change, and they repeat quickly.
+  const NAVIGATION_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft',
+    'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Escape']);
+
   const isTypingTarget = (el) => Boolean(el && (el.isContentEditable
     || el.tagName === 'TEXTAREA'
     || el.tagName === 'SELECT'
@@ -200,6 +205,27 @@
       if (!items.has(key)) items.set(key, { el, rect });
     });
     return items;
+  }
+
+  // The date, calendar icon, partner badge and lead inside a task row. They are tracked by where they
+  // sit within their row, not on screen, so a row that glides does not make them glide twice, and one
+  // that changes line inside its row (a carryover being kept) slides to its new place.
+  const CONTROL_SELECTOR = '.task-card .task-due-label[data-task-id], .task-card .task-cal-icon[data-task-id], '
+    + '.task-card .task-partner-badge[data-task-id], .task-card .task-lead-control[data-task-id]';
+
+  function measureControls() {
+    const controls = new Map();
+    const limitBottom = globalScope.innerHeight + 200;
+    document.querySelectorAll(CONTROL_SELECTOR).forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.bottom < -200 || rect.top > limitBottom) return;
+      const card = el.closest('.task-card');
+      if (!card) return;
+      const cardRect = card.getBoundingClientRect();
+      const kind = el.className.split(/\s+/)[0];
+      controls.set(`${kind}|${el.dataset.taskId}`, { el, x: rect.left - cardRect.left, y: rect.top - cardRect.top });
+    });
+    return controls;
   }
 
   // Bars (capacity, load, schedule progress) carry their width inline and are re-rendered from scratch,
@@ -290,16 +316,44 @@
         animated = true;
       }
     });
+    // A control that changed line within its row slides there.
+    const controlMs = Math.round(tokenMs('--motion-slow') * 1.25);
+    measureControls().forEach((now, key) => {
+      const was = snap.controls && snap.controls.get(key);
+      if (!was || animatedInBurst.has(now.el)) return;
+      let dx = was.x - now.x;
+      let dy = was.y - now.y;
+      let duration = controlMs;
+      // A render partway through a slide replaces the element. Carry on from how far the old one had got
+      // instead of starting over from the click-time position.
+      const running = controlGlides.get(key);
+      if (running) {
+        const timing = running.anim.effect && running.anim.effect.getComputedTiming();
+        const left = timing && typeof timing.progress === 'number' ? 1 - timing.progress : 1;
+        dx = running.dx * left;
+        dy = running.dy * left;
+        duration = Math.max(80, Math.round(controlMs * left));
+      }
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      const anim = now.el.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
+        { duration, easing: enterEasing },
+      );
+      controlGlides.set(key, { anim, dx, dy });
+      animatedInBurst.add(now.el);
+      animated = true;
+    });
     if (gliding.size) sampleGliding();
     return animated;
   }
 
   function capture() {
-    snapshot = { at: performance.now(), items: measure(), fills: measureFills(), checked: measureChecked() };
+    snapshot = { at: performance.now(), items: measure(), fills: measureFills(), checked: measureChecked(), controls: measureControls() };
     burstUntil = 0;
     animatedInBurst = new WeakSet();
     gliding.clear();
     lastSeen.clear();
+    controlGlides.clear();
   }
 
   if (typeof Element.prototype.animate === 'function') {
@@ -308,6 +362,7 @@
     ['pointerdown', 'pointerup', 'keydown'].forEach((type) => {
       document.addEventListener(type, (event) => {
         if (reduced()) return;
+        if (type === 'keydown' && (event.repeat || NAVIGATION_KEYS.has(event.key))) return;
         if (isTypingTarget(event.target)) {
           snapshot = null;
         } else {
@@ -335,5 +390,44 @@
     else document.addEventListener('DOMContentLoaded', observe, { once: true });
   }
 
-  globalScope.Motion = { reduced, indicator, swap };
+  // Fade an element out and close the gap it leaves, so everything after it slides up into place.
+  // Resolves once it has gone; the caller then makes the real change. The glide baseline is reset to
+  // the collapsed layout first, so that change does not replay a move that has already happened.
+  function collapse(el) {
+    if (!el || reduced() || typeof el.animate !== 'function') return Promise.resolve();
+    const cs = getComputedStyle(el);
+    const props = ['paddingTop', 'paddingBottom', 'marginTop', 'marginBottom', 'borderTopWidth', 'borderBottomWidth'];
+    const from = { height: cs.height };
+    const to = { height: '0px' };
+    props.forEach((p) => { from[p] = cs[p]; to[p] = '0px'; });
+    el.style.overflow = 'hidden';
+    el.style.pointerEvents = 'none';
+    // The layout is about to change under its own animation. Any other change to the page while it
+    // runs would otherwise be measured against the click-time positions and replay a move that has
+    // already happened here.
+    snapshot = null;
+    const easing = token('--ease-standard') || 'ease-out';
+    el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: tokenMs('--motion-base'), easing: 'ease-out', fill: 'forwards' });
+    const close = el.animate([from, to], { duration: Math.round(tokenMs('--motion-slow') * 1.25), delay: 60, easing, fill: 'forwards' });
+    return close.finished.then(capture, capture);
+  }
+
+  // Fade an element out in place (it keeps its space), then reset the glide baseline. The change the
+  // caller makes next then animates against how things look now, not against the click.
+  function fadeOut(el) {
+    if (!el || reduced() || typeof el.animate !== 'function') return Promise.resolve();
+    el.style.pointerEvents = 'none';
+    const fade = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: tokenMs('--motion-base'), easing: 'ease-out', fill: 'forwards' });
+    return fade.finished.then(capture, capture);
+  }
+
+  // Undo collapse() or fadeOut() when the change they were leading into did not happen.
+  function restore(el) {
+    if (!el) return;
+    if (typeof el.getAnimations === 'function') el.getAnimations().forEach((animation) => animation.cancel());
+    el.style.removeProperty('overflow');
+    el.style.removeProperty('pointer-events');
+  }
+
+  globalScope.Motion = { reduced, indicator, swap, collapse, fadeOut, restore };
 })(window);

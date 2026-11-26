@@ -40,10 +40,6 @@
   }
 }
 
-.dialog-wide {
-  max-width: 600px;
-}
-
 .dialog-confirm {
   max-width: 420px;
 }
@@ -383,28 +379,6 @@
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-primary);
-}
-
-.dialog-task-activity {
-  display: grid;
-  gap: 6px;
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.dialog-task-activity label {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.dialog-task-activity-row,
-.dialog-task-activity-empty {
-  color: var(--text-secondary);
-  font-size: 13px;
 }
 
 .dialog-checkbox-row {

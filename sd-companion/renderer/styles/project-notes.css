@@ -239,16 +239,6 @@
   min-width: 0;
 }
 
-.project-notes-main-title {
-  font-family: var(--font-display);
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .project-notes-title-input {
   width: 100%;
   padding: 0;

@@ -7,7 +7,7 @@
 
   function showDialog(options = {}) {
     return new Promise((resolve) => {
-      const existing = document.querySelector('.confirm-dialog-overlay');
+      const existing = document.querySelector('.confirm-dialog-overlay:not(.is-leaving)');
       if (existing) {
         existing.querySelector('.confirm-dialog-confirm')?.focus();
         resolve({ confirmed: false, checked: false });
@@ -87,7 +87,7 @@
 
   function choose(options = {}) {
     return new Promise((resolve) => {
-      const existing = document.querySelector('.confirm-dialog-overlay, .choice-dialog-layer');
+      const existing = document.querySelector('.confirm-dialog-overlay:not(.is-leaving), .choice-dialog-layer');
       if (existing) {
         resolve({ confirmed: false, choice: null });
         return;

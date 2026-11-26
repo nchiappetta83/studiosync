@@ -51,7 +51,6 @@ contextBridge.exposeInMainWorld('api', {
   createCustomPriority:   (data)  => ipcRenderer.invoke('create-custom-priority', data),
   updateCustomPriority:   (data)  => ipcRenderer.invoke('update-custom-priority', data),
   deleteCustomPriority:   (id)    => ipcRenderer.invoke('delete-custom-priority', id),
-  reorderCustomPriorities: (orders) => ipcRenderer.invoke('reorder-custom-priorities', orders),
   getPriorityMenuOrder:   ()      => ipcRenderer.invoke('get-priority-menu-order'),
   setPriorityMenuOrder:   (order) => ipcRenderer.invoke('set-priority-menu-order', order),
   getPriorityCarryoverTokens: ()   => ipcRenderer.invoke('get-priority-carryover-tokens'),
@@ -68,7 +67,6 @@ contextBridge.exposeInMainWorld('api', {
 
   // Tasks
   getTasks:         (filters)   => ipcRenderer.invoke('get-tasks', filters),
-  getTaskActivity:  (taskId)    => ipcRenderer.invoke('get-task-activity', taskId),
   getProjectActivity: (projectId) => ipcRenderer.invoke('get-project-activity', projectId),
   createTask:       (data)      => ipcRenderer.invoke('create-task', data),
   updateTask:       (data)      => ipcRenderer.invoke('update-task', data),
@@ -79,11 +77,6 @@ contextBridge.exposeInMainWorld('api', {
   getProjectWorkCards: (projectId, weekOf) => ipcRenderer.invoke('get-project-work-cards', projectId, weekOf),
 
   // Sub-tasks
-  getSubTasks:      (taskId)    => ipcRenderer.invoke('get-subtasks', taskId),
-  createSubTask:    (data)      => ipcRenderer.invoke('create-subtask', data),
-  updateSubTask:    (data)      => ipcRenderer.invoke('update-subtask', data),
-  deleteSubTask:    (id)        => ipcRenderer.invoke('delete-subtask', id),
-  toggleSubTask:    (id)        => ipcRenderer.invoke('toggle-subtask', id),
 
   // Comments
   getComments:      (taskId)    => ipcRenderer.invoke('get-comments', taskId),
@@ -97,9 +90,6 @@ contextBridge.exposeInMainWorld('api', {
   deleteProject:    (id)        => ipcRenderer.invoke('delete-project', id),
 
   // Project Notes (partner-authored)
-  getProjectNotes:    (projectId) => ipcRenderer.invoke('get-project-notes', projectId),
-  getAllProjectNotes:  ()          => ipcRenderer.invoke('get-all-project-notes'),
-  updateProjectNotes: (data)      => ipcRenderer.invoke('update-project-notes', data),
 
   // PTO (date-based)
   getPTO:           ()          => ipcRenderer.invoke('get-pto'),
@@ -122,7 +112,6 @@ contextBridge.exposeInMainWorld('api', {
   // Weekly Rollover
   checkRollover:    ()          => ipcRenderer.invoke('check-rollover'),
   performRollover:  ()          => ipcRenderer.invoke('perform-rollover'),
-  initRolloverWeek: ()          => ipcRenderer.invoke('init-rollover-week'),
   consumeRolloverNotice: ()     => ipcRenderer.invoke('consume-rollover-notice'),
   getRolloverPublicationState: () => ipcRenderer.invoke('get-rollover-publication-state'),
   publishRolloverChanges: ()    => ipcRenderer.invoke('publish-rollover-changes'),
@@ -130,9 +119,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Sync
   forceSync:        ()          => ipcRenderer.invoke('force-sync'),
-  getLogPaths:      ()          => ipcRenderer.invoke('get-log-paths'),
   writeLog:         (entry)     => ipcRenderer.invoke('write-log', entry),
-  getDiagnosticsPath: ()        => ipcRenderer.invoke('get-diagnostics-path'),
   logDiagnostics:   (entry)     => ipcRenderer.invoke('log-diagnostics', entry),
   openProjectActivityWindow: (projectId) => ipcRenderer.invoke('open-project-activity-window', projectId),
   getDeviceTrustStatus: () => ipcRenderer.invoke('get-device-trust-status'),

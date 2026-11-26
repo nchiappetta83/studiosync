@@ -82,7 +82,7 @@
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Tab') return;
-    const overlays = [...document.querySelectorAll('.dialog-overlay:not(.hidden)')];
+    const overlays = [...document.querySelectorAll('.dialog-overlay:not(.hidden):not(.is-leaving)')];
     const overlay = overlays[overlays.length - 1];
     const card = overlay?.querySelector('.dialog-card');
     if (!card) return;

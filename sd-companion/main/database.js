@@ -91,24 +91,6 @@ class Database {
     return this.db.transaction(operation)();
   }
 
-  optimizeStorage(options = {}) {
-    if (!this.db) return;
-
-    try {
-      this.db.pragma('optimize');
-    } catch (_) {}
-
-    try {
-      this.db.pragma('wal_checkpoint(TRUNCATE)');
-    } catch (_) {}
-
-    if (options.vacuum) {
-      try {
-        this.db.exec('VACUUM');
-      } catch (_) {}
-    }
-  }
-
   exportSharedSnapshot() {
     if (!this.db) throw new Error('Database is not open.');
 
@@ -892,16 +874,6 @@ class Database {
     return new Date(Math.max(Date.now(), this._timestampMillis(previous) + 1)).toISOString();
   }
 
-  hasSharedRowsNewerThan(timestamp) {
-    const reference = this._timestampMillis(timestamp);
-    if (!reference) return false;
-    for (const table of ['tasks', 'work_cards']) {
-      const rows = this.db.prepare(`SELECT updated_at FROM ${table} WHERE updated_at IS NOT NULL`).all();
-      if (rows.some((row) => this._timestampMillis(row.updated_at) > reference)) return true;
-    }
-    return false;
-  }
-
   _normalizeProjectNotePayload(data = {}) {
     const now = this._getCurrentTimestamp();
     return {
@@ -950,19 +922,6 @@ class Database {
     };
   }
 
-  _getLegacyProjectNote(projectId) {
-    return this.db.prepare(`
-      SELECT *
-      FROM project_notes
-      WHERE project_id = ?
-      ORDER BY
-        CASE WHEN lower(COALESCE(title, '')) = 'general' THEN 0 ELSE 1 END,
-        datetime(updated_at) DESC,
-        datetime(created_at) DESC
-      LIMIT 1
-    `).get(projectId) || null;
-  }
-
   // ── Sync Meta ──────────────────────────────────────────
 
   getLastSyncTimestamp() {
@@ -985,6 +944,14 @@ class Database {
     `).run(filename);
   }
 
+  // Forget processed records for event files that no longer exist in the shared folder.
+  forgetProcessedSyncFiles(filenames) {
+    const forget = this.db.prepare('DELETE FROM sync_processed_events WHERE filename = ?');
+    this.db.transaction(() => {
+      for (const filename of filenames) forget.run(filename);
+    })();
+  }
+
   applyEventAndMarkProcessed(event, filename) {
     if (!filename) throw new Error('A sync event filename is required.');
     return this.runInTransaction(() => {
@@ -992,10 +959,6 @@ class Database {
       this.markSyncFileProcessed(filename);
       this.setLastSyncTimestamp(filename);
     });
-  }
-
-  cleanupProcessedSyncFiles(cutoffStr) {
-    this.db.prepare('DELETE FROM sync_processed_events WHERE filename < ?').run(cutoffStr);
   }
 
   queueSyncEvent(event) {
@@ -1057,10 +1020,6 @@ class Database {
     return this.getGlobalSetting('update_folder_path');
   }
 
-  setUpdateFolderPath(folderPath) {
-    return this.setGlobalSetting('update_folder_path', folderPath);
-  }
-
   getPriorityCarryoverTokens() {
     const rawValue = this.getGlobalSetting('priority_carryover_tokens');
     if (!rawValue) return null;
@@ -1105,10 +1064,6 @@ class Database {
   }
 
   // ── Business Roles ────────────────────────────────────
-
-  getBusinessRoles() {
-    return this.db.prepare('SELECT * FROM business_roles ORDER BY sort_order, name').all();
-  }
 
   getBusinessRoleById(id) {
     return this.db.prepare('SELECT * FROM business_roles WHERE id = ?').get(id);
@@ -1331,17 +1286,6 @@ class Database {
     this.db.prepare(`INSERT OR IGNORE INTO task_activity (id, task_id, project_id, action, actor_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(activity.id, activity.task_id, activity.project_id, activity.action, activity.actor_id, activity.details, activity.created_at);
     return this.db.prepare('SELECT * FROM task_activity WHERE id = ?').get(activity.id);
-  }
-
-  getTaskActivity(taskId, limit = 40) {
-    return this.db.prepare(`
-      SELECT activity.*, users.display_name AS actor_name
-      FROM task_activity activity
-      LEFT JOIN users ON users.id = activity.actor_id
-      WHERE activity.task_id = ?
-      ORDER BY datetime(activity.created_at) DESC, activity.id DESC
-      LIMIT ?
-    `).all(taskId, Math.max(1, Math.min(Number(limit) || 40, 100)));
   }
 
   getProjectActivity(projectId, limit = 100) {
@@ -1722,12 +1666,6 @@ class Database {
 
   // ── Sub-tasks ──────────────────────────────────────────
 
-  getSubTasks(taskId) {
-    return this.db.prepare(
-      'SELECT * FROM sub_tasks WHERE task_id = ? ORDER BY sort_order, created_at'
-    ).all(taskId);
-  }
-
   getSubTasksByTaskIds(taskIds = []) {
     const ids = Array.isArray(taskIds)
       ? [...new Set(taskIds.filter((id) => typeof id === 'string' && id.trim()))]
@@ -1796,16 +1734,6 @@ class Database {
   }
 
   // ── Comments ───────────────────────────────────────────
-
-  getComments(taskId) {
-    return this.db.prepare(`
-      SELECT c.*, u.display_name as author_name, u.avatar_color as author_color
-      FROM comments c
-      LEFT JOIN users u ON c.author_id = u.id
-      WHERE c.task_id = ?
-      ORDER BY c.created_at ASC
-    `).all(taskId);
-  }
 
   getCommentsByTaskIds(taskIds = []) {
     const ids = Array.isArray(taskIds)
@@ -2052,11 +1980,6 @@ class Database {
 
   // ── Weekly Rollover ──────────────────────────────────────
 
-  getLastRolloverWeek() {
-    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'last_rollover_week'").get();
-    return row ? row.value : null;
-  }
-
   setLastRolloverWeek(weekStr) {
     this._setMeta('last_rollover_week', weekStr);
   }
@@ -2207,17 +2130,6 @@ class Database {
   }
 
   // ── Project Notes (partner-authored, separate from Excel notes) ──
-
-  getProjectNotes(projectId) {
-    return this._getLegacyProjectNote(projectId);
-  }
-
-  getAllProjectNotes() {
-    const projectIds = this.db.prepare('SELECT DISTINCT project_id FROM project_notes').all();
-    return projectIds
-      .map(({ project_id }) => this._getLegacyProjectNote(project_id))
-      .filter(Boolean);
-  }
 
   upsertProjectNotes(data) {
     if (!data?.project_id) return null;

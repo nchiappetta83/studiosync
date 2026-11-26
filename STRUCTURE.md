@@ -49,7 +49,6 @@ sd-scheduling/
       taskNotesEditor.js                 # Persistent inline task-note draft/save controller
       projectPanel.js                    # Project list, Current/Future tabs, and add-project defaults
       projectCard.js                     # Individual project cards and project context menu actions
-      subTasks.js                        # Action Item rendering and toggles
       comments.js                        # Comment thread rendering
       miniCalendar.js                    # Sidebar calendar widget
       alphaStrip.js                      # Alphabetical quick-nav strip

@@ -328,23 +328,6 @@ function releaseLockFile(filePath) {
   } catch (_) {}
 }
 
-function switchToSharedLock(sharedDrivePath) {
-  const previousLockPath = lockFilePath;
-  if (!acquireLock(sharedDrivePath, { exitOnFailure: false })) {
-    return false;
-  }
-
-  if (previousLockPath && previousLockPath !== lockFilePath) {
-    releaseLockFile(previousLockPath);
-  }
-
-  return true;
-}
-
-function refreshLockMetadata() {
-  writeLockHeartbeat();
-}
-
 function releaseLock() {
   if (lockTimer) {
     clearInterval(lockTimer);
@@ -1659,7 +1642,6 @@ function registerIPC() {
     }
     return activity;
   };
-  ipcMain.handle('get-log-paths', () => logger?.getLogPaths() || null);
   ipcMain.handle('write-log', (_e, entry) => {
     const level = String(entry?.level || 'info').toLowerCase();
     const message = entry?.message || entry?.type || 'renderer-log';
@@ -1672,7 +1654,6 @@ function registerIPC() {
     return true;
   });
 
-  ipcMain.handle('get-diagnostics-path', () => getInputDiagnosticsPath());
   ipcMain.handle('log-diagnostics', (_e, entry) => {
     appendInputDiagnostics({
       scope: 'renderer',
@@ -2159,20 +2140,11 @@ function registerIPC() {
     return categories;
   });
 
-  ipcMain.handle('reorder-custom-priorities', (_e, orders) => {
-    if (!db) return false;
-    db.reorderCustomPriorities(orders);
-    if (sync) sync.pushEvent('priorities-reordered', orders);
-    notifyDataChanged();
-    return true;
-  });
-
   // Tasks
   ipcMain.handle('get-tasks', (_e, filters) => {
     if (!db) return [];
     return db.getTasks(filters);
   });
-  ipcMain.handle('get-task-activity', (_e, taskId) => db?.getTaskActivity(taskId) || []);
   ipcMain.handle('get-project-activity', (_e, projectId) => db?.getProjectActivity(projectId) || []);
 
   ipcMain.handle('create-task', (_e, taskData) => {
@@ -2273,44 +2245,6 @@ function registerIPC() {
     return true;
   });
 
-  // Sub-tasks
-  ipcMain.handle('get-subtasks', (_e, taskId) => {
-    if (!db) return [];
-    return db.getSubTasks(taskId);
-  });
-
-  ipcMain.handle('create-subtask', (_e, data) => {
-    if (!db) return null;
-    const sub = db.createSubTask(data);
-    if (sync) sync.pushEvent('subtask-created', sub);
-    notifyDataChanged();
-    return sub;
-  });
-
-  ipcMain.handle('update-subtask', (_e, data) => {
-    if (!db) return null;
-    const sub = db.updateSubTask(data);
-    if (sync) sync.pushEvent('subtask-updated', sub);
-    notifyDataChanged();
-    return sub;
-  });
-
-  ipcMain.handle('delete-subtask', (_e, subId) => {
-    if (!db) return false;
-    db.deleteSubTask(subId);
-    if (sync) sync.pushEvent('subtask-deleted', { id: subId });
-    notifyDataChanged();
-    return true;
-  });
-
-  ipcMain.handle('toggle-subtask', (_e, subId) => {
-    if (!db) return null;
-    const sub = db.toggleSubTask(subId);
-    if (sync) sync.pushEvent('subtask-toggled', sub);
-    notifyDataChanged();
-    return sub;
-  });
-
   // Comments
   ipcMain.handle('get-comments', (_e, taskId) => {
     if (!db) return [];
@@ -2380,25 +2314,6 @@ function registerIPC() {
     await applyProjectEventsToExcel([{ type: 'project-deleted', data: payload }]);
     notifyDataChanged('project-deleted', { projectId });
     return true;
-  });
-
-  // Project Notes (partner-authored)
-  ipcMain.handle('get-project-notes', (_e, projectId) => {
-    if (!db) return null;
-    return db.getProjectNotes(projectId);
-  });
-
-  ipcMain.handle('get-all-project-notes', () => {
-    if (!db) return [];
-    return db.getAllProjectNotes();
-  });
-
-  ipcMain.handle('update-project-notes', (_e, data) => {
-    if (!db) return null;
-    const result = db.upsertProjectNotes(data);
-    if (sync) sync.pushEvent('project-notes-updated', data);
-    notifyDataChanged('project-notes-updated', { projectId: data.project_id });
-    return result;
   });
 
   // PTO (date-based)
@@ -2602,11 +2517,6 @@ function registerIPC() {
     const result = performWeeklyRollover({ force: true, source: 'manual' });
     notifyDataChanged('manual-rollover', { source: 'manual' });
     return result.applied;
-  });
-
-  ipcMain.handle('init-rollover-week', () => {
-    if (!db) return false;
-    return getWeeklyRolloverState().initialized;
   });
 
   ipcMain.handle('consume-rollover-notice', () => {

@@ -342,40 +342,6 @@ const AppState = {
     return groups;
   },
 
-  getFilteredProjects() {
-    const tab = this._data.projectTab;
-    const query = this._data.searchQuery.toLowerCase();
-
-    let filtered = this._data.projects;
-
-    if (tab === 'active') {
-      filtered = filtered.filter(p => (p.category || 'current') === 'current' && p.status === 'active');
-    } else if (tab === 'future') {
-      filtered = filtered.filter(p => (p.category || 'current') === 'future');
-    } else if (tab === 'inactive') {
-      filtered = filtered.filter(p => p.status === 'inactive');
-    }
-
-    if (query) {
-      filtered = filtered.filter(p =>
-        p.name.toLowerCase().includes(query) ||
-        p.client.toLowerCase().includes(query) ||
-        (p.notes && p.notes.toLowerCase().includes(query))
-      );
-    }
-
-    return filtered;
-  },
-
-  getSearchFilteredTasks() {
-    const query = this._data.searchQuery.toLowerCase();
-    if (!query) return this._data.tasks;
-    return this._data.tasks.filter(t =>
-      t.title.toLowerCase().includes(query) ||
-      (t.notes && t.notes.toLowerCase().includes(query))
-    );
-  },
-
   getUserById(id) {
     return this._data.users.find(u => u.id === id);
   },

@@ -75,10 +75,6 @@ class UpdateManager {
     return this.lastResult;
   }
 
-  clearPendingPrompt() {
-    this.pendingPrompt = null;
-  }
-
   dismissVersion(version = this.pendingPrompt?.latestVersion || this.lastResult?.latestVersion) {
     if (!version) return false;
 

@@ -191,7 +191,7 @@ const App = {
           return;
         }
         // Close context menu
-        const ctxMenu = document.querySelector('.context-menu');
+        const ctxMenu = document.querySelector('.context-menu:not(.is-leaving)');
         if (ctxMenu) {
           ctxMenu.remove();
           return;

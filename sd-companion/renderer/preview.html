@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="styles/companion.css">
   <link rel="stylesheet" href="styles/project-notes.css">
   <link rel="stylesheet" href="styles/interaction-system.css">
+  <link rel="stylesheet" href="styles/palette.css">
+  <link rel="stylesheet" href="styles/motion.css">
 </head>
 <body>
   <!-- ── Login / Auto-detect ────────────────────────── -->
@@ -66,6 +68,7 @@
           <span class="user-name" id="user-name"></span>
           <span class="user-role-badge" id="user-role-badge"></span>
         </div>
+        <button type="button" id="btn-command-palette" class="palette-hint" title="Command palette (Ctrl+K)" aria-label="Open command palette" aria-keyshortcuts="Control+K"><kbd>Ctrl</kbd><kbd>K</kbd></button>
         <button class="icon-btn" id="settings-btn" type="button" title="Settings" aria-label="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
@@ -95,6 +98,7 @@
         <line x1="12" y1="17" x2="12.01" y2="17"></line>
       </svg>
       <span class="sync-banner-text" id="sync-banner-text">Can't reach the shared sync folder. Your changes are saved locally and will sync once it's back.</span>
+      <span class="sync-banner-detail hidden" id="sync-banner-detail"></span>
       <button class="sync-banner-retry" id="sync-banner-retry" type="button">Retry</button>
       <button class="sync-banner-dismiss" id="sync-banner-dismiss" type="button" aria-label="Dismiss">&times;</button>
     </div>
@@ -120,53 +124,81 @@
       <main class="main-panel" id="main-panel">
         <!-- Tab bar (partner view) -->
         <div class="tab-bar hidden" id="tab-bar" role="tablist" aria-label="Workspace views">
-          <button class="tab" data-tab="staff-view" role="tab" aria-selected="false" tabindex="-1">Staff Overview</button>
-          <button class="tab active" data-tab="my-tasks" role="tab" aria-selected="true">My Tasks</button>
-          <button class="tab" data-tab="my-projects" role="tab" aria-selected="false" tabindex="-1">My Projects</button>
+          <button class="tab" type="button" data-tab="staff-view" role="tab" aria-selected="false" tabindex="-1">Staff Overview</button>
+          <button class="tab active" type="button" data-tab="my-tasks" role="tab" aria-selected="true">My Work</button>
+          <button class="tab" type="button" data-tab="my-week" role="tab" aria-selected="false" tabindex="-1">My Week</button>
+          <button class="tab" type="button" data-tab="my-projects" role="tab" aria-selected="false" tabindex="-1">My Projects</button>
+          <button class="team-due-calendar-btn" id="team-due-calendar-btn" type="button" aria-label="Open team due-date calendar" title="Team due-date calendar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="8" y1="2.5" x2="8" y2="6.5"/><line x1="16" y1="2.5" x2="16" y2="6.5"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </button>
         </div>
 
-        <!-- My Tasks View -->
+        <!-- My Projects View -->
         <div class="view active" id="view-my-tasks">
           <!-- Stats header bar -->
           <div class="stats-bar" id="stats-bar">
             <!-- Filled by JS -->
           </div>
 
-          <div class="view-header">
-            <h2 class="view-title">My Tasks</h2>
-            <span class="private-info-note hidden" id="my-tasks-private-badge" tabindex="0" aria-label="Tasks added here are private to you">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              <span class="private-info-popover">Tasks added here are private to you</span>
-            </span>
-            <div class="view-header-spacer"></div>
-            <label class="my-task-search" title="Search tasks">
+          <div class="view-header my-projects-header">
+            <div class="my-projects-title-block">
+              <h2 class="view-title" id="my-tasks-view-title">My Work</h2>
+              <div class="my-projects-summary" id="my-projects-summary">0 active · 0 completed</div>
+            </div>
+            <div class="my-projects-header-tools">
+            <label class="my-task-search" title="Search projects">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="7"></circle>
                 <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
               </svg>
-              <input type="text" id="my-task-search-input" placeholder="Search tasks...">
+              <input type="text" id="my-task-search-input" placeholder="Search projects...">
               <button type="button" id="my-task-search-clear" class="my-task-search-clear hidden" aria-label="Clear search" title="Clear search">&times;</button>
             </label>
-            <button class="btn btn-accent btn-sm hidden" id="add-private-task-btn">
+            <button class="btn btn-primary btn-sm hidden" id="add-private-task-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Add Task
+              <span id="add-private-task-label">Add Private Task</span>
             </button>
-            <button class="btn btn-accent btn-sm hidden" id="add-self-task-btn">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Add Task
-            </button>
+            </div>
           </div>
           <div class="task-list" id="my-task-list">
             <!-- Task cards rendered by JS -->
           </div>
         </div>
 
+        <!-- My Week (shared work cards assigned to the signed-in person) -->
+        <div class="view hidden" id="view-my-week">
+          <div class="view-header my-week-header">
+            <div>
+              <h2 class="view-title">My Week</h2>
+              <div class="my-week-navigation" aria-label="Week navigation">
+                <button type="button" id="my-week-previous" aria-label="Previous week" title="Previous week">&#8249;</button>
+                <span class="view-count" id="my-week-range">This week</span>
+                <button type="button" id="my-week-next" aria-label="Next week" title="Next week">&#8250;</button>
+                <button type="button" id="my-week-today">This week</button>
+              </div>
+            </div>
+            <div class="view-header-spacer"></div>
+            <span class="my-week-focus hidden" id="my-week-focus" aria-live="polite"></span>
+          </div>
+          <div class="my-week-calendar" id="my-week-calendar"></div>
+          <section class="my-week-unscheduled" id="my-week-unscheduled"></section>
+        </div>
+
         <!-- My Projects View (partner only) -->
         <div class="view hidden" id="view-my-projects">
-          <div class="view-header">
-            <h2 class="view-title">My Projects</h2>
-            <span class="view-count" id="my-projects-count">0 projects</span>
-            <div class="view-header-spacer"></div>
+          <div class="view-header my-projects-portfolio-header">
+            <div class="my-projects-portfolio-heading">
+              <h2 class="view-title">My Projects</h2>
+              <span class="view-count" id="my-projects-count">0 projects</span>
+            </div>
+            <label class="my-task-search my-projects-portfolio-search" title="Search my projects">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"></circle>
+                <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
+              </svg>
+              <input type="text" id="my-projects-search-input" placeholder="Search my projects..." aria-label="Search my projects">
+              <button type="button" id="my-projects-search-clear" class="my-task-search-clear hidden" aria-label="Clear project search" title="Clear project search">&times;</button>
+            </label>
             <button class="btn btn-accent btn-sm" id="add-project-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Project
@@ -182,15 +214,15 @@
           <div class="staff-overview-toolbar">
             <div class="staff-overview-heading">
               <h2 class="view-title">Staff Overview</h2>
-              <span class="view-count" id="staff-overview-count">0 tasks</span>
+              <span class="view-count" id="staff-overview-count">0 staff · 0 projects</span>
             </div>
             <div class="view-header-spacer"></div>
-            <label class="my-task-search staff-overview-search" title="Search staff tasks">
+            <label class="my-task-search staff-overview-search" title="Search staff or projects">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="7"></circle>
                 <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
               </svg>
-              <input type="text" id="staff-overview-search-input" placeholder="Search staff tasks...">
+              <input type="text" id="staff-overview-search-input" placeholder="Search staff or projects...">
               <button type="button" id="staff-overview-search-clear" class="my-task-search-clear hidden" aria-label="Clear search" title="Clear search">&times;</button>
             </label>
           </div>
@@ -257,6 +289,20 @@
             </div>
           </section>
 
+          <section class="preferences-section hidden" id="preferences-capacity-section">
+            <div class="preferences-section-header">
+              <div>
+                <div class="preferences-section-title">Office capacity</div>
+                <div class="preferences-section-copy">Shared across the office from the shared data folder.</div>
+              </div>
+            </div>
+            <div class="preferences-capacity-grid">
+              <label class="detail-field"><span class="detail-field-label">Hours per day</span><input class="input" id="office-capacity-daily" type="number" min="0.25" step="0.25"></label>
+              <label class="detail-field"><span class="detail-field-label">Hours per week</span><input class="input" id="office-capacity-weekly" type="number" min="1" step="0.5"></label>
+            </div>
+            <div class="preferences-action-row"><button class="btn btn-accent btn-sm" id="office-capacity-save" type="button">Save capacity</button></div>
+          </section>
+
           <section class="preferences-section">
             <div class="preferences-section-header">
               <div>
@@ -294,18 +340,29 @@
       </div>
     </div>
 
-    <!-- Add Task Dialog (project picker) -->
+    <!-- Add Project to My List Dialog -->
     <div class="dialog-overlay hidden" id="add-task-overlay">
       <div class="dialog-card">
         <div class="dialog-header">
-          <h3 class="dialog-title" id="add-task-title">Add Task</h3>
-          <button class="detail-close" id="add-task-close" type="button" aria-label="Close add task dialog">&times;</button>
+          <h3 class="dialog-title" id="add-task-title">Add Project</h3>
+          <button class="detail-close" id="add-task-close" type="button" aria-label="Close add project dialog">&times;</button>
         </div>
         <div class="dialog-body">
           <p class="dialog-subtitle" id="add-task-subtitle"></p>
 
+          <div class="add-project-mode" id="add-project-mode" role="group" aria-label="What would you like to add?">
+            <button class="add-project-mode-option active" type="button" data-add-project-mode="office" aria-pressed="true">
+              <span>Office project</span>
+              <small>Add an existing project to my list</small>
+            </button>
+            <button class="add-project-mode-option" type="button" data-add-project-mode="private" aria-pressed="false">
+              <span>Private project / task</span>
+              <small>Visible only to me</small>
+            </button>
+          </div>
+
           <div class="form-group add-task-title-group">
-            <label>Task Title</label>
+            <label id="add-task-title-label">Find a project</label>
             <div class="task-search-field">
               <svg class="task-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="7"></circle>
@@ -316,14 +373,14 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" id="project-picker-group">
             <div class="project-picker" id="project-picker">
               <!-- Project list rendered by JS -->
             </div>
           </div>
 
           <div class="form-group">
-            <label>Notes</label>
+            <label id="add-task-notes-label">Task summary</label>
             <textarea class="input" id="add-task-notes-input" placeholder="Optional notes..." rows="2" style="resize:vertical"></textarea>
           </div>
 
@@ -340,7 +397,7 @@
         </div>
         <div class="dialog-footer">
           <button class="btn btn-ghost" id="add-task-cancel">Cancel</button>
-          <button class="btn btn-primary" id="add-task-save">Add Task</button>
+          <button class="btn btn-primary" id="add-task-save">Add Project</button>
         </div>
       </div>
     </div>
@@ -387,7 +444,7 @@
 
     <!-- Add Subtask Dialog -->
     <div class="dialog-overlay hidden" id="add-subtask-overlay">
-      <div class="dialog-card" style="max-width:400px">
+      <div class="dialog-card action-item-dialog" style="max-width:480px">
         <div class="dialog-header">
           <h3 class="dialog-title">Add Action Item</h3>
           <button class="detail-close" id="add-subtask-close" type="button" aria-label="Close action item dialog">&times;</button>
@@ -399,8 +456,25 @@
             <input type="text" class="input" id="add-subtask-title" placeholder="What needs to be done...">
           </div>
           <div class="form-group">
-            <label>Assign To</label>
-            <div class="dialog-checklist" id="add-subtask-assignee-list"></div>
+            <label for="add-subtask-notes">Notes <span class="form-label-optional">optional</span></label>
+            <textarea class="input action-item-notes-input" id="add-subtask-notes" rows="2" placeholder="Add context or details..."></textarea>
+          </div>
+          <div class="form-group action-item-due-date-field">
+            <label for="add-subtask-due-date">Due date <span class="form-label-optional">optional</span></label>
+            <input type="date" class="input" id="add-subtask-due-date">
+          </div>
+          <div class="form-group">
+            <label>Assigned to</label>
+            <div class="action-item-assignee-picker">
+              <div class="action-item-assignee-chips" id="add-subtask-assignee-chips"></div>
+              <div class="action-item-assignee-quick-actions" aria-label="Assignment shortcuts">
+                <button class="action-item-assignee-shortcut" id="add-subtask-assign-me" type="button">Assign to me</button>
+                <button class="action-item-assignee-shortcut" id="add-subtask-use-task-assignee" type="button">Use task assignee</button>
+                <button class="action-item-assignee-shortcut" id="add-subtask-clear-assignees" type="button">Clear</button>
+              </div>
+              <input type="search" class="input" id="add-subtask-assignee-search" placeholder="Search people..." autocomplete="off">
+              <div class="action-item-assignee-results" id="add-subtask-assignee-results"></div>
+            </div>
           </div>
         </div>
         <div class="dialog-footer">
@@ -408,6 +482,15 @@
           <button class="btn btn-primary" id="add-subtask-save">Add Action Item</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="rollover-review-overlay" class="rollover-review-overlay hidden" role="status" aria-live="assertive" aria-hidden="true">
+    <div class="rollover-review-card">
+      <div class="rollover-review-spinner" aria-hidden="true"></div>
+      <div class="rollover-review-eyebrow">StudioSync Scheduling</div>
+      <h2>In Review</h2>
+      <p>Your current tasks are temporarily locked while the weekly scheduling meeting is in progress.</p>
     </div>
   </div>
 
@@ -443,6 +526,7 @@
 
   <!-- Browser-preview only: injects a mock window.api before app scripts load -->
   <script src="lib/mock.js"></script>
+  <script src="lib/motion.js"></script>
   <script src="lib/html.js"></script>
   <script src="lib/toast.js"></script>
   <script src="lib/modalManager.js"></script>
@@ -454,12 +538,18 @@
   <script src="lib/richNotes.js"></script>
   <script src="lib/contextMenu.js"></script>
   <script src="lib/projectNotes.js"></script>
+    <script src="lib/workCard.js"></script>
+    <script src="lib/projectList.js"></script>
   <script src="lib/projectDisplay.js"></script>
   <script src="lib/projectFolderLink.js"></script>
   <script src="lib/actionItems.js"></script>
   <script src="lib/taskDisplay.js"></script>
   <script src="lib/taskOrdering.js"></script>
   <script src="lib/commentDisplay.js"></script>
+  <script src="lib/scrollSmoothing.js"></script>
+  <script src="lib/paletteSearch.js"></script>
+  <script src="components/commandPalette.js"></script>
   <script src="components/app.js"></script>
+  <script src="components/paletteItems.js"></script>
 </body>
 </html>

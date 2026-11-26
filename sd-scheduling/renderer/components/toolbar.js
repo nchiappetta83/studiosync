@@ -342,12 +342,6 @@ const Toolbar = {
     this._syncIndicator.title = 'Syncing...';
   },
 
-  showSynced() {
-    const dot = this._syncIndicator.querySelector('.sync-dot');
-    dot.classList.remove('syncing', 'error');
-    this._syncIndicator.title = 'Synced';
-  },
-
   showSyncError() {
     const dot = this._syncIndicator.querySelector('.sync-dot');
     dot.classList.remove('syncing');

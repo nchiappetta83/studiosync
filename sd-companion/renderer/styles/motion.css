@@ -126,6 +126,7 @@
    display is animated as a discrete step so the overlay stays visible while it fades. */
 .dialog-overlay {
   transition: opacity var(--motion-base) var(--ease-standard), display var(--motion-base) allow-discrete;
+  -webkit-app-region: no-drag; /* the title bar's drag region must not show through a dialog backdrop */
 }
 
 .dialog-overlay.hidden {

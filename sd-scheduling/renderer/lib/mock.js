@@ -36,14 +36,6 @@ if (!window.api) {
     { id: 't11', project_id: null, assigned_to: 'u2', created_by: 'u2', title: 'Follow up with TechStart on missing docs', notes: '', priority: 1, due_date: '2026-03-24', completed: 0, sort_order: 1, confirmed: 0, partner_id: null },
   ];
 
-  const MOCK_SUBTASKS = [
-    { id: 's1', task_id: 't1', title: 'Download December statement', completed: 1, sort_order: 1 },
-    { id: 's2', task_id: 't1', title: 'Compare against GL entries', completed: 0, sort_order: 2 },
-    { id: 's3', task_id: 't1', title: 'Document discrepancies', completed: 0, sort_order: 3 },
-    { id: 's4', task_id: 't3', title: 'Email client for W-2 copies', completed: 1, sort_order: 1 },
-    { id: 's5', task_id: 't3', title: 'Cross-reference with payroll records', completed: 0, sort_order: 2 },
-  ];
-
   const MOCK_COMMENTS = [
     { id: 'c1', task_id: 't1', author_id: 'u1', author_name: 'John Smith', author_color: '#5856A6', body: 'Make sure to flag anything over $5K variance.', created_at: '2026-03-23T14:30:00' },
     { id: 'c2', task_id: 't1', author_id: 'u3', author_name: 'Brian Wilson', author_color: '#A8803F', body: 'Will do. I noticed a $12K discrepancy in the operating account — investigating now.', created_at: '2026-03-23T15:45:00' },
@@ -82,11 +74,6 @@ if (!window.api) {
     updateTask:       async (d) => { const i = MOCK_TASKS.findIndex(t => t.id === d.id); if (i >= 0) Object.assign(MOCK_TASKS[i], d); return MOCK_TASKS[i]; },
     deleteTask:       async (id) => { const i = MOCK_TASKS.findIndex(t => t.id === id); if (i >= 0) MOCK_TASKS.splice(i, 1); return true; },
     reorderTasks:     async () => true,
-    getSubTasks:      async (taskId) => MOCK_SUBTASKS.filter(s => s.task_id === taskId),
-    createSubTask:    async (d) => { const s = { ...d, id: 's' + Date.now(), completed: 0 }; MOCK_SUBTASKS.push(s); return s; },
-    updateSubTask:    async (d) => d,
-    deleteSubTask:    async (id) => { const i = MOCK_SUBTASKS.findIndex(s => s.id === id); if (i >= 0) MOCK_SUBTASKS.splice(i, 1); return true; },
-    toggleSubTask:    async (id) => { const s = MOCK_SUBTASKS.find(s => s.id === id); if (s) s.completed = s.completed ? 0 : 1; return s; },
     getComments:      async (taskId) => MOCK_COMMENTS.filter(c => c.task_id === taskId),
     addComment:       async (d) => { const c = { ...d, id: 'c' + Date.now(), author_name: 'John Smith', author_color: '#5856A6', created_at: new Date().toISOString() }; MOCK_COMMENTS.push(c); return c; },
     deleteComment:    async (id) => { const i = MOCK_COMMENTS.findIndex(c => c.id === id); if (i >= 0) MOCK_COMMENTS.splice(i, 1); return true; },
@@ -119,7 +106,6 @@ if (!window.api) {
     createCustomPriority: async (d) => ({ ...d, id: 'cp' + Date.now() }),
     updateCustomPriority: async (d) => d,
     deleteCustomPriority: async () => true,
-    reorderCustomPriorities: async () => true,
     getPriorityMenuOrder:     async () => [],
     setPriorityMenuOrder:     async () => true,
     getPriorityCarryoverTokens: async () => [],
@@ -133,7 +119,6 @@ if (!window.api) {
     reorderWorkCardCategories: async () => [],
     checkRollover:    async () => ({ needed: false, currentWeek: '2026-03-23', lastWeek: '2026-03-23' }),
     performRollover:  async () => { MOCK_TASKS.forEach(t => { t.confirmed = 0; t.priority = 0; }); return true; },
-    initRolloverWeek: async () => true,
     consumeRolloverNotice: async () => null,
     getRolloverPublicationState: async () => ({ active: false, published: false, hasUnpublishedChanges: false, pendingCount: 0, notReviewedCount: 0 }),
     publishRolloverChanges: async () => ({ published: true, hasUnpublishedChanges: false, notReviewedCount: 0 }),

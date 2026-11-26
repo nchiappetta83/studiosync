@@ -10,6 +10,9 @@
   padding-top: 11vh;
   background: rgba(27, 36, 42, 0.42);
   animation: motionFadeIn var(--motion-base) var(--ease-standard);
+  /* The title bar is a window-drag region, and drag regions show through anything stacked above them.
+     Without this, a click on the backdrop up there would drag the window instead of closing the palette. */
+  -webkit-app-region: no-drag;
 }
 
 .palette {

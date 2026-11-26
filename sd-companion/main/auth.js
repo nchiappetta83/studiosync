@@ -29,15 +29,6 @@ class Auth {
     return user && (user.is_admin === 1 || user.role === 'partner');
   }
 
-  isStaff() {
-    const user = this.getCurrentUser();
-    return user && user.role === 'staff';
-  }
-
-  isSetup() {
-    return this.getCurrentUser() !== null;
-  }
-
   clearCache() {
     this._currentUser = null;
   }

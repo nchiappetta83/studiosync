@@ -268,11 +268,6 @@ const ProjectPanel = {
     this._pendingScrollAnchor = this._buildAnchorForCard(anchorCard, cards, scrollerRect);
   },
 
-  preserveProjectPosition(projectId, options = {}) {
-    this._pendingScrollProjectId = projectId ? String(projectId) : null;
-    this.prepareAnchorNearProject(projectId, options);
-  },
-
   lockScrollPosition(durationMs = 1500) {
     if (!this._scroller) return;
     this._lockedScrollTop = this._scroller.scrollTop;

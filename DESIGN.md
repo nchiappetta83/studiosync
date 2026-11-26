@@ -254,6 +254,11 @@ Both apps use the same file-based sync mechanism over a shared network drive.
 6. After applying events, the main process sends `data-updated` to the renderer
 7. Events are idempotent â€” replaying them produces the same result
 
+### Event History Retention
+Event files do not accumulate forever. At start-up and every 12 hours the Dashboard (and only the Dashboard) deletes an event file when it is older than 30 days, older than the event cursor of its latest recovery snapshot (`snapshots/dashboard-state.json`), and already applied by the Dashboard. Files that are unapplied or failed are kept, and nothing is deleted while there is no valid snapshot.
+
+Before deleting, the Dashboard records the newest file it is removing in `snapshots/event-horizon.json`. A MyTasks computer whose own newest processed event is older than that horizon was offline long enough to miss events, so on start-up (or when it wakes) it replaces its shared data from the snapshot, re-applies its own unsent changes on top, publishes them, and shows a notice. Private tasks, sync metadata and the outbox are untouched. Every app also forgets its local processed-file records for files that no longer exist.
+
 ### Event Types
 `user-created`, `user-updated`, `user-deleted`, `task-created`, `task-updated`, `task-deleted`, `subtask-created`, `subtask-updated`, `subtask-toggled`, `subtask-deleted`, `comment-added`, `project-created`, `project-updated`, `project-notes-updated`, `pto-set`, `pto-cleared`, `setting-updated`, `business-role-created`, `custom-priority-created`, `weekly-rollover`, `task-confirmed`, and more.
 

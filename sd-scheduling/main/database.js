@@ -834,19 +834,6 @@ class Database {
     };
   }
 
-  _getLegacyProjectNote(projectId) {
-    return this.db.prepare(`
-      SELECT *
-      FROM project_notes
-      WHERE project_id = ?
-      ORDER BY
-        CASE WHEN lower(COALESCE(title, '')) = 'general' THEN 0 ELSE 1 END,
-        datetime(updated_at) DESC,
-        datetime(created_at) DESC
-      LIMIT 1
-    `).get(projectId) || null;
-  }
-
   // ── Sync Meta ──────────────────────────────────────────
 
   getLastSyncTimestamp() {
@@ -869,6 +856,14 @@ class Database {
     `).run(filename);
   }
 
+  // Forget processed records for event files that no longer exist in the shared folder.
+  forgetProcessedSyncFiles(filenames) {
+    const forget = this.db.prepare('DELETE FROM sync_processed_events WHERE filename = ?');
+    this.db.transaction(() => {
+      for (const filename of filenames) forget.run(filename);
+    })();
+  }
+
   applyEventAndMarkProcessed(event, filename) {
     if (!filename) throw new Error('A sync event filename is required.');
     return this.runInTransaction(() => {
@@ -876,10 +871,6 @@ class Database {
       this.markSyncFileProcessed(filename);
       this.setLastSyncTimestamp(filename);
     });
-  }
-
-  cleanupProcessedSyncFiles(cutoffStr) {
-    this.db.prepare('DELETE FROM sync_processed_events WHERE filename < ?').run(cutoffStr);
   }
 
   queueSyncEvent(event) {
@@ -1195,10 +1186,6 @@ class Database {
     return this.getUserById(data.id);
   }
 
-  getAssignedTaskCount(userId) {
-    return this.db.prepare('SELECT COUNT(*) as count FROM tasks WHERE assigned_to = ?').get(userId)?.count || 0;
-  }
-
   getAssignedOpenTaskCount(userId) {
     return this.db.prepare('SELECT COUNT(*) as count FROM tasks WHERE assigned_to = ? AND completed = 0').get(userId)?.count || 0;
   }
@@ -1300,17 +1287,6 @@ class Database {
     this.db.prepare(`INSERT OR IGNORE INTO task_activity (id, task_id, project_id, action, actor_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(activity.id, activity.task_id, activity.project_id, activity.action, activity.actor_id, activity.details, activity.created_at);
     return this.db.prepare('SELECT * FROM task_activity WHERE id = ?').get(activity.id);
-  }
-
-  getTaskActivity(taskId, limit = 40) {
-    return this.db.prepare(`
-      SELECT activity.*, users.display_name AS actor_name
-      FROM task_activity activity
-      LEFT JOIN users ON users.id = activity.actor_id
-      WHERE activity.task_id = ?
-      ORDER BY datetime(activity.created_at) DESC, activity.id DESC
-      LIMIT ?
-    `).all(taskId, Math.max(1, Math.min(Number(limit) || 40, 100)));
   }
 
   getProjectActivity(projectId, limit = 100) {
@@ -1791,12 +1767,6 @@ class Database {
 
   // ── Sub-tasks ──────────────────────────────────────────
 
-  getSubTasks(taskId) {
-    return this.db.prepare(
-      'SELECT * FROM sub_tasks WHERE task_id = ? ORDER BY sort_order, created_at'
-    ).all(taskId);
-  }
-
   getSubTaskById(id) {
     return this.db.prepare('SELECT * FROM sub_tasks WHERE id = ?').get(id);
   }
@@ -1835,11 +1805,6 @@ class Database {
 
   deleteSubTask(id) {
     this.db.prepare('DELETE FROM sub_tasks WHERE id = ?').run(id);
-  }
-
-  toggleSubTask(id) {
-    this.db.prepare('UPDATE sub_tasks SET completed = CASE WHEN completed = 1 THEN 0 ELSE 1 END WHERE id = ?').run(id);
-    return this.getSubTaskById(id);
   }
 
   // ── Comments ───────────────────────────────────────────
@@ -2163,17 +2128,6 @@ class Database {
 
   // ── Project Notes (partner-authored, separate from Excel notes) ──
 
-  getProjectNotes(projectId) {
-    return this._getLegacyProjectNote(projectId);
-  }
-
-  getAllProjectNotes() {
-    const projectIds = this.db.prepare('SELECT DISTINCT project_id FROM project_notes').all();
-    return projectIds
-      .map(({ project_id }) => this._getLegacyProjectNote(project_id))
-      .filter(Boolean);
-  }
-
   upsertProjectNotes(data) {
     if (!data?.project_id) return null;
 
@@ -2205,23 +2159,6 @@ class Database {
       created_at: data.created_at,
       updated_at: data.updated_at,
     });
-  }
-
-  getProjectSharedNotes(projectId) {
-    return this.db.prepare(`
-      SELECT *
-      FROM project_notes
-      WHERE project_id = ?
-      ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, lower(title) ASC
-    `).all(projectId);
-  }
-
-  getAllProjectSharedNotes() {
-    return this.db.prepare(`
-      SELECT *
-      FROM project_notes
-      ORDER BY project_id ASC, datetime(updated_at) DESC, datetime(created_at) DESC, lower(title) ASC
-    `).all();
   }
 
   getProjectSharedNoteById(id) {

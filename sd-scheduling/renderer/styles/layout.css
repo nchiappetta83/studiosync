@@ -560,28 +560,6 @@ body.window-resizing .projects-panel {
   line-height: 1;
 }
 
-.filter-badge {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #FFFFFF;
-  font-size: 9px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  transform: translate(4px, -4px);
-}
-
-.filter-badge.hidden {
-  display: none;
-}
-
 .toolbar-divider {
   width: 1px;
   height: 24px;

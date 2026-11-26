@@ -111,9 +111,14 @@ class SyncEngine {
     this.cleanupScheduled = false;
     this.cleanupInProgress = false;
     this.processedFiles = new Set();
+    this.RETENTION_DAYS = 30; // how long event files stay in the shared folder once a snapshot covers them
+    this._maxProcessed = null;
+    this._horizonCache = { mtimeMs: -1, value: null };
     this.processedFilesLoaded = false;
     this.failedFiles = new Map();
     this.bootstrapFailure = null;
+    this.lastRecovery = null;     // set when this computer rebuilt its shared data after being offline too long
+    this._recoveryRetryAt = 0;
     this.logger = logger;
     this.deviceTrust = options.appDataDir ? new DeviceTrust({ appDataDir: options.appDataDir, sharedDrivePath, source, logger }) : null;
   }
@@ -151,6 +156,9 @@ class SyncEngine {
 
     this._ensureProcessedFilesLoaded();
     this._seedProcessedFilesFromLegacyCursor();
+    // Before anything is flushed or pulled: a computer that was offline longer than the retention window
+    // has missed events the Dashboard has since deleted, so its shared data is rebuilt from the snapshot.
+    this._recoverIfStale();
     const isFreshDb = !this.db.getLastSyncTimestamp() && this.processedFiles.size === 0;
     if (isFreshDb && this.db.getUsers().length === 0) {
       this.restoreSharedSnapshot();
@@ -172,10 +180,13 @@ class SyncEngine {
     return initialEvents;
   }
 
-  startPolling(onUpdate, onStatusChange) {
+  startPolling(onUpdate, onStatusChange, onRecovered) {
     this.stopPolling();
     this.pollInterval = setInterval(() => {
       try {
+        // A laptop that slept for weeks resumes inside the same process, so check on every pass, and before
+        // flushing (which would count this computer's own new events as having read everything).
+        if (this._recoverIfStale() && onRecovered) onRecovered(this.lastRecovery);
         this.flushOutbox();
         const previousFailureState = JSON.stringify(this.getFailureSummary());
         const appliedEvents = this.pull();
@@ -190,6 +201,85 @@ class SyncEngine {
     }, this.POLL_MS);
   }
 
+  getRecoveryNotice() {
+    return this.lastRecovery;
+  }
+
+  // True when the Dashboard has deleted event files this computer never read.
+  _isStale() {
+    const horizon = this._readHorizon();
+    if (!horizon) return false;
+    const frontier = this._frontier();
+    if (!frontier) return false; // a new database restores through the normal first-run path
+    return frontier < horizon;
+  }
+
+  _recoverIfStale() {
+    if (this.source !== 'companion' || Date.now() < this._recoveryRetryAt) return false;
+    let stale = false;
+    try {
+      stale = this._isStale();
+    } catch (err) {
+      this.logger?.warn('Could not check whether shared history was pruned', { error: err.message });
+    }
+    if (!stale) return false;
+
+    const rebuilt = this._rebuildFromSnapshot();
+    if (!rebuilt) this._recoveryRetryAt = Date.now() + 5 * 60 * 1000;
+    return rebuilt;
+  }
+
+  // Replace the shared data with the Dashboard's latest snapshot, then put this computer's own unsent
+  // changes back on top (they are re-applied, then published by the normal outbox flush). Private tasks,
+  // sync metadata and the outbox are left alone.
+  _rebuildFromSnapshot() {
+    let snapshot;
+    try {
+      snapshot = JSON.parse(fs.readFileSync(this._snapshotPath(), 'utf8'));
+    } catch (err) {
+      this.logger?.warn('Cannot rebuild from the Dashboard snapshot: it could not be read', { error: err.message });
+      return false;
+    }
+
+    const cursor = String(snapshot?.eventCursor || this._snapshotEventCursor(snapshot?.generatedAt));
+    const horizon = this._readHorizon();
+    if (horizon && cursor < horizon) {
+      // The snapshot is older than the pruned history, so it cannot fill the gap.
+      this.logger?.warn('Cannot rebuild: the Dashboard snapshot is older than the pruned event history');
+      return false;
+    }
+
+    try {
+      const unsent = typeof this.db.getQueuedSyncEvents === 'function'
+        ? this.db.getQueuedSyncEvents(500).map((row) => row.event).filter(Boolean)
+        : [];
+      const imported = this.db.importSharedSnapshot(snapshot, { replaceExisting: true });
+      if (!imported) return false;
+
+      this._markSnapshotHistoryProcessed(cursor);
+      let reapplied = 0;
+      for (const event of unsent) {
+        try {
+          this.db.applyEvent(event);
+          reapplied += 1;
+        } catch (err) {
+          this.logger?.warn('Could not re-apply a local change after rebuilding', { type: event?.type, error: err.message });
+        }
+      }
+
+      this.lastRecovery = {
+        at: new Date().toISOString(),
+        snapshotGeneratedAt: snapshot.generatedAt,
+        reappliedLocalChanges: reapplied,
+      };
+      this.logger?.info('Rebuilt shared data from the Dashboard snapshot after a long absence', this.lastRecovery);
+      return true;
+    } catch (err) {
+      this.logger?.error('Rebuilding from the Dashboard snapshot failed', { error: err.message });
+      return false;
+    }
+  }
+
   setUsername(username) {
     this.username = username || 'unknown';
   }
@@ -197,10 +287,6 @@ class SyncEngine {
   setActor(actor) {
     this.setUsername(actor?.username || 'unknown');
     this.deviceTrust?.setActor(actor);
-  }
-
-  getDeviceTrustStatus() {
-    return this.deviceTrust?.getStatus() || null;
   }
 
   stopPolling() {
@@ -268,6 +354,8 @@ class SyncEngine {
         this._applyAndMarkEvent(event, entry.file);
         appliedEvents.push(event);
       } catch (err) {
+        // A file the Dashboard pruned between listing and reading is gone for good, not a failure to retry.
+        if (err?.code === 'ENOENT') { this.failedFiles.delete(entry.file); continue; }
         this._recordFailure(entry.file, err);
       }
     }
@@ -413,6 +501,12 @@ class SyncEngine {
     } catch (err) {
       this.logger?.warn('Could not establish snapshot event cursor', { error: err.message });
     }
+    // Old events may all have been pruned, leaving no file to mark. Record the cursor itself as how far
+    // this computer has read, so the next launch does not treat the database as new.
+    const frontier = this._frontier();
+    if ((!frontier || cursor > frontier) && typeof this.db.setLastSyncTimestamp === 'function') {
+      this.db.setLastSyncTimestamp(cursor);
+    }
     return marked;
   }
 
@@ -464,14 +558,153 @@ class SyncEngine {
   }
 
   /**
-   * Placeholder for future snapshot-verified compaction.
-   * Replay history is deliberately retained for recovery and new-device bootstrap.
+   * Housekeeping for the shared event history (at start-up and every 12 hours).
+   *
+   * Event files would otherwise pile up in the shared folder forever. Only the Dashboard deletes them, and
+   * only a file that is all of: older than RETENTION_DAYS, older than the event cursor of the Dashboard's
+   * latest recovery snapshot (so the snapshot already holds its effect), and already applied here.
+   * Before deleting, it records the newest file it is about to remove in snapshots/event-horizon.json.
+   * A computer whose own history ends before that point has missed events and rebuilds from the snapshot
+   * (see _recoverIfStale in MyTasks). Every app also forgets its local "processed" records for event files
+   * that no longer exist. Returns the number of event files deleted.
    */
   cleanup() {
-    // Event files are the recovery source for a fresh or repaired local database.
-    // Do not prune them until a verified, authoritative snapshot protocol is in place.
-    // Losing replay history is worse than retaining a modest append-only audit log.
-    return 0;
+    let removed = 0;
+    try {
+      if (this.source === 'scheduling') removed = this._pruneEventHistory();
+      this._forgetMissingProcessedFiles();
+    } catch (err) {
+      this.logger?.warn('Sync history cleanup failed', { error: err.message });
+    }
+    return removed;
+  }
+
+  _horizonPath() { return path.join(this.snapshotsDir, 'event-horizon.json'); }
+
+  // Event files are named <ISO timestamp with : and . as dashes>_<user>_<type>_<id>.json.
+  _eventStamp(file) {
+    const match = /^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)_/.exec(file);
+    return match ? match[1] : null;
+  }
+
+  _windowStart() {
+    return this._snapshotEventCursor(new Date(Date.now() - this.RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString());
+  }
+
+  _readSnapshotCursor() {
+    try {
+      const snapshot = JSON.parse(fs.readFileSync(this._snapshotPath(), 'utf8'));
+      if (snapshot?.schemaVersion !== 1 || !Number.isFinite(Date.parse(snapshot.generatedAt || ''))) return null;
+      return String(snapshot.eventCursor || this._snapshotEventCursor(snapshot.generatedAt));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _readHorizon() {
+    try {
+      const stat = fs.statSync(this._horizonPath());
+      if (this._horizonCache.mtimeMs === stat.mtimeMs) return this._horizonCache.value;
+      const parsed = JSON.parse(fs.readFileSync(this._horizonPath(), 'utf8'));
+      const value = parsed?.schemaVersion === 1 && typeof parsed.prunedThrough === 'string' ? parsed.prunedThrough : null;
+      this._horizonCache = { mtimeMs: stat.mtimeMs, value };
+      return value;
+    } catch (_) {
+      this._horizonCache = { mtimeMs: -1, value: null };
+      return null;
+    }
+  }
+
+  _writeHorizon(prunedThrough) {
+    try {
+      const existing = this._readHorizon();
+      const value = existing && existing > prunedThrough ? existing : prunedThrough;
+      const destination = this._horizonPath();
+      const temporary = `${destination}.${this.instanceId}.tmp`;
+      fs.writeFileSync(temporary, JSON.stringify({
+        schemaVersion: 1,
+        prunedThrough: value,
+        retentionDays: this.RETENTION_DAYS,
+        updatedAt: new Date().toISOString(),
+      }), 'utf8');
+      fs.renameSync(temporary, destination);
+      this._horizonCache = { mtimeMs: -1, value: null };
+      return true;
+    } catch (err) {
+      this.logger?.warn('Could not record the event horizon; leaving event history in place', { error: err.message });
+      return false;
+    }
+  }
+
+  _pruneEventHistory() {
+    const cursor = this._readSnapshotCursor();
+    if (!cursor) return 0; // no usable recovery snapshot: keep everything
+
+    this._ensureProcessedFilesLoaded();
+    const window = this._windowStart();
+    const cutoff = cursor < window ? cursor : window;
+    let files;
+    try {
+      files = fs.readdirSync(this.eventsDir);
+    } catch (_) {
+      return 0;
+    }
+
+    const expired = files.filter((file) => {
+      const stamp = this._eventStamp(file);
+      return stamp && file.endsWith('.json') && stamp < cutoff
+        && this.processedFiles.has(file) && !this.failedFiles.has(file);
+    }).sort();
+    if (expired.length === 0) return 0;
+
+    // Publish the horizon first, so no computer can see the files gone before it knows they were pruned.
+    if (!this._writeHorizon(expired[expired.length - 1])) return 0;
+
+    let removed = 0;
+    for (const file of expired) {
+      try {
+        fs.unlinkSync(path.join(this.eventsDir, file));
+        removed += 1;
+      } catch (_) {}
+    }
+    if (removed > 0) this.logger?.info('Pruned shared event history', { removed, olderThan: cutoff });
+    return removed;
+  }
+
+  _forgetMissingProcessedFiles() {
+    if (!this.processedFilesLoaded) return 0;
+    let present;
+    try {
+      present = new Set(fs.readdirSync(this.eventsDir));
+    } catch (_) {
+      return 0;
+    }
+
+    const windowStart = this._windowStart();
+    const anchor = this._frontier(); // always keep the newest record: it marks how far this computer has read
+    const gone = [];
+    for (const file of this.processedFiles) {
+      if (present.has(file) || file === anchor) continue;
+      const stamp = this._eventStamp(file);
+      if (stamp && stamp < windowStart) gone.push(file);
+    }
+    if (gone.length === 0) return 0;
+
+    if (typeof this.db.forgetProcessedSyncFiles === 'function') this.db.forgetProcessedSyncFiles(gone);
+    for (const file of gone) this.processedFiles.delete(file);
+    return gone.length;
+  }
+
+  // The newest event this computer has read. Own writes count too, so check staleness before flushing.
+  _noteProcessed(filename) {
+    if (filename && (this._maxProcessed === null || filename > this._maxProcessed)) this._maxProcessed = filename;
+  }
+
+  _frontier() {
+    let best = this._maxProcessed;
+    const last = typeof this.db.getLastSyncTimestamp === 'function' ? this.db.getLastSyncTimestamp() : null;
+    if (last && (best === null || last > best)) best = last;
+    return best;
   }
 
   _maybeCleanup() {
@@ -491,29 +724,12 @@ class SyncEngine {
     }, 0);
   }
 
-  _cleanupDirectory(dirPath, cutoffStr) {
-    if (!fs.existsSync(dirPath)) return 0;
-
-    const files = fs.readdirSync(dirPath).filter((file) => file.endsWith('.json'));
-    let removed = 0;
-
-    for (const file of files) {
-      if (file < cutoffStr) {
-        try {
-          fs.unlinkSync(path.join(dirPath, file));
-          removed++;
-        } catch (_) {}
-      }
-    }
-
-    return removed;
-  }
-
   _ensureProcessedFilesLoaded() {
     if (this.processedFilesLoaded) return;
 
     for (const filename of this.db.getProcessedSyncFiles()) {
       this.processedFiles.add(filename);
+      this._noteProcessed(filename);
     }
 
     this.processedFilesLoaded = true;
@@ -531,6 +747,7 @@ class SyncEngine {
         if (file <= lastSync) {
           this.db.markSyncFileProcessed(file);
           this.processedFiles.add(file);
+          this._noteProcessed(file);
         }
       }
     } catch (err) {
@@ -542,6 +759,7 @@ class SyncEngine {
     this.db.markSyncFileProcessed(filename);
     this.db.setLastSyncTimestamp(filename);
     this.processedFiles.add(filename);
+    this._noteProcessed(filename);
     this.failedFiles.delete(filename);
   }
 
@@ -554,6 +772,7 @@ class SyncEngine {
       this.db.setLastSyncTimestamp(filename);
     }
     this.processedFiles.add(filename);
+    this._noteProcessed(filename);
     this.failedFiles.delete(filename);
   }
 

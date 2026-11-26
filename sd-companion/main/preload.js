@@ -12,7 +12,6 @@ contextBridge.exposeInMainWorld('api', {
   // Tasks (shared, from main app)
   getTasks:           (filters)   => ipcRenderer.invoke('get-tasks', filters),
   getStaffOverviewAssignments: () => ipcRenderer.invoke('get-staff-overview-assignments'),
-  getTaskActivity:    (taskId)    => ipcRenderer.invoke('get-task-activity', taskId),
   getProjectActivity: (projectId) => ipcRenderer.invoke('get-project-activity', projectId),
   getRolloverReviewState: ()      => ipcRenderer.invoke('get-rollover-review-state'),
   createTask:         (data)      => ipcRenderer.invoke('create-task', data),
@@ -37,7 +36,6 @@ contextBridge.exposeInMainWorld('api', {
   deletePrivateTask:  (id)        => ipcRenderer.invoke('delete-private-task', id),
 
   // Sub-tasks
-  getSubTasks:        (taskId)    => ipcRenderer.invoke('get-subtasks', taskId),
   getTaskSupportData: (taskIds)   => ipcRenderer.invoke('get-task-support-data', taskIds),
   createSubTask:      (data)      => ipcRenderer.invoke('create-subtask', data),
   updateSubTask:      (data)      => ipcRenderer.invoke('update-subtask', data),
@@ -45,7 +43,6 @@ contextBridge.exposeInMainWorld('api', {
   toggleSubTask:      (id)        => ipcRenderer.invoke('toggle-subtask', id),
 
   // Comments
-  getComments:        (taskId)    => ipcRenderer.invoke('get-comments', taskId),
   addComment:         (data)      => ipcRenderer.invoke('add-comment', data),
 
   // Projects
@@ -55,9 +52,6 @@ contextBridge.exposeInMainWorld('api', {
   deleteProject:      (id)        => ipcRenderer.invoke('delete-project', id),
 
   // Project Notes (partner-authored, separate from Excel notes)
-  getProjectNotes:    (projectId) => ipcRenderer.invoke('get-project-notes', projectId),
-  getAllProjectNotes:  ()          => ipcRenderer.invoke('get-all-project-notes'),
-  updateProjectNotes: (data)      => ipcRenderer.invoke('update-project-notes', data),
   getProjectSharedNotes: (projectId) => ipcRenderer.invoke('get-project-shared-notes', projectId),
   getAllProjectSharedNotes: ()       => ipcRenderer.invoke('get-all-project-shared-notes'),
   createProjectSharedNote: (data)    => ipcRenderer.invoke('create-project-shared-note', data),
@@ -71,8 +65,6 @@ contextBridge.exposeInMainWorld('api', {
   getPriorityDisplayStyles: ()    => ipcRenderer.invoke('get-priority-display-styles'),
 
   // Config & setup
-  getConfig:          ()          => ipcRenderer.invoke('get-config'),
-  saveConfig:         (config)    => ipcRenderer.invoke('save-config', config),
   getOfficeCapacity:  ()          => ipcRenderer.invoke('get-office-capacity'),
   saveOfficeCapacity: (capacity)  => ipcRenderer.invoke('save-office-capacity', capacity),
   getLaunchOnStartup: ()          => ipcRenderer.invoke('get-launch-on-startup'),
@@ -95,9 +87,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Sync
   forceSync:          ()          => ipcRenderer.invoke('force-sync'),
-  getLogPaths:        ()          => ipcRenderer.invoke('get-log-paths'),
   writeLog:           (entry)     => ipcRenderer.invoke('write-log', entry),
-  getDiagnosticsPath: ()          => ipcRenderer.invoke('get-diagnostics-path'),
   logDiagnostics:     (entry)     => ipcRenderer.invoke('log-diagnostics', entry),
 
   // Data change listener

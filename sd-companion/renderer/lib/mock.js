@@ -94,7 +94,6 @@ if (!window.api) {
     deletePrivateTask:  async (id) => { const i = MOCK_PRIVATE_TASKS.findIndex((t) => t.id === id); if (i >= 0) MOCK_PRIVATE_TASKS.splice(i, 1); return true; },
 
     // Sub-tasks
-    getSubTasks:      async (taskId) => MOCK_SUBTASKS.filter((s) => s.task_id === taskId),
     getTaskSupportData: async (taskIds) => {
       const ids = Array.isArray(taskIds) ? taskIds : [];
       const subtasksByTaskId = {};
@@ -111,7 +110,6 @@ if (!window.api) {
     toggleSubTask:    async (id) => { const s = MOCK_SUBTASKS.find((s) => s.id === id); if (s) s.completed = s.completed ? 0 : 1; return s; },
 
     // Comments
-    getComments:      async (taskId) => MOCK_COMMENTS.filter((c) => c.task_id === taskId),
     addComment:       async (d) => { const c = { ...d, id: 'c' + Date.now(), author_name: currentUser?.display_name || 'You', author_color: currentUser?.avatar_color || '#5856A6', created_at: new Date().toISOString() }; MOCK_COMMENTS.push(c); return c; },
 
     // Projects
@@ -121,9 +119,6 @@ if (!window.api) {
     deleteProject:    async (id) => { const i = MOCK_PROJECTS.findIndex((p) => p.id === id); if (i >= 0) MOCK_PROJECTS.splice(i, 1); return true; },
 
     // Project Notes
-    getProjectNotes:        async (projectId) => MOCK_PROJECT_NOTES.filter((n) => n.project_id === projectId),
-    getAllProjectNotes:     async () => MOCK_PROJECT_NOTES,
-    updateProjectNotes:     async (d) => d,
     getProjectSharedNotes:      async (projectId) => MOCK_PROJECT_NOTES.filter((n) => n.project_id === projectId),
     getAllProjectSharedNotes:   async () => MOCK_PROJECT_NOTES,
     createProjectSharedNote:    async (d) => { const n = { ...d, id: 'pn' + Date.now(), author_name: currentUser?.display_name || 'You', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; MOCK_PROJECT_NOTES.push(n); return n; },
@@ -138,8 +133,6 @@ if (!window.api) {
     getWorkCardCategories: async () => [],
 
     // Config & setup
-    getConfig:          async () => ({ sharedDrivePath: 'C:\\MockSharedDrive', rememberedUsername: currentUser?.username || '' }),
-    saveConfig:         async () => true,
     getLaunchOnStartup: async () => false,
     setLaunchOnStartup: async () => true,
     checkForUpdates:    async () => ({ upToDate: true }),
@@ -159,7 +152,6 @@ if (!window.api) {
 
     // Sync
     forceSync:          async () => ({ success: true }),
-    getLogPaths:        async () => ({ appLogPath: '', combinedLogPath: '' }),
     writeLog:           async () => true,
 
     // Data change listeners (no-ops in preview)

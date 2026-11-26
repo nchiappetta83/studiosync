@@ -9,7 +9,7 @@
 
   function createDialog(options = {}) {
     return new Promise((resolve) => {
-      const existing = document.querySelector('.confirm-dialog-overlay');
+      const existing = document.querySelector('.confirm-dialog-overlay:not(.is-leaving)');
       if (existing) {
         existing.querySelector('.confirm-dialog-confirm')?.focus();
         resolve(options.cancelValue);

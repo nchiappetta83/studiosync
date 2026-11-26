@@ -556,6 +556,7 @@ function getRuntimeStatus() {
     lastSyncAt: runtimeStatus.lastSyncAt,
     syncOutbox: sync?.getOutboxSummary?.() || { pending: 0, attempts: 0, lastError: null, oldestQueuedAt: null },
     syncFailures: sync?.getFailureSummary?.() || { count: 0, totalAttempts: 0, nextRetryAt: null },
+    syncRecovery: sync?.getRecoveryNotice?.() || null,
     updateAvailable: Boolean(pendingUpdate || lastUpdateResult?.updateAvailable),
     latestVersion: pendingUpdate?.latestVersion || lastUpdateResult?.latestVersion || null,
     launchOnStartup: getLaunchOnStartupState(),
@@ -1177,7 +1178,6 @@ function registerIPC() {
     return Boolean(state?.active && state.week === getCurrentWeekStartString());
   };
 
-  ipcMain.handle('get-log-paths', () => logger?.getLogPaths() || null);
   ipcMain.handle('write-log', (_e, entry) => {
     const level = String(entry?.level || 'info').toLowerCase();
     const message = entry?.message || entry?.type || 'renderer-log';
@@ -1189,18 +1189,12 @@ function registerIPC() {
     else logger?.info(message, meta);
     return true;
   });
-  ipcMain.handle('get-diagnostics-path', () => getDiagnosticsPath());
   ipcMain.handle('log-diagnostics', (_e, entry) => {
     appendDiagnostics({ scope: 'renderer', ...(entry && typeof entry === 'object' ? entry : { message: String(entry || '') }) });
     return true;
   });
 
   // Config
-  ipcMain.handle('get-config', () => loadConfig());
-  ipcMain.handle('save-config', (_e, config) => {
-    saveConfig(config);
-    return true;
-  });
   ipcMain.handle('get-office-capacity', () => getOfficeCapacity());
   ipcMain.handle('save-office-capacity', (_e, capacity) => {
     const actor = currentActor();
@@ -1315,7 +1309,10 @@ function registerIPC() {
         handlePulledSyncEvents(events).catch((err) => {
           console.error('Sync event handling failed:', err.message);
         });
-      }, () => emitRuntimeStatus());
+      }, () => emitRuntimeStatus(), () => {
+        emitRuntimeStatus();
+        notifyDataChanged();
+      });
 
       if (updateManager) {
         updateManager.start();
@@ -1382,10 +1379,6 @@ function registerIPC() {
   ipcMain.handle('get-staff-overview-assignments', () => {
     if (!db) return [];
     return db.getStaffOverviewAssignments();
-  });
-  ipcMain.handle('get-task-activity', (_e, taskId) => {
-    const task = db?.getTaskById(taskId);
-    return db && task && canMutateTask(currentActor(), task) ? db.getTaskActivity(taskId) : [];
   });
   ipcMain.handle('get-project-activity', (_e, projectId) => {
     const project = db?.getProjectById(projectId);
@@ -1589,11 +1582,6 @@ function registerIPC() {
   });
 
   // Sub-tasks
-  ipcMain.handle('get-subtasks', (_e, taskId) => {
-    if (!db) return [];
-    return db.getSubTasks(taskId);
-  });
-
   ipcMain.handle('get-task-support-data', (_e, taskIds) => {
     if (!db) return { subtasksByTaskId: {}, commentsByTaskId: {} };
     return {
@@ -1635,11 +1623,6 @@ function registerIPC() {
   });
 
   // Comments
-  ipcMain.handle('get-comments', (_e, taskId) => {
-    if (!db) return [];
-    return db.getComments(taskId);
-  });
-
   ipcMain.handle('add-comment', (_e, data) => {
     const actor = currentActor();
     if (!db || isRolloverReviewActive() || !actor || !canMutateTask(actor, db.getTaskById(data?.task_id))) return null;
@@ -1680,24 +1663,6 @@ function registerIPC() {
   });
 
   // Project Notes (partner-authored, separate from Excel notes)
-  ipcMain.handle('get-project-notes', (_e, projectId) => {
-    if (!db) return null;
-    return db.getProjectNotes(projectId);
-  });
-
-  ipcMain.handle('get-all-project-notes', () => {
-    if (!db) return [];
-    return db.getAllProjectNotes();
-  });
-
-  ipcMain.handle('update-project-notes', (_e, data) => {
-    if (!db || !isPartner(currentActor())) return null;
-    const result = db.upsertProjectNotes(data);
-    if (sync) sync.pushEvent('project-notes-updated', data);
-    notifyDataChanged();
-    return result;
-  });
-
   ipcMain.handle('get-project-shared-notes', (_e, projectId) => {
     if (!db) return [];
     return db.getProjectSharedNotes(projectId);
@@ -1848,7 +1813,10 @@ if (!gotSingleInstanceLock) {
           handlePulledSyncEvents(events).catch((err) => {
             console.error('Sync event handling failed:', err.message);
           });
-        }, () => emitRuntimeStatus());
+        }, () => emitRuntimeStatus(), () => {
+          emitRuntimeStatus();
+          notifyDataChanged();
+        });
         if (updateManager) {
           updateManager.start();
           await updateManager.checkForUpdates({ promptIfAvailable: true });

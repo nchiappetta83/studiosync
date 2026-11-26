@@ -117,6 +117,12 @@ globalScope.TaskCard = {
       ? `<button type="button" class="task-work-card-toggle" data-project-id="${this._escapeAttr(task.project_id)}" aria-expanded="false" title="Show work cards">&#8250; Work cards</button>`
       : '';
 
+    // A carryover row a partner still has to review shows Keep / Delete at the right of the title line.
+    // The date, calendar and partner badge drop one line to sit beside the note, and the lead drops
+    // beside "Work cards". Once the task is kept they all move up a line, so the rows line up again.
+    const reviewing = !isConfirmed && isPartner;
+    const dateAndPartner = `${dueHtml}${calIcon}${partnerHtml}`;
+
     return `
       <div class="task-card ${completedClass} ${carryoverClass} ${isPartner ? 'task-card-draggable' : ''}" data-task-id="${task.id}">
         <div class="task-card-main">
@@ -127,17 +133,16 @@ globalScope.TaskCard = {
             <div class="task-title">${this._escapeHtml(displayTitle)}</div>
             ${isConfirmed ? completeBtn : ''}
           </div>
-          ${dueHtml}
-          ${calIcon}
-          ${partnerHtml}
-          ${rolloverActions}
+          ${reviewing ? rolloverActions : dateAndPartner}
         </div>
         <div class="task-card-bottom">
           <input type="text" class="task-notes-input ${canEditNotes ? 'task-notes-input-editable' : ''}" data-task-id="${task.id}"
             value="${this._escapeAttr(notesVal)}" placeholder="Note" ${canEditNotes ? '' : 'readonly'}>
-          ${leadHtml}
+          ${reviewing ? dateAndPartner : leadHtml}
         </div>
-        ${workCardToggle}
+        ${reviewing
+          ? `<div class="task-card-foot">${workCardToggle}${leadHtml}</div>`
+          : workCardToggle}
         <div class="task-work-card-list hidden" aria-live="polite"></div>
       </div>
     `;
@@ -152,8 +157,23 @@ globalScope.TaskCard = {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const taskId = btn.dataset.taskId;
-          await window.api.confirmTask(taskId);
-          await AppState.refresh();
+          const card = btn.closest('.task-card');
+          const actions = btn.closest('.task-rollover-actions');
+          if (!card || card.dataset.busy) return; // already being kept or deleted (a second click or key press)
+          card.dataset.busy = 'true';
+          actions?.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+          try {
+            // The buttons fade, then the date, partner and lead slide up a line into their usual place.
+            await window.Motion?.fadeOut(actions);
+            await window.api.confirmTask(taskId);
+          } catch (error) {
+            window.Motion?.restore(actions);
+            actions?.querySelectorAll('button').forEach((button) => { button.disabled = false; });
+            throw error;
+          } finally {
+            delete card.dataset.busy;
+            await AppState.refresh();
+          }
         });
       });
     }
@@ -180,11 +200,25 @@ globalScope.TaskCard = {
           const task = AppState.get('tasks').find(t => t.id === taskId);
           if (!task) return;
 
-          const shouldDelete = await this._confirmCarryoverDelete(task);
-          if (!shouldDelete) return;
-
-          await window.api.deleteTask(taskId);
-          await AppState.refresh();
+          const card = btn.closest('.task-card');
+          if (!card || card.dataset.busy) return; // a confirm or delete for this row is already under way
+          card.dataset.busy = 'true';
+          let confirmed = false;
+          try {
+            if (!(await this._confirmCarryoverDelete(task))) return;
+            confirmed = true;
+            card.querySelectorAll('.task-rollover-action-btn').forEach((button) => { button.disabled = true; });
+            await window.Motion?.collapse(card);
+            await window.api.deleteTask(taskId);
+          } catch (error) {
+            // Put the row back if it was already closing up, so it does not look deleted while it still exists.
+            window.Motion?.restore(card);
+            card.querySelectorAll('.task-rollover-action-btn').forEach((button) => { button.disabled = false; });
+            throw error;
+          } finally {
+            delete card.dataset.busy;
+            if (confirmed) await AppState.refresh();
+          }
         });
       });
     }
@@ -1105,11 +1139,6 @@ globalScope.TaskCard = {
 
   _numericPriorityTone(priority) {
     return this._priorityStyleForToken('numbered');
-  },
-
-  _numericPriorityStyle(priority) {
-    const tone = this._numericPriorityTone(priority);
-    return `color:${tone.color};background:${tone.background};`;
   },
 
   _priorityInlineStyle(task, priority, isSet) {

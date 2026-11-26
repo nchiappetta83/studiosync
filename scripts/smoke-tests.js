@@ -151,6 +151,14 @@ function testDashboardShellGuards() {
     assert.match(html, /styles\/palette\.css/, `${app} should load the palette styles`);
     assert.match(html, /id="btn-command-palette"/, `${app} should show the Ctrl K hint`);
   }
+  // MyTasks' browser preview page is generated from index.html (plus a mock API). A hand-kept copy went stale
+  // and threw on start-up, so the committed file must match the generator's output exactly.
+  const { buildPreview } = require('./build-mytasks-preview');
+  assert.strictEqual(
+    readRepoFile('sd-companion/renderer/preview.html').replace(/\r\n/g, '\n'),
+    buildPreview(readRepoFile('sd-companion/renderer/index.html')),
+    'MyTasks preview.html is out of date: run `node scripts/build-mytasks-preview.js`',
+  );
   assert.match(readRepoFile('sd-scheduling/renderer/index.html'), /lib\/scrollSmoothing\.js/, 'Dashboard should load the shared adaptive scroll smoother');
   assert.match(readRepoFile('sd-companion/renderer/index.html'), /lib\/scrollSmoothing\.js/, 'MyTasks should load the shared adaptive scroll smoother');
   assert.match(installerScript, /!include "getProcessInfo\.nsh"/, 'Dashboard installer should include the process-info helper used by its override');
@@ -1002,7 +1010,11 @@ function testMyTasksLayoutGuards() {
   assert.match(companionDatabase, /ORDER BY julianday\(created_at\), rowid LIMIT/, 'MyTasks outbox must flush in creation order, including events created within the same second');
   assert.doesNotMatch(companionDatabase, /ORDER BY datetime\(created_at\), event_id/, 'MyTasks outbox must not order same-second events by random event ID');
   assert.match(mainCode, /event\.type\.startsWith\('user-'\)[\s\S]{0,80}auth\.clearCache\(\)/, 'MyTasks must refresh its cached acting user when user events sync');
-  assert.match(appCode, /if \(!created\) throw new Error\('Task was not created\.'\)/, 'MyTasks must not report success when the main process refuses a new task');
+  assert.match(appCode, /if \(!created\) throw new Error\('Project was not added to your list\.'\)/, 'MyTasks must not report success when the main process refuses a new task');
+  assert.match(appCode, /activeTab = readLastActiveTab\(\) \|\| getDefaultTabForCurrentUser\(\)/, 'MyTasks should reopen on the last tab and fall back to My Work when that tab is no longer available');
+  // Only MyTasksConfirmDialog exists in MyTasks. A bare ConfirmDialog (the Dashboard's name) throws a
+  // ReferenceError, which is how Delete work card broke.
+  assert.doesNotMatch(appCode, /(?<![\w.])ConfirmDialog\./, 'MyTasks must call window.MyTasksConfirmDialog, not the Dashboard-only ConfirmDialog');
   assert.match(companionSync, /processedFiles\.has\(file\)[\s\S]{0,200}fs\.statSync/, 'MyTasks polling must skip already-processed event files before calling stat');
   assert.match(companionDatabase, /_applyCompatibilityEvent/, 'MyTasks must ignore legacy compatibility events after applying their publication');
   assert.match(companionDatabase, /recordTaskDeletion\(taskId, data\.publishedAt/, 'MyTasks rollover deletions must record a durable tombstone');
@@ -1230,23 +1242,140 @@ function testDurableSyncOutbox(appName) {
   }
 }
 
-function testDurableSyncHistory(appName) {
+// Event files must not pile up in the shared folder forever, and must not be deleted while anyone still needs them.
+function testSyncHistoryRetention(appName) {
   const SyncEngine = require(path.join(repoRoot, `${appName}/main/sync`));
-  const sharedPath = fs.mkdtempSync(path.join(os.tmpdir(), `studiosync-history-${appName}-`));
-  const eventsPath = path.join(sharedPath, 'events');
-  const oldEventPath = path.join(eventsPath, '2000-01-01T00-00-00-000Z_tester_task-created_deadbeef.json');
-  const db = {
-    getProcessedSyncFiles: () => [], getLastSyncTimestamp: () => null,
+  const isDashboard = appName === 'sd-scheduling';
+  const stamp = (ms) => new Date(ms).toISOString().replace(/[:.]/g, '-');
+  const DAY = 24 * 60 * 60 * 1000;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `studiosync-retention-${appName}-`));
+
+  // A stand-in database that records what the engine asks it to forget.
+  const makeDb = (processed) => {
+    const forgotten = [];
+    return {
+      forgotten,
+      getProcessedSyncFiles: () => [...processed],
+      getLastSyncTimestamp: () => null,
+      setLastSyncTimestamp: () => {},
+      markSyncFileProcessed: (file) => processed.push(file),
+      forgetProcessedSyncFiles: (files) => forgotten.push(...files),
+    };
+  };
+  const writeEvent = (eventsPath, name) => fs.writeFileSync(path.join(eventsPath, name), JSON.stringify({ type: 'task-created', data: { id: name } }), 'utf-8');
+  const writeSnapshot = (sharedPath, cursorMs) => {
+    fs.mkdirSync(path.join(sharedPath, 'snapshots'), { recursive: true });
+    fs.writeFileSync(path.join(sharedPath, 'snapshots', 'dashboard-state.json'), JSON.stringify({
+      schemaVersion: 1, source: 'scheduling', generatedAt: new Date(cursorMs).toISOString(), eventCursor: stamp(cursorMs), tables: {},
+    }), 'utf-8');
   };
 
   try {
+    const now = Date.now();
+    const oldProcessed = `${stamp(now - 45 * DAY)}_tester_task-created_aaaaaaaa.json`;
+    const oldUnprocessed = `${stamp(now - 44 * DAY)}_tester_task-created_bbbbbbbb.json`;
+    const insideWindow = `${stamp(now - 10 * DAY)}_tester_task-created_cccccccc.json`;
+    const newest = `${stamp(now - 1000)}_tester_task-created_dddddddd.json`;
+
+    // 1. A current snapshot exists: only old, applied files go, and the horizon is recorded first.
+    const sharedPath = path.join(root, 'shared');
+    const eventsPath = path.join(sharedPath, 'events');
     fs.mkdirSync(eventsPath, { recursive: true });
-    fs.writeFileSync(oldEventPath, JSON.stringify({ type: 'task-created', data: { id: 'task-1' } }), 'utf-8');
+    for (const name of [oldProcessed, oldUnprocessed, insideWindow, newest]) writeEvent(eventsPath, name);
+    writeSnapshot(sharedPath, now);
+    const db = makeDb([oldProcessed, insideWindow, newest]);
     const sync = new SyncEngine(db, sharedPath, 'tester');
-    assert.equal(sync.cleanup(), 0, `${appName} should keep replay history until snapshot compaction exists`);
-    assert.equal(fs.existsSync(oldEventPath), true, `${appName} should not delete recovery events by age`);
+    sync._ensureProcessedFilesLoaded(); // only the housekeeping is under test
+    const removed = sync.cleanup();
+    const horizonPath = path.join(sharedPath, 'snapshots', 'event-horizon.json');
+    if (isDashboard) {
+      assert.equal(removed, 1, 'Dashboard should delete event files older than 30 days that it has applied');
+      assert.equal(fs.existsSync(path.join(eventsPath, oldProcessed)), false, 'An old applied event should be deleted');
+      assert.equal(JSON.parse(fs.readFileSync(horizonPath, 'utf8')).prunedThrough, oldProcessed, 'Dashboard should record the newest deleted event before deleting');
+      assert.deepEqual(db.forgotten, [oldProcessed], 'The processed record of a deleted event should be forgotten, keeping the newest as the read marker');
+    } else {
+      assert.equal(removed, 0, 'MyTasks must never delete shared event files');
+      assert.equal(fs.existsSync(path.join(eventsPath, oldProcessed)), true, 'MyTasks must leave shared event files alone');
+      assert.equal(fs.existsSync(horizonPath), false, 'MyTasks must not write the event horizon');
+    }
+    assert.equal(fs.existsSync(path.join(eventsPath, oldUnprocessed)), true, 'An event this computer has not applied must be kept');
+    assert.equal(fs.existsSync(path.join(eventsPath, insideWindow)), true, 'An event inside the 30-day window must be kept');
+    assert.equal(fs.existsSync(path.join(eventsPath, newest)), true, 'A recent event must be kept');
+
+    // 2. Nothing is deleted without a usable snapshot, or when the snapshot is older than the event.
+    const noSnapshotShared = path.join(root, 'no-snapshot');
+    fs.mkdirSync(path.join(noSnapshotShared, 'events'), { recursive: true });
+    writeEvent(path.join(noSnapshotShared, 'events'), oldProcessed);
+    const noSnapshotSync = new SyncEngine(makeDb([oldProcessed]), noSnapshotShared, 'tester');
+    assert.equal(noSnapshotSync.cleanup(), 0, `${appName} should keep every event while no recovery snapshot exists`);
+    assert.equal(fs.existsSync(path.join(noSnapshotShared, 'events', oldProcessed)), true);
+
+    const staleSnapshotShared = path.join(root, 'stale-snapshot');
+    fs.mkdirSync(path.join(staleSnapshotShared, 'events'), { recursive: true });
+    writeEvent(path.join(staleSnapshotShared, 'events'), oldProcessed);
+    writeSnapshot(staleSnapshotShared, now - 90 * DAY);
+    const staleSnapshotSync = new SyncEngine(makeDb([oldProcessed]), staleSnapshotShared, 'tester');
+    assert.equal(staleSnapshotSync.cleanup(), 0, `${appName} should not delete events the latest snapshot does not yet cover`);
+    assert.equal(fs.existsSync(path.join(staleSnapshotShared, 'events', oldProcessed)), true);
   } finally {
-    fs.rmSync(sharedPath, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// A MyTasks computer that was offline past the retention window rebuilds from the Dashboard snapshot.
+function testStaleComputerRebuildsFromSnapshot() {
+  const DashboardDatabase = require(path.join(repoRoot, 'sd-scheduling/main/database'));
+  const MyTasksDatabase = require(path.join(repoRoot, 'sd-companion/main/database'));
+  const DashboardSync = require(path.join(repoRoot, 'sd-scheduling/main/sync'));
+  const MyTasksSync = require(path.join(repoRoot, 'sd-companion/main/sync'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studiosync-stale-'));
+  const sharedPath = path.join(root, 'shared');
+  const dashboardDb = new DashboardDatabase(path.join(root, 'dashboard.db'));
+  const myTasksDb = new MyTasksDatabase(path.join(root, 'mytasks.db'));
+
+  try {
+    dashboardDb.initialize();
+    dashboardDb.createUser({ id: 'user-1', username: 'officeuser', windows_username: 'officeuser', display_name: 'Office User', role: 'partner', active: 1 });
+    dashboardDb.createProject({ id: 'project-1', name: 'Project One', partner_id: 'user-1' });
+    dashboardDb.createTask({ id: 'task-1', project_id: 'project-1', assigned_to: 'user-1', title: 'Original title' });
+    dashboardDb.createProject({ id: 'project-zombie', name: 'Deleted later', partner_id: 'user-1' });
+    dashboardDb.createTask({ id: 'task-zombie', project_id: 'project-zombie', assigned_to: 'user-1', title: 'Deleted while offline' });
+    const dashboardSync = new DashboardSync(dashboardDb, sharedPath, 'officeuser', 'scheduling');
+    dashboardSync.initialize();
+
+    myTasksDb.initialize();
+    new MyTasksSync(myTasksDb, sharedPath, 'officeuser', 'companion').initialize();
+    assert.equal(myTasksDb.getTaskById('task-zombie')?.title, 'Deleted while offline', 'Setup: the computer starts with the task that is later deleted');
+    myTasksDb.createPrivateTask({ id: 'private-1', owner_id: 'user-1', title: 'My private task' });
+
+    // While this computer is away the Dashboard deletes a task, adds another, and later deletes old events.
+    dashboardDb.deleteTask('task-zombie');
+    dashboardDb.createTask({ id: 'task-3', project_id: 'project-1', assigned_to: 'user-1', title: 'Added while offline' });
+    assert.equal(dashboardSync.writeSharedSnapshot(), true);
+    assert.equal(dashboardSync._writeHorizon('2010-01-01T00-00-00-000Z_old_task-deleted_eeeeeeee.json'), true);
+
+    // The computer's own history ends in 2000, and it made one local change it has not yet sent.
+    myTasksDb.db.prepare('DELETE FROM sync_processed_events').run();
+    myTasksDb.setLastSyncTimestamp('2000-01-01T00-00-00-000Z_old_task-created_ffffffff.json');
+    myTasksDb.updateTask({ id: 'task-1', title: 'Edited while offline' });
+    const returning = new MyTasksSync(myTasksDb, sharedPath, 'officeuser', 'companion');
+    myTasksDb.queueSyncEvent(returning.createEvent('task-updated', myTasksDb.getTaskById('task-1')));
+    returning.initialize();
+
+    assert.ok(returning.getRecoveryNotice(), 'A computer that missed pruned events should rebuild and say so');
+    assert.ok(!myTasksDb.getTaskById('task-zombie'), 'A task deleted while the computer was away should not linger');
+    assert.equal(myTasksDb.getTaskById('task-3')?.title, 'Added while offline', 'A task added while the computer was away should appear');
+    assert.equal(myTasksDb.getTaskById('task-1')?.title, 'Edited while offline', "The computer's own unsent change should survive the rebuild");
+    assert.equal(myTasksDb.getSyncOutboxSummary().pending, 0, 'The unsent change should be published after the rebuild');
+    assert.equal(myTasksDb.getPrivateTasks('user-1').length, 1, 'Private tasks must be untouched by the rebuild');
+
+    const afterwards = new MyTasksSync(myTasksDb, sharedPath, 'officeuser', 'companion');
+    afterwards.initialize();
+    assert.equal(afterwards.getRecoveryNotice(), null, 'A computer that is up to date must not rebuild again');
+  } finally {
+    dashboardDb.close();
+    myTasksDb.close();
+    fs.rmSync(root, { recursive: true, force: true });
   }
 }
 
@@ -1595,7 +1724,7 @@ async function main() {
     testDashboardExportGuards();
     await testDashboardNotesEditor();
     testDurableSyncOutbox('sd-scheduling');
-    testDurableSyncHistory('sd-scheduling');
+    testSyncHistoryRetention('sd-scheduling');
     testSharedSnapshotBootstrap();
     testTrustedDeviceEnrollment();
   }
@@ -1612,7 +1741,8 @@ async function main() {
     testWorkCardSchemaUpgrade('sd-companion', 22);
     testDistinctAvatarColors('sd-companion', 26);
     testDurableSyncOutbox('sd-companion');
-    testDurableSyncHistory('sd-companion');
+    testSyncHistoryRetention('sd-companion');
+    testStaleComputerRebuildsFromSnapshot();
   }
   console.log(`Smoke tests passed (${target}).`);
 }
