@@ -47,11 +47,12 @@ Core capabilities:
 
 - Create, assign, prioritize, confirm, and reorder tasks across the team
 - View staff workload with task counts, PTO indicators, and drag-and-drop assignment
-- Import and refresh projects from Excel
+- Import and refresh projects from Excel, from the Projects panel's "⋯" menu
 - Add new projects directly into the current or future list from the dashboard
 - Manage custom priorities, business roles, and user records
 - Export the schedule as PDF and HTML for office-wide visibility
 - Configure a shared update folder used by both apps
+- Work through task rows entirely from the keyboard: Tab to a priority chip, due date, calendar icon, or project lead and press Enter or Space; menus support the arrow keys, Home, End, and Escape (which returns focus to where you were); the date picker is a keyboard date grid (arrows, Home/End, Page Up/Down); and the Menu key or Shift+F10 opens a task's full action menu
 - Run the weekly rollover flow to carry unfinished work forward cleanly with explicit Keep/Delete review actions
 - Preserve custom rollover priorities while clearing only numbered weekly priorities
 - Resume from the local cache on normal startup instead of rebuilding the full local database each launch
@@ -60,57 +61,58 @@ Core capabilities:
 - Install through a current-user installer flow that seeds the default path under `C:\SD Apps`
 
 <p align="center">
-  <img src="docs/images/studiosync-dashboard-main.png" alt="StudioSync Dashboard showing the office schedule with fictional demo staff, tasks, and projects." width="920"><br>
+  <img src="docs/images/studiosync-dashboard-main.png" alt="StudioSync Dashboard showing the weekly calendar, staff sidebar, tasks grouped by person with priority chips, and the Current projects list, with fictional demo data." width="920"><br>
   <em>StudioSync Dashboard: office-wide task planning, staff workload, and project management with fictional demo data.</em>
 </p>
 
 ### StudioSync MyTasks
 
-StudioSync MyTasks is the day-to-day desktop companion. It gives users a focused workspace for the items they need to finish without the admin-heavy controls of the main dashboard.
+StudioSync MyTasks is the day-to-day desktop companion. It gives users a project-first workspace for the work assigned to them, including Work Cards, due dates, and shared project context, without the admin-heavy controls of the main dashboard.
 
 Core capabilities:
 
-- View shared assignments synced from StudioSync
+- View shared assignments synced from StudioSync, grouped by project with due-date status (Overdue, Due today, Due Thursday, Done) on each row
+- Run Work Cards from a To Do / In Progress / Done board: start, pause, and complete them, and mark one card as your current focus
+- Plan the week in My Week, with daily load shown against the office capacity
+- Open a project's Project info for details, assigned people, the project folder, and shared Project Notes
 - See the full assigned team and shared comment thread for project-linked tasks
-- Track private partner tasks that stay local to that install
-- Review and edit project details and project notes from the companion app (partner view)
-- Add partner-managed projects into the current or future list from MyTasks
 - Open task details with Action Items and comments
-- Filter by pending, completed, or overdue work
-- Search task titles and notes quickly
-- Let partners see staff workload from the companion app
+- Track private partner tasks that stay local to that install
+- Let partners see staff workload and assignment counts in Staff Overview, and set the office daily and weekly capacity; other staff get a read-only Staff View
 - Show assigned staff avatars on partner project cards and manage those projects from a right-click menu
-- Let selected staff add project-linked tasks to their own list
+- Let selected staff add office projects (Active, Inactive, or Future) to their own list, and let partners add projects to the office list
 - Let selected staff adjust priority on their own shared tasks
+- Search projects, or staff and projects, quickly
+- Choose an accent colour, a light, dark, or automatic theme, and how the details pane opens
 - Detect new installers from the shared update folder
 - Start in a compact branded sign-in window that mirrors the StudioSync auth flow
 - Write persistent local logs for renderer and main-process issues to speed up support and diagnostics
 
 <p align="center">
-  <img src="docs/images/studiosync-mytasks-main.png" alt="StudioSync MyTasks showing a focused personal task list with fictional demo assignments and notes." width="920"><br>
-  <em>StudioSync MyTasks: the focused daily workspace for assigned work, action items, and shared project context.</em>
+  <img src="docs/images/studiosync-mytasks-main.png" alt="StudioSync MyTasks My Projects view with a project list on the left and the selected project's Work Cards board (To Do, In Progress, Done) on the right, with fictional demo data." width="920"><br>
+  <em>StudioSync MyTasks: a project-first workspace with My Projects, My Week, and Staff View, plus Work Cards that assignees start, pause, and complete.</em>
 </p>
 
 ## Usage flows
 
 <p align="center">
-  <img src="docs/images/flows-dashboard-manage-staff.png" alt="Manage Staff dialog in StudioSync showing fictional demo users and roles." width="920"><br>
-  <em>Manage Staff: add, edit, and organize staff and partner accounts from the Dashboard app.</em>
+  <img src="docs/images/flows-dashboard-manage-staff.png" alt="Settings dialog in StudioSync with the Manage Staff section open, listing fictional demo staff and their roles." width="920"><br>
+  <em>Manage Staff: add, edit, and organize staff and partner accounts from Settings in the Dashboard app.</em>
 </p>
 
 <p align="center">
-  <img src="docs/images/flows-dashboard-add-project.png" alt="Add Project dialog in StudioSync with the future-project option enabled." width="920"><br>
+  <img src="docs/images/flows-dashboard-add-project.png" alt="New Project dialog in StudioSync with the Future project type selected." width="920"><br>
   <em>Add Project: create a project directly into the current or future list from the Dashboard workflow.</em>
 </p>
 
 <p align="center">
-  <img src="docs/images/flows-mytasks-add-task.png" alt="Add Task dialog in StudioSync MyTasks showing project-linked task creation with fictional demo data." width="920"><br>
-  <em>Add Task in MyTasks: create a project-linked or freeform task from the companion app.</em>
+  <img src="docs/images/flows-mytasks-add-task.png" alt="Add Project dialog in StudioSync MyTasks for choosing an office project to add to your own list, with optional notes, priority, and due date, using fictional demo data." width="920"><br>
+  <em>Add Project in MyTasks: staff pick an office project to add to their own list, with an optional summary, priority, and due date.</em>
 </p>
 
 <p align="center">
-  <img src="docs/images/flows-mytasks-project-detail.png" alt="My Projects detail view in StudioSync MyTasks showing scheduling notes and project notes with fictional demo data." width="920"><br>
-  <em>Partner project detail: update Scheduling Notes and shared Project Notes directly from MyTasks.</em>
+  <img src="docs/images/flows-mytasks-project-detail.png" alt="Project info view in StudioSync MyTasks for a partner, showing project details, assigned people, project folder, and shared project notes, with fictional demo data." width="920"><br>
+  <em>Partner project info: review project details, people, the project folder, and shared Project Notes from MyTasks.</em>
 </p>
 
 ## How the apps work together

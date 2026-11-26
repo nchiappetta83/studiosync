@@ -84,7 +84,7 @@ globalScope.TaskCard = {
 
     // Calendar icon (partner only)
     const calIcon = isPartner && !dueDisplay
-      ? `<span class="task-cal-icon" data-task-id="${task.id}" title="Pick from calendar" aria-label="Pick due date">
+      ? `<span class="task-cal-icon" data-task-id="${task.id}" role="button" tabindex="0" title="Pick from calendar" aria-label="Pick due date">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <rect x="4" y="5" width="16" height="15" rx="2"></rect>
             <path d="M8 3v4M16 3v4M4 10h16"></path>
@@ -95,12 +95,22 @@ globalScope.TaskCard = {
     // Priority badge â€” custom priorities get inline color from their definition
     const priorityCursor = isPartner ? 'cursor:pointer;' : '';
     const priorityInlineStyle = `${priorityPresentation.inlineStyle || ''}${priorityCursor}`;
-    const priorityBadge = `<span class="task-priority-pill ${priorityPresentation.className}" data-task-id="${task.id}" style="${priorityInlineStyle}">${this._escapeHtml(priorityPresentation.label)}</span>`;
+    // Partners get a keyboard-operable button (opens the priority menu); everyone else a labelled image.
+    const priorityIsUnset = priorityPresentation.className === 'priority-unset';
+    const priorityDescription = priorityIsUnset ? 'none set' : (priorityPresentation.className === 'priority-w' ? 'Wait' : priorityPresentation.label);
+    const priorityTitle = priorityIsUnset
+      ? (isPartner ? 'Set priority' : '')
+      : (priorityPresentation.className === 'priority-custom' ? `Priority: ${priorityPresentation.label}` : '');
+    const priorityAttrs = (isPartner
+      ? ` role="button" tabindex="0" aria-haspopup="menu" aria-label="Change priority: ${this._escapeAttr(priorityDescription)}"`
+      : ` role="img" aria-label="Priority: ${this._escapeAttr(priorityDescription)}"`)
+      + (priorityTitle ? ` title="${this._escapeAttr(priorityTitle)}"` : '');
+    const priorityBadge = `<span class="task-priority-pill ${priorityPresentation.className}" data-task-id="${task.id}"${priorityAttrs} style="${priorityInlineStyle}">${this._escapeHtml(priorityPresentation.shortLabel)}</span>`;
 
     // Due date display (click opens calendar picker)
     const dueCursor = isPartner ? 'cursor:pointer;' : '';
     const dueHtml = dueDisplay
-      ? `<span class="task-due-label ${dueColor}" data-task-id="${task.id}" style="${dueCursor}">${this._escapeHtml(dueDisplay)}</span>`
+      ? `<span class="task-due-label ${dueColor}" data-task-id="${task.id}"${isPartner ? ` role="button" tabindex="0" aria-label="Change due date: ${this._escapeAttr(dueDisplay)}"` : ''} style="${dueCursor}">${this._escapeHtml(dueDisplay)}</span>`
       : '';
     const bulkSelect = isPartner ? `<input class="task-bulk-select" type="checkbox" data-task-id="${task.id}" aria-label="Select task for bulk actions">` : '';
     const workCardToggle = task.project_id
@@ -183,11 +193,17 @@ globalScope.TaskCard = {
     // â”€â”€ Priority badge click â†’ menu â”€â”€
     if (isPartner) {
       container.querySelectorAll('.task-priority-pill').forEach(badge => {
-        badge.addEventListener('click', (e) => {
+        const openMenu = (e) => {
           e.stopPropagation();
           const taskId = badge.dataset.taskId;
           const task = AppState.get('tasks').find(t => t.id === taskId);
           if (task) this._showPriorityMenu(badge, task);
+        };
+        badge.addEventListener('click', openMenu);
+        badge.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
+          e.preventDefault();
+          openMenu(e);
         });
       });
     }
@@ -196,6 +212,12 @@ globalScope.TaskCard = {
     if (isPartner) {
       container.querySelectorAll('.task-due-label').forEach(label => {
         label.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._showDatePicker(label, label.dataset.taskId);
+        });
+        label.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
           e.stopPropagation();
           this._showDatePicker(label, label.dataset.taskId);
         });
@@ -211,6 +233,13 @@ globalScope.TaskCard = {
 
       container.querySelectorAll('.task-cal-icon').forEach(icon => {
         icon.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._showDatePicker(icon, icon.dataset.taskId);
+        });
+        // Keyboard access: the icon is a focusable button, so Enter/Space open the picker too.
+        icon.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
           e.stopPropagation();
           this._showDatePicker(icon, icon.dataset.taskId);
         });
@@ -353,6 +382,7 @@ globalScope.TaskCard = {
 
     const menu = document.createElement('div');
     menu.className = 'priority-menu';
+    menu.setAttribute('role', 'menu');
 
     for (const item of items) {
       if (item.type === 'divider') {
@@ -364,6 +394,7 @@ globalScope.TaskCard = {
 
       const btn = document.createElement('button');
       btn.className = 'context-menu-item';
+      btn.setAttribute('role', 'menuitem');
       if (item.type === 'clear') btn.style.color = 'var(--text-tertiary)';
 
       // Color dot for numbered priorities
@@ -382,6 +413,7 @@ globalScope.TaskCard = {
         document.removeEventListener('click', dismiss);
         await this._applyPriorityMenuValue(task.id, item.value);
         await AppState.refresh();
+        this._refocus(`.task-priority-pill[data-task-id="${task.id}"]`);
       });
 
       menu.appendChild(btn);
@@ -417,6 +449,12 @@ globalScope.TaskCard = {
       }
     };
     setTimeout(() => document.addEventListener('click', dismiss), 0);
+    PopupKeyboard.attach(menu, {
+      itemSelector: '.context-menu-item',
+      close: () => { menu.remove(); document.removeEventListener('click', dismiss); },
+      returnTo: anchor,
+    });
+    PopupKeyboard.focusFirst(menu, '.context-menu-item');
   },
 
   _appendPriorityMenuDot(button, color) {
@@ -438,12 +476,14 @@ globalScope.TaskCard = {
       .sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''), undefined, { sensitivity: 'base' }));
     const menu = document.createElement('div');
     menu.className = 'priority-menu task-lead-menu';
+    menu.setAttribute('role', 'menu');
 
     const appendOption = (label, leadId = null, selected = false) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'context-menu-item';
-      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      button.setAttribute('role', 'menuitemradio');
+      button.setAttribute('aria-checked', selected ? 'true' : 'false');
       if (selected) button.classList.add('task-lead-menu-selected');
       button.textContent = selected ? `✓ ${label}` : label;
       button.addEventListener('click', async () => {
@@ -451,6 +491,7 @@ globalScope.TaskCard = {
         document.removeEventListener('click', dismiss);
         await window.api.updateTask({ id: task.id, lead_id: leadId });
         await AppState.refresh();
+        this._refocus(`.task-lead-control[data-task-id="${task.id}"]`);
         Toast.show(leadId ? 'Project Lead set for the whole project' : 'Project Lead cleared for the whole project', 'success');
       });
       menu.appendChild(button);
@@ -474,6 +515,33 @@ globalScope.TaskCard = {
       }
     };
     setTimeout(() => document.addEventListener('click', dismiss), 0);
+    PopupKeyboard.attach(menu, {
+      itemSelector: '.context-menu-item',
+      close: () => { menu.remove(); document.removeEventListener('click', dismiss); },
+      returnTo: anchor,
+    });
+    PopupKeyboard.focusFirst(menu, '.context-menu-item');
+  },
+
+  // After a keyboard-driven change re-renders the list, put focus back on the control that was used.
+  // The list re-renders a moment after the refresh resolves and replaces the element we just
+  // focused, so keep watching for about 0.7s and re-apply focus whenever it is lost. Stop as soon
+  // as focus has deliberately moved somewhere else.
+  _refocus(selector) {
+    if (!PopupKeyboard.usingKeyboard) return;
+    let ticks = 0;
+    const attempt = () => {
+      const active = document.activeElement;
+      const lost = !active || active === document.body || !active.isConnected;
+      if (lost) {
+        const el = document.querySelector(selector);
+        if (el) el.focus({ preventScroll: true });
+      } else if (!active.matches(selector)) {
+        return;
+      }
+      if (++ticks < 14) setTimeout(attempt, 50);
+    };
+    setTimeout(attempt, 0);
   },
 
   _positionPopupMenu(menu, anchor) {
@@ -760,6 +828,13 @@ globalScope.TaskCard = {
 
     const popup = document.createElement('div');
     popup.className = 'date-picker-popup';
+    popup.setAttribute('role', 'dialog');
+    popup.setAttribute('aria-label', 'Choose due date');
+
+    // Keyboard state: one day cell is the tab stop (roving tabindex); arrow keys move it.
+    let focusDay = today.getDate();
+    let focusAfterRender = false;
+    let refocusSelector = null;
 
     const renderMonth = () => {
       const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -769,9 +844,9 @@ globalScope.TaskCard = {
 
       let html = `
         <div class="dp-nav">
-          <span class="dp-nav-btn" data-dir="-1">&#x25C2;</span>
-          <span class="dp-nav-label">${monthNames[month]} ${year}</span>
-          <span class="dp-nav-btn" data-dir="1">&#x25B8;</span>
+          <span class="dp-nav-btn" data-dir="-1" role="button" tabindex="0" aria-label="Previous month">&#x25C2;</span>
+          <span class="dp-nav-label" aria-live="polite">${monthNames[month]} ${year}</span>
+          <span class="dp-nav-btn" data-dir="1" role="button" tabindex="0" aria-label="Next month">&#x25B8;</span>
         </div>
         <div class="dp-dow">${dayNames.map(d => `<span class="dp-dow-cell">${d}</span>`).join('')}</div>
         <div class="dp-grid">
@@ -781,15 +856,17 @@ globalScope.TaskCard = {
       for (let d = 1; d <= daysInMonth; d++) {
         const dayDate = new Date(year, month, d);
         const isToday = dayDate.getTime() === today.getTime();
-        html += `<span class="${isToday ? 'dp-cell dp-today' : 'dp-cell'}" data-date="${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}">${d}</span>`;
+        const cellLabel = dayDate.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const cellTabIndex = d === Math.min(focusDay, daysInMonth) ? 0 : -1;
+        html += `<span class="${isToday ? 'dp-cell dp-today' : 'dp-cell'}" data-date="${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}" role="button" tabindex="${cellTabIndex}" aria-label="${cellLabel}">${d}</span>`;
       }
 
       html += `</div>
         <div class="dp-quick">
-          <span class="dp-quick-btn" data-pick="today">Today</span>
-          <span class="dp-quick-btn" data-pick="fri">Fri</span>
-          <span class="dp-quick-btn" data-pick="+1w">+1w</span>
-          <span class="dp-quick-btn dp-clear-btn" data-pick="clear">Clear</span>
+          <span class="dp-quick-btn" data-pick="today" role="button" tabindex="0">Today</span>
+          <span class="dp-quick-btn" data-pick="fri" role="button" tabindex="0" aria-label="Next Friday">Fri</span>
+          <span class="dp-quick-btn" data-pick="+1w" role="button" tabindex="0" aria-label="One week from today">+1w</span>
+          <span class="dp-quick-btn dp-clear-btn" data-pick="clear" role="button" tabindex="0" aria-label="Clear due date">Clear</span>
         </div>`;
 
       popup.innerHTML = html;
@@ -800,6 +877,8 @@ globalScope.TaskCard = {
           month += parseInt(btn.dataset.dir);
           if (month > 11) { month = 0; year++; }
           if (month < 0) { month = 11; year--; }
+          // The buttons are re-created on render, so remember which one to refocus.
+          if (PopupKeyboard.usingKeyboard) refocusSelector = `.dp-nav-btn[data-dir="${btn.dataset.dir}"]`;
           renderMonth();
         });
       });
@@ -822,6 +901,16 @@ globalScope.TaskCard = {
           }
         });
       });
+
+      if (focusAfterRender) {
+        focusAfterRender = false;
+        const cell = popup.querySelector('.dp-cell[tabindex="0"]');
+        if (cell) cell.focus({ preventScroll: true });
+      } else if (refocusSelector) {
+        const target = popup.querySelector(refocusSelector);
+        refocusSelector = null;
+        if (target) target.focus({ preventScroll: true });
+      }
     };
 
     const fmtISO = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -849,6 +938,8 @@ globalScope.TaskCard = {
       const targetIds = updateAll ? [task.id, ...linkedTasks.map((candidate) => candidate.id)] : [taskId];
       await Promise.all(targetIds.map((id) => window.api.updateTask({ id, due_date: dateStr })));
       await AppState.refresh();
+      // Setting a date swaps the calendar icon for the date label (and vice versa when cleared).
+      this._refocus(`.task-due-label[data-task-id="${taskId}"], .task-cal-icon[data-task-id="${taskId}"]`);
     };
 
     renderMonth();
@@ -871,11 +962,84 @@ globalScope.TaskCard = {
       }
     };
     setTimeout(() => document.addEventListener('click', dismissPicker), 0);
+
+    const closePicker = () => {
+      popup.remove();
+      document.removeEventListener('click', dismissPicker);
+      PopupKeyboard.returnFocus(anchor);
+    };
+
+    popup.addEventListener('keydown', (e) => {
+      const target = e.target;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closePicker();
+        return;
+      }
+
+      // Day grid: arrows move by day or week, Home/End to the week's ends, Page keys by month.
+      if (target.classList.contains('dp-cell') && target.dataset.date) {
+        const [y, m, d] = target.dataset.date.split('-').map(Number);
+        const weekday = new Date(y, m - 1, d).getDay();
+        let next = null;
+        switch (e.key) {
+          case 'ArrowLeft': next = new Date(y, m - 1, d - 1); break;
+          case 'ArrowRight': next = new Date(y, m - 1, d + 1); break;
+          case 'ArrowUp': next = new Date(y, m - 1, d - 7); break;
+          case 'ArrowDown': next = new Date(y, m - 1, d + 7); break;
+          case 'Home': next = new Date(y, m - 1, d - weekday); break;
+          case 'End': next = new Date(y, m - 1, d + (6 - weekday)); break;
+          case 'PageUp': next = new Date(y, m - 2, Math.min(d, new Date(y, m - 1, 0).getDate())); break;
+          case 'PageDown': next = new Date(y, m, Math.min(d, new Date(y, m + 1, 0).getDate())); break;
+          case 'Enter':
+          case ' ':
+            e.preventDefault();
+            e.stopPropagation();
+            selectDate(target.dataset.date);
+            return;
+          default: return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        year = next.getFullYear();
+        month = next.getMonth();
+        focusDay = next.getDate();
+        focusAfterRender = true;
+        renderMonth();
+        return;
+      }
+
+      // Month arrows and quick-pick buttons behave like buttons.
+      if ((e.key === 'Enter' || e.key === ' ')
+        && (target.classList.contains('dp-nav-btn') || target.classList.contains('dp-quick-btn'))) {
+        e.preventDefault();
+        e.stopPropagation();
+        target.click();
+        return;
+      }
+
+      // Tab leaves the picker from its first or last stop instead of wandering into the page behind it.
+      if (e.key === 'Tab') {
+        const stops = [...popup.querySelectorAll('[tabindex="0"]')];
+        if ((!e.shiftKey && target === stops[stops.length - 1]) || (e.shiftKey && target === stops[0])) {
+          e.preventDefault();
+          closePicker();
+        }
+      }
+    });
+
+    if (PopupKeyboard.usingKeyboard) {
+      const start = popup.querySelector('.dp-cell[tabindex="0"]');
+      if (start) start.focus({ preventScroll: true });
+    }
   },
 
   // â”€â”€ Helpers â”€â”€
 
   _priorityLabel(p, isSet, task) {
+    // Unset priority renders as an empty dashed circle (no dash character).
+    if (!isSet || p === PRIORITY_NONE || p === null || p === undefined) return '';
     return getPriorityDisplayLabel({ ...task, priority: p });
   },
 
@@ -926,8 +1090,14 @@ globalScope.TaskCard = {
   },
 
   _getPriorityPresentation(task, priority, isSet) {
+    const label = this._priorityLabel(priority, isSet, task);
+    const isCustom = this._priorityClass(priority, isSet, task) === 'priority-custom';
+    // The chip is a fixed 20px circle, so long custom labels show their first two
+    // characters (same rule as MyTasks); the full label stays in the tooltip.
+    const shortLabel = isCustom && label.length > 2 ? label.slice(0, 2).toUpperCase() : label;
     return {
-      label: this._priorityLabel(priority, isSet, task),
+      label,
+      shortLabel,
       className: this._priorityClass(priority, isSet, task),
       inlineStyle: this._priorityInlineStyle(task, priority, isSet),
     };
@@ -946,7 +1116,7 @@ globalScope.TaskCard = {
     const styles = this._priorityDisplayStyles();
     if (!isSet || priority === PRIORITY_NONE || priority === null || priority === undefined) {
       const clearTone = this._priorityStyleForToken('clear');
-      return `color:${clearTone.color};background:${clearTone.background};border:1px solid ${clearTone.border};`;
+      return `color:${clearTone.color};background:transparent;border:1px dashed ${clearTone.color};`;
     }
 
     if (priority === PRIORITY_WAIT) {
@@ -974,9 +1144,9 @@ globalScope.TaskCard = {
   _priorityDisplayStyles() {
     const saved = AppState.get('priorityDisplayStyles');
     return {
-      numbered: { color: '#4D4AD5', ...(saved?.numbered || {}) },
+      numbered: { color: '#3B608F', ...(saved?.numbered || {}) },
       wait: { color: '#6E7680', ...(saved?.wait || {}) },
-      clear: { color: '#9CA6B4', ...(saved?.clear || {}) },
+      clear: { color: '#8693A3', ...(saved?.clear || {}) },
       customDefault: { color: '#5C6B75', ...(saved?.customDefault || {}) },
     };
   },

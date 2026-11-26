@@ -369,8 +369,8 @@ body { font-family: 'Source Sans 3', 'Segoe UI Variable Text', 'Segoe UI', sans-
 .filter-select { font-family: inherit; font-size: 13px; font-weight: 600; padding: 7px 34px 7px 11px;
   border: 1px solid #CFD9DE; border-radius: 5px; background: #FFFFFF;
   color: #29353B; min-width: 220px; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
-.filter-select:focus { outline: none; border-color: #4D4AD5;
-  box-shadow: 0 0 0 3px rgba(77,74,213,0.12); }
+.filter-select:focus { outline: none; border-color: #3B608F;
+  box-shadow: 0 0 0 3px rgba(59,96,143,0.12); }
 .hint { font-size: 11px; color: #83949D; margin-left: auto; }
 
 /* ---- Content ---- */

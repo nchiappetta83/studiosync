@@ -3715,7 +3715,7 @@ function renderTaskCard(task, options = {}) {
       </div>
       <div class="task-body">
         <div class="task-top-row">
-          <span class="task-priority ${priority.className} ${canManagePriority ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canManagePriority ? `data-priority-task-id="${task.id}" tabindex="0" role="button" aria-label="Change priority: ${escapeAttr(priority.label)}"` : ''} title="${escapeAttr(priority.label)}">${escapeHtml(priority.shortLabel || priority.label)}</span>
+          <span class="task-priority ${priority.className} ${canManagePriority ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canManagePriority ? `data-priority-task-id="${task.id}" tabindex="0" role="button" aria-label="Change priority: ${escapeAttr(priority.isUnset ? 'none set' : priority.label)}"` : ''} title="${escapeAttr(priority.isUnset ? 'No priority set' : priority.label)}">${escapeHtml(priority.shortLabel ?? priority.label)}</span>
           <span class="task-title">
             ${isNotReviewed ? '<span class="task-not-reviewed-badge" title="This assignment has not been reviewed for the current week">Not Reviewed</span>' : ''}
             <span class="task-title-text">${escapeHtml(displayTitle)}</span>
@@ -3798,7 +3798,7 @@ function renderProjectListRow(task) {
       <div class="task-check">
         <div class="task-checkbox ${task.completed ? 'checked' : ''}" data-task-id="${task.id}" tabindex="0" role="checkbox" aria-checked="${task.completed ? 'true' : 'false'}" aria-label="${task.completed ? 'Mark project incomplete' : 'Mark project complete'}" title="${task.completed ? 'Mark project incomplete' : 'Mark project complete'}"></div>
       </div>
-      <span class="project-row-priority task-priority ${priority.className} ${canEditTask ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canEditTask ? `data-priority-task-id="${task.id}" tabindex="0" role="button"` : 'role="img"'} aria-label="${escapeAttr(priorityLabel)}" title="${escapeAttr(priorityLabel)}">${escapeHtml(priority.shortLabel || priority.label)}</span>
+      <span class="project-row-priority task-priority ${priority.className} ${canEditTask ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canEditTask ? `data-priority-task-id="${task.id}" tabindex="0" role="button"` : 'role="img"'} aria-label="${escapeAttr(priorityLabel)}" title="${escapeAttr(priorityLabel)}">${escapeHtml(priority.shortLabel ?? priority.label)}</span>
       <div class="project-row-title" title="${escapeAttr(getProjectDisplayTitle(project))}">${escapeHtml(getProjectDisplayTitle(project))}</div>
       <button class="task-card-menu-btn project-row-menu" data-task-menu-id="${task.id}" type="button" aria-label="Project actions" title="Project actions" ${canEditTask ? '' : 'disabled'}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="12" cy="19" r="1.5"></circle></svg></button>
       ${detailMarkup}
@@ -4287,7 +4287,7 @@ function renderStaffOverviewProjectRow(user, task) {
   return `
     <div class="staff-project-row ${isOnHold ? 'is-on-hold' : ''}" data-staff-project-row data-staff-id="${escapeAttr(user.id)}" data-project-id="${escapeAttr(project.id)}" data-task-id="${escapeAttr(task.id)}" tabindex="0" role="button" aria-label="Open ${escapeAttr(getProjectDisplayTitle(project))} work cards for ${escapeAttr(user.display_name)}">
       <div class="task-checkbox ${task.completed ? 'checked' : ''}" data-staff-project-complete="${escapeAttr(task.id)}" tabindex="0" role="checkbox" aria-checked="${task.completed ? 'true' : 'false'}" aria-label="${task.completed ? 'Mark project incomplete' : 'Mark project complete'}" title="${task.completed ? 'Mark project incomplete' : 'Mark project complete'}"></div>
-      <span class="staff-project-priority project-row-priority task-priority ${priority.className} ${canManagePriority ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canManagePriority ? `data-priority-task-id="${task.id}" tabindex="0" role="button"` : 'role="img"'} aria-label="${escapeAttr(priorityLabel)}" title="${escapeAttr(priorityLabel)}">${escapeHtml(priority.shortLabel || priority.label)}</span>
+      <span class="staff-project-priority project-row-priority task-priority ${priority.className} ${canManagePriority ? 'task-priority-interactive' : ''}" style="${priority.inlineStyle}" ${canManagePriority ? `data-priority-task-id="${task.id}" tabindex="0" role="button"` : 'role="img"'} aria-label="${escapeAttr(priorityLabel)}" title="${escapeAttr(priorityLabel)}">${escapeHtml(priority.shortLabel ?? priority.label)}</span>
       <span class="staff-project-copy"><span class="staff-project-name">${escapeHtml(getProjectDisplayTitle(project))}</span><span class="staff-project-summary project-row-summary-${summary.tone}">${renderProjectRowSummary(summary, task)}</span></span>
       ${comments.length ? `<span class="project-row-comments" title="${comments.length} comment${comments.length === 1 ? '' : 's'}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M14 8c0 3.314-2.686 6-6 6a5.97 5.97 0 0 1-3.5-1.126L2 14l1.126-2.5A5.97 5.97 0 0 1 2 8c0-3.314 2.686-6 6-6s6 2.686 6 6z" stroke="currentColor" stroke-width="1.2"/></svg>${comments.length}</span>` : ''}
       <span class="staff-project-partners">${partners.map((partner) => `<span class="staff-project-partner" title="Partner: ${escapeAttr(partner.display_name || '')}" style="background:${escapeAttr(partner.avatar_color || '#64748B')}">${escapeHtml(getInitials(partner))}</span>`).join('')}</span>
@@ -4835,7 +4835,9 @@ async function openDetailPanel(taskId) {
   const commentSignature = getCommentStateSignature(comments);
   const previousCommentState = COMMENT_VIEW_STATE.get(taskId) || null;
   const isCommentDrawerOpen = !isPrivateTask && String(OPEN_COMMENT_DRAWER_TASK_ID) === String(taskId);
-  const priorityHTML = `<span class="task-priority detail-task-priority ${priority.className}" style="${priority.inlineStyle}">${priority.label}</span>`;
+  const priorityHTML = priority.isUnset
+    ? `<span class="task-priority detail-task-priority ${priority.className}" style="${priority.inlineStyle}" role="img" aria-label="No priority set" title="No priority set"></span>`
+    : `<span class="task-priority detail-task-priority ${priority.className}" style="${priority.inlineStyle}">${priority.label}</span>`;
   const dueHTML = `
     <span class="detail-task-due ${due.text ? due.cls : 'empty'}">
       <svg class="detail-chip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
