@@ -83,7 +83,8 @@ Core capabilities:
 - Show assigned staff avatars on partner project cards and manage those projects from a right-click menu
 - Let selected staff add office projects (Active, Inactive, or Future) to their own list, and let partners add projects to the office list
 - Let selected staff adjust priority on their own shared tasks
-- Search projects, or staff and projects, quickly
+- Search projects, or staff and projects, quickly (Ctrl+F jumps to the search box of the current view)
+- Press Ctrl+K for a command palette: type to jump to a project, a person, or a private task, switch views, add a project or private task, open Preferences, edit office capacity, or change the theme. Commands you are not allowed to use are left out
 - Choose an accent colour, a light, dark, or automatic theme, and how the details pane opens
 - Detect new installers from the shared update folder
 - Start in a compact branded sign-in window that mirrors the StudioSync auth flow

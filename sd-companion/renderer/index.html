@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="styles/companion.css">
   <link rel="stylesheet" href="styles/project-notes.css">
   <link rel="stylesheet" href="styles/interaction-system.css">
+  <link rel="stylesheet" href="styles/palette.css">
 </head>
 <body>
   <!-- ── Login / Auto-detect ────────────────────────── -->
@@ -66,6 +67,7 @@
           <span class="user-name" id="user-name"></span>
           <span class="user-role-badge" id="user-role-badge"></span>
         </div>
+        <button type="button" id="btn-command-palette" class="palette-hint" title="Command palette (Ctrl+K)" aria-label="Open command palette" aria-keyshortcuts="Control+K"><kbd>Ctrl</kbd><kbd>K</kbd></button>
         <button class="icon-btn" id="settings-btn" type="button" title="Settings" aria-label="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
@@ -541,6 +543,9 @@
   <script src="lib/taskOrdering.js"></script>
   <script src="lib/commentDisplay.js"></script>
   <script src="lib/scrollSmoothing.js"></script>
+  <script src="lib/paletteSearch.js"></script>
+  <script src="components/commandPalette.js"></script>
   <script src="components/app.js"></script>
+  <script src="components/paletteItems.js"></script>
 </body>
 </html>

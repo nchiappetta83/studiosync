@@ -2970,25 +2970,49 @@ function moveTaskCardFocus(direction) {
   return true;
 }
 
+// Focus the search box of the current view (the view without one falls back to My Work).
+async function focusActiveSearch() {
+  const input = activeTab === 'staff-view'
+    ? document.getElementById('staff-overview-search-input')
+    : activeTab === 'my-projects'
+      ? document.getElementById('my-projects-search-input')
+      : document.getElementById('my-task-search-input');
+  if (activeTab !== 'staff-view' && activeTab !== 'my-projects') {
+    if (!(await activateTab('my-tasks', { preserveStaffFilter: false }))) return;
+  }
+  input?.focus();
+  input?.select();
+}
+
 function setupKeyboardShortcuts() {
   if (document.body.dataset.mytasksShortcutsBound === 'true') return;
   document.body.dataset.mytasksShortcutsBound = 'true';
 
+  document.getElementById('btn-command-palette')?.addEventListener('click', () => CommandPalette.open());
+
   document.addEventListener('keydown', async (event) => {
     const mod = event.ctrlKey || event.metaKey;
+    const key = String(event.key || '').toLowerCase();
 
-    if (mod && String(event.key || '').toLowerCase() === 'k') {
-      event.preventDefault();
-      const input = activeTab === 'staff-view'
-        ? document.getElementById('staff-overview-search-input')
-        : activeTab === 'my-projects'
-          ? document.getElementById('my-projects-search-input')
-          : document.getElementById('my-task-search-input');
-      if (activeTab !== 'staff-view' && activeTab !== 'my-projects') {
-        if (!(await activateTab('my-tasks', { preserveStaffFilter: false }))) return;
+    // The command palette is modal: while it is open, only Ctrl+K (which closes it) is handled here.
+    if (CommandPalette.isOpen()) {
+      if (mod && key === 'k') {
+        event.preventDefault();
+        CommandPalette.close();
       }
-      input?.focus();
-      input?.select();
+      return;
+    }
+
+    // Ctrl+K opens the command palette; Ctrl+F is the shortcut for the search box.
+    if (mod && key === 'k') {
+      event.preventDefault();
+      CommandPalette.open();
+      return;
+    }
+
+    if (mod && key === 'f') {
+      event.preventDefault();
+      await focusActiveSearch();
       return;
     }
 
@@ -6516,17 +6540,20 @@ function renderPreferencesChoices() {
   });
 
   document.querySelectorAll('[data-theme-choice]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      STYLE_PREFERENCES = {
-        ...STYLE_PREFERENCES,
-        theme: ['dark', 'auto'].includes(button.dataset.themeChoice) ? button.dataset.themeChoice : 'light',
-      };
-      rememberStylePreferences();
-      applyStylePreferences();
-      renderPreferencesChoices();
-      await refreshForThemeChange();
-    });
+    button.addEventListener('click', () => setThemePreference(button.dataset.themeChoice));
   });
+}
+
+// Light, dark, or automatic (follow the system). Used by Preferences and the command palette.
+async function setThemePreference(theme) {
+  STYLE_PREFERENCES = {
+    ...STYLE_PREFERENCES,
+    theme: ['dark', 'auto'].includes(theme) ? theme : 'light',
+  };
+  rememberStylePreferences();
+  applyStylePreferences();
+  renderPreferencesChoices();
+  await refreshForThemeChange();
 }
 
 async function refreshPreferencesStartupState() {

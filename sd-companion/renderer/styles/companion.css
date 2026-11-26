@@ -6919,3 +6919,13 @@ body.theme-dark .my-task-section-due-today .my-task-section-count {
 body.theme-dark .project-row-due-chip-overdue { color: #F2A9A9; }
 body.theme-dark .project-row-due-chip-soon { color: #F2C27A; }
 body.theme-dark .project-row-due-chip-done { color: #86D6AE; }
+
+/* Command palette: the "Ctrl K" chip in the top bar (the palette itself is styles/palette.css). */
+.topbar-right .palette-hint {
+  cursor: pointer;
+}
+
+.topbar-right .palette-hint:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

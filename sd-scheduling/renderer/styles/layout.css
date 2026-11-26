@@ -1215,3 +1215,16 @@ body.window-resizing .projects-panel {
   border-left: 3px solid var(--accent);
   transition: border-color 0.3s;
 }
+
+/* ── Command palette hint inside the toolbar search box ───── */
+
+.search-wrapper .search-input {
+  padding-right: 66px;
+}
+
+.search-wrapper .palette-hint {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}

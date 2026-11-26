@@ -133,6 +133,18 @@ function testDashboardShellGuards() {
   assertFilesEqual('sd-scheduling/main/auth.js', 'sd-companion/main/auth.js');
   assertFilesEqual('sd-scheduling/main/logger.js', 'sd-companion/main/logger.js');
   assertFilesEqual('sd-scheduling/renderer/lib/scrollSmoothing.js', 'sd-companion/renderer/lib/scrollSmoothing.js');
+  // The command palette engine, its matching and its styles are shared; each app only supplies paletteItems.js.
+  assertFilesEqual('sd-scheduling/renderer/lib/paletteSearch.js', 'sd-companion/renderer/lib/paletteSearch.js');
+  assertFilesEqual('sd-scheduling/renderer/components/commandPalette.js', 'sd-companion/renderer/components/commandPalette.js');
+  assertFilesEqual('sd-scheduling/renderer/styles/palette.css', 'sd-companion/renderer/styles/palette.css');
+  for (const app of ['sd-scheduling', 'sd-companion']) {
+    const html = readRepoFile(`${app}/renderer/index.html`);
+    assert.match(html, /lib\/paletteSearch\.js/, `${app} should load the palette search`);
+    assert.match(html, /components\/commandPalette\.js/, `${app} should load the command palette`);
+    assert.match(html, /components\/paletteItems\.js/, `${app} should register its palette items`);
+    assert.match(html, /styles\/palette\.css/, `${app} should load the palette styles`);
+    assert.match(html, /id="btn-command-palette"/, `${app} should show the Ctrl K hint`);
+  }
   assert.match(readRepoFile('sd-scheduling/renderer/index.html'), /lib\/scrollSmoothing\.js/, 'Dashboard should load the shared adaptive scroll smoother');
   assert.match(readRepoFile('sd-companion/renderer/index.html'), /lib\/scrollSmoothing\.js/, 'MyTasks should load the shared adaptive scroll smoother');
   assert.match(installerScript, /!include "getProcessInfo\.nsh"/, 'Dashboard installer should include the process-info helper used by its override');
