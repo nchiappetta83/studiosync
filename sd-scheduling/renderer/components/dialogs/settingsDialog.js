@@ -634,7 +634,7 @@ const SettingsDialog = {
     return {
       numbered: { color: '#3B608F', ...(saved?.numbered || {}) },
       wait: { color: '#6E7680', ...(saved?.wait || {}) },
-      clear: { color: '#9CA6B4', ...(saved?.clear || {}) },
+      clear: { color: '#8693A3', ...(saved?.clear || {}) },
     };
   },
 

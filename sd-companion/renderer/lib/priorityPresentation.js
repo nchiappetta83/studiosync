@@ -92,7 +92,7 @@
     return {
       numbered: { color: '#3B608F', ...(overrides?.numbered || {}) },
       wait: { color: '#6E7680', ...(overrides?.wait || {}) },
-      clear: { color: '#9CA6B4', ...(overrides?.clear || {}) },
+      clear: { color: '#8693A3', ...(overrides?.clear || {}) },
       customDefault: { color: '#5C6B75', ...(overrides?.customDefault || {}) },
     };
   }
@@ -127,6 +127,12 @@
     return `color:${tone.color};background:${tone.background};border:1px solid ${tone.border};`;
   }
 
+  // Unset priority renders as an empty dashed circle (no dash character).
+  // Kept in step with the Dashboard so both apps read the same.
+  function unsetInlineStyle(tone) {
+    return `color:${tone.color};background:transparent;border:1px dashed ${tone.color};`;
+  }
+
   function getPriorityPresentation(task, options = {}) {
     const {
       displayStyles = {},
@@ -147,8 +153,9 @@
       return {
         label: '-',
         className: 'punset',
-        inlineStyle: toneInlineStyle(clearTone),
-        shortLabel: '-',
+        inlineStyle: unsetInlineStyle(clearTone),
+        shortLabel: '',
+        isUnset: true,
       };
     }
 
@@ -191,8 +198,9 @@
     return {
       label: '-',
       className: 'punset',
-      inlineStyle: toneInlineStyle(clearTone),
-      shortLabel: '-',
+      inlineStyle: unsetInlineStyle(clearTone),
+      shortLabel: '',
+      isUnset: true,
     };
   }
 

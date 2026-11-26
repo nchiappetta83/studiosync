@@ -1497,6 +1497,11 @@ body.window-resizing .sidebar {
   cursor: pointer;
 }
 
+/* The unset chip's transparent background is an inline style, so the hover fill needs !important. */
+.task-priority-interactive.punset:hover {
+  background: var(--bg-secondary) !important;
+}
+
 .task-title {
   display: flex;
   align-items: center;

@@ -80,7 +80,9 @@
 .task-priority-pill.priority-numeric,
 .task-priority-pill.priority-custom { color: #2B466B; background: #E8EEF5; }
 .task-priority-pill.priority-w { color: #444441; background: #D3D1C7; font-size: 10px; }
-.task-priority-pill.priority-unset { color: #9CA6B4; background: #EEF1F4; }
+.task-priority-pill.priority-unset { color: #8693A3; background: transparent; border: 1px dashed currentColor; }
+/* Inline styles set the unset look; only partners can click it, so only they get a hover fill. */
+.task-priority-pill.priority-unset[style*="cursor:pointer"]:hover { background: var(--bg-secondary) !important; }
 
 .task-title-group {
   flex: 1 1 auto;
@@ -166,11 +168,18 @@
   align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
+  opacity: 0.75; /* quieter on empty rows; still 3.1:1 against white */
   cursor: pointer;
   flex-shrink: 0;
   user-select: none;
   border-radius: 4px;
-  transition: background var(--duration), color var(--duration);
+  transition: background var(--duration), color var(--duration), opacity var(--duration);
+}
+
+.task-card:hover .task-cal-icon,
+.task-card:focus-within .task-cal-icon,
+.task-cal-icon:hover {
+  opacity: 1;
 }
 
 /* Invisible hit-area padding: icon stays 18px, clickable area is 24px

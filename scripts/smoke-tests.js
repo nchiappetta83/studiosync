@@ -579,6 +579,15 @@ function testMyTasksHelpers() {
     shortLabel: 'RU',
   });
 
+  const unsetPresentation = plain(win.MyTasksPriorityPresentation.getPriorityPresentation(
+    { priority: null },
+    { isPrioritySet: win.MyTasksPriority.isPrioritySet },
+  ));
+  assert.equal(unsetPresentation.className, 'punset');
+  assert.equal(unsetPresentation.isUnset, true);
+  assert.equal(unsetPresentation.shortLabel, '', 'unset priority shows an empty chip, not a dash');
+  assert.match(unsetPresentation.inlineStyle, /border:1px dashed #8693A3/);
+
   assert.deepEqual(plain(win.MyTasksTaskPayload.buildTaskPayload({
     title: '  File extension  ',
     notes: '  waiting on client ',

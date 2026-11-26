@@ -95,7 +95,10 @@ globalScope.TaskCard = {
     // Priority badge â€” custom priorities get inline color from their definition
     const priorityCursor = isPartner ? 'cursor:pointer;' : '';
     const priorityInlineStyle = `${priorityPresentation.inlineStyle || ''}${priorityCursor}`;
-    const priorityBadge = `<span class="task-priority-pill ${priorityPresentation.className}" data-task-id="${task.id}" style="${priorityInlineStyle}">${this._escapeHtml(priorityPresentation.label)}</span>`;
+    const unsetPriorityAttrs = priorityPresentation.className === 'priority-unset'
+      ? (isPartner ? ' title="Set priority" aria-label="No priority set. Click to set"' : ' aria-label="No priority set"')
+      : '';
+    const priorityBadge = `<span class="task-priority-pill ${priorityPresentation.className}" data-task-id="${task.id}"${unsetPriorityAttrs} style="${priorityInlineStyle}">${this._escapeHtml(priorityPresentation.label)}</span>`;
 
     // Due date display (click opens calendar picker)
     const dueCursor = isPartner ? 'cursor:pointer;' : '';
@@ -876,6 +879,8 @@ globalScope.TaskCard = {
   // â”€â”€ Helpers â”€â”€
 
   _priorityLabel(p, isSet, task) {
+    // Unset priority renders as an empty dashed circle (no dash character).
+    if (!isSet || p === PRIORITY_NONE || p === null || p === undefined) return '';
     return getPriorityDisplayLabel({ ...task, priority: p });
   },
 
@@ -946,7 +951,7 @@ globalScope.TaskCard = {
     const styles = this._priorityDisplayStyles();
     if (!isSet || priority === PRIORITY_NONE || priority === null || priority === undefined) {
       const clearTone = this._priorityStyleForToken('clear');
-      return `color:${clearTone.color};background:${clearTone.background};border:1px solid ${clearTone.border};`;
+      return `color:${clearTone.color};background:transparent;border:1px dashed ${clearTone.color};`;
     }
 
     if (priority === PRIORITY_WAIT) {
@@ -976,7 +981,7 @@ globalScope.TaskCard = {
     return {
       numbered: { color: '#3B608F', ...(saved?.numbered || {}) },
       wait: { color: '#6E7680', ...(saved?.wait || {}) },
-      clear: { color: '#9CA6B4', ...(saved?.clear || {}) },
+      clear: { color: '#8693A3', ...(saved?.clear || {}) },
       customDefault: { color: '#5C6B75', ...(saved?.customDefault || {}) },
     };
   },
